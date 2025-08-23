@@ -29,6 +29,9 @@ from torch.multiprocessing import Process, Queue, Event
 import threading
 import queue
 
+# Set multiprocessing start method to 'spawn' for CUDA compatibility
+mp.set_start_method('spawn', force=True)
+
 # Flow-GRPO imports
 from flow_grpo.stat_tracking import PerPromptStatTracker
 from flow_grpo.diffusers_patch.sd3_pipeline_with_logprob import pipeline_with_logprob
