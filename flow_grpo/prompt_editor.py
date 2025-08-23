@@ -9,6 +9,11 @@ import torch.nn.functional as F
 import math
 from collections import defaultdict
 import random
+import warnings
+
+# Suppress warnings about uninitialized weights in T5 model loading
+warnings.filterwarnings("ignore", message="Some weights of T5Model were not initialized from the model checkpoint")
+warnings.filterwarnings("ignore", message="You should probably TRAIN this model on a down-stream task")
 
 
 class PositionalEncoding(nn.Module):
