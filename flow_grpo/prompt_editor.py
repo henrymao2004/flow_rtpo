@@ -86,7 +86,8 @@ class PromptEditorPolicy(nn.Module):
         super().__init__()
         self.epsilon_p = epsilon_p
         self.device = device
-        self.vec2text_device = vec2text_device if vec2text_device is not None else device
+        # Always use the same device for vec2text to avoid device mismatch issues
+        self.vec2text_device = device
         self.embedding_dim = embedding_dim
         self.perturbation_scale = perturbation_scale
         self.training_step = 0  # 训练步数计数器，用于热身
@@ -142,11 +143,23 @@ class PromptEditorPolicy(nn.Module):
             print(f"[WARNING] Failed to load SBERT model: {e}")
             self.sbert_model = None
         
-        # Initialize vec2text corrector on dedicated device
-        self.vec2text_corrector = vec2text.load_pretrained_corrector("gtr-base")
-        # Move vec2text corrector to dedicated device to avoid memory conflicts
-        if hasattr(self.vec2text_corrector, 'to'):
-            self.vec2text_corrector.to(self.vec2text_device)
+        # Initialize vec2text corrector on the SAME device (not a separate one)
+        print(f"[INFO] Loading vec2text corrector on device {device}")
+        try:
+            # Load vec2text model on the specified device
+            self.vec2text_corrector = vec2text.load_pretrained_corrector("gtr-base")
+            # Ensure all components are on the same device
+            if hasattr(self.vec2text_corrector, 'to'):
+                self.vec2text_corrector = self.vec2text_corrector.to(device)
+            # Move any nested models to the same device
+            if hasattr(self.vec2text_corrector, 'inversion_trainer'):
+                if hasattr(self.vec2text_corrector.inversion_trainer, 'model'):
+                    self.vec2text_corrector.inversion_trainer.model = self.vec2text_corrector.inversion_trainer.model.to(device)
+                if hasattr(self.vec2text_corrector.inversion_trainer, 'embedding_transform'):
+                    self.vec2text_corrector.inversion_trainer.embedding_transform = self.vec2text_corrector.inversion_trainer.embedding_transform.to(device)
+        except Exception as e:
+            print(f"[ERROR] Failed to load vec2text corrector: {e}")
+            self.vec2text_corrector = None
         
         # Use OFFICIAL vec2text approach for GTR as per documentation
         from transformers import AutoTokenizer, AutoModel
@@ -415,8 +428,8 @@ class PromptEditorPolicy(nn.Module):
     def decode_embeddings(self, embeddings: torch.Tensor) -> List[str]:
         """Decode embeddings back to text using vec2text with optional diverse sampling."""
         with torch.no_grad():
-            # Move embeddings to vec2text device to avoid memory conflicts
-            embeddings_for_inversion = embeddings.detach().float().to(self.vec2text_device)
+            # Keep on same device
+            embeddings_for_inversion = embeddings.detach().float().to(self.device)
             
             try:
                 # Test with a simple text first to verify vec2text is working
