@@ -537,13 +537,10 @@ def main(_):
         pipeline.transformer.train()
     
     # Initialize enhanced prompt editor with adaptive constraints and semantic regularization
-    # Use GPU 6 for vec2text operations to avoid memory conflicts with training GPUs
-    vec2text_device = torch.device("cuda:6") if torch.cuda.is_available() and torch.cuda.device_count() > 6 else accelerator.device
     prompt_editor = PromptEditorPolicy(
         embedding_dim=config.prompt_editor.embedding_dim,
         epsilon_p=config.prompt_editor.epsilon_p,
         device=accelerator.device,
-        vec2text_device=vec2text_device,
         perturbation_scale=config.prompt_editor.get('perturbation_scale', 0.02),
         # Adaptive epsilon parameters
         epsilon_min=config.prompt_editor.get('epsilon_min', 0.02),
