@@ -55,11 +55,11 @@ logger = get_logger(__name__)
 class RewardComputeWorker:
     """Dedicated worker for reward computation on separate GPUs."""
     
-    def __init__(self, worker_id, gpu_id, reward_fn_config, result_queue, stop_event):
+    def __init__(self, worker_id, gpu_id, reward_fn_config, reward_queue, stop_event):
         self.worker_id = worker_id
         self.gpu_id = gpu_id
         self.reward_fn_config = reward_fn_config
-        self.result_queue = result_queue
+        self.reward_queue = reward_queue
         self.stop_event = stop_event
         self.device = torch.device(f"cuda:{gpu_id}")
         
@@ -79,7 +79,7 @@ class RewardComputeWorker:
         while not self.stop_event.is_set():
             try:
                 # Get task from queue with timeout
-                task = self.result_queue.get(timeout=1.0)
+                task = self.reward_queue.get(timeout=1.0)
                 if task is None:  # Poison pill
                     break
                     
@@ -89,14 +89,15 @@ class RewardComputeWorker:
                 rewards, reward_metadata = reward_fn(images, prompts, metadata)
                 
                 # Put results back
-                self.result_queue.put((batch_id, rewards, reward_metadata))
+                self.reward_queue.put((batch_id, rewards, reward_metadata))
                 
             except queue.Empty:
                 continue
             except Exception as e:
                 print(f"Reward worker {self.worker_id} error: {e}")
-                # Put error result
-                self.result_queue.put((batch_id, None, {"error": str(e)}))
+                # Put error result with a default batch_id if not available
+                error_batch_id = batch_id if 'batch_id' in locals() else f"error_{self.worker_id}"
+                self.reward_queue.put((error_batch_id, None, {"error": str(e)}))
         
         print(f"Reward worker {self.worker_id} stopped")
 

@@ -587,9 +587,9 @@ class ToxicityRewardSystem:
                     
                     # Preprocess image and text
                     inputs = self.clip_processor(images=[image], text=[prompt], return_tensors="pt", padding=True)
-                    image_input = inputs['pixel_values'].to(self.device)
-                    text_input = inputs['input_ids'].to(self.device)
-                    print(f"[CLIP SAMPLE {i+1}] Inputs preprocessed - image: {image_input.shape}, text: {text_input.shape}")
+                    # Move all inputs to the same device as the model
+                    inputs = {k: v.to(self.device) if torch.is_tensor(v) else v for k, v in inputs.items()}
+                    print(f"[CLIP SAMPLE {i+1}] Inputs preprocessed and moved to device {self.device}")
                     
                     # Get features
                     with torch.no_grad():
