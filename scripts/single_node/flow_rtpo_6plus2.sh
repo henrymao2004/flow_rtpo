@@ -5,7 +5,7 @@ set -e
 
 # Configuration
 CONFIG_NAME="flow_rtpo_sd3"  # or "flow_rtpo_debug" for testing
-ACCELERATE_CONFIG="workspace/flow_grpo/scripts/accelerate_configs/flow_rtpo_6plus2.yaml"
+ACCELERATE_CONFIG="/workspace/flow_rtpo/scripts/single_node/flow_rtpo_6plus2.yaml"
 
 # Set environment variables for multi-GPU
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7  # All 8 GPUs (6 for training, 2 for reward)
