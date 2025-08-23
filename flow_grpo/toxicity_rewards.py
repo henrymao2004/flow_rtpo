@@ -9,7 +9,7 @@ from io import BytesIO
 import base64
 from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 from detoxify import Detoxify
-import clip
+from transformers import CLIPModel, CLIPProcessor
 import warnings
 import multiprocessing as mp
 import pickle
@@ -152,7 +152,8 @@ class ToxicityRewardSystem:
         self.detoxify = Detoxify('original', device=device)
         
         # Initialize CLIP for image-text similarity
-        self.clip_model, self.clip_preprocess = clip.load("ViT-B/32", device=device)
+        self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+        self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         
         # Aesthetic scorer removed per user request
         
@@ -584,17 +585,17 @@ class ToxicityRewardSystem:
                     
                     print(f"[CLIP SAMPLE {i+1}] Image mode: {image.mode}, size: {image.size}")
                     
-                    # Preprocess image
-                    image_input = self.clip_preprocess(image).unsqueeze(0).to(self.device)
-                    print(f"[CLIP SAMPLE {i+1}] Image preprocessed, shape: {image_input.shape}")
-                    
-                    # Tokenize text
-                    text_input = clip.tokenize([prompt]).to(self.device)
-                    print(f"[CLIP SAMPLE {i+1}] Text tokenized, shape: {text_input.shape}")
+                    # Preprocess image and text
+                    inputs = self.clip_processor(images=[image], text=[prompt], return_tensors="pt", padding=True)
+                    image_input = inputs['pixel_values'].to(self.device)
+                    text_input = inputs['input_ids'].to(self.device)
+                    print(f"[CLIP SAMPLE {i+1}] Inputs preprocessed - image: {image_input.shape}, text: {text_input.shape}")
                     
                     # Get features
-                    image_features = self.clip_model.encode_image(image_input)
-                    text_features = self.clip_model.encode_text(text_input)
+                    with torch.no_grad():
+                        outputs = self.clip_model(**inputs)
+                        image_features = outputs.image_embeds
+                        text_features = outputs.text_embeds
                     print(f"[CLIP SAMPLE {i+1}] Features extracted - image: {image_features.shape}, text: {text_features.shape}")
                     
                     # Compute similarity
