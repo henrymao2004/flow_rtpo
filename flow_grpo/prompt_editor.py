@@ -51,6 +51,7 @@ class PromptEditorPolicy(nn.Module):
                  embedding_dim: int = 768,
                  epsilon_p: float = 0.05,  # 基础约束范围，防止过度修改
                  device: str = "cuda",
+                 vec2text_device: str = None,  # Separate device for vec2text operations
                  perturbation_scale: float = 0.01,  # 大幅减小扰动缩放因子
                  # Adaptive epsilon parameters
                  epsilon_min: float = 0.02,
@@ -80,6 +81,7 @@ class PromptEditorPolicy(nn.Module):
         super().__init__()
         self.epsilon_p = epsilon_p
         self.device = device
+        self.vec2text_device = vec2text_device if vec2text_device is not None else device
         self.embedding_dim = embedding_dim
         self.perturbation_scale = perturbation_scale
         self.training_step = 0  # 训练步数计数器，用于热身
@@ -135,8 +137,11 @@ class PromptEditorPolicy(nn.Module):
             print(f"[WARNING] Failed to load SBERT model: {e}")
             self.sbert_model = None
         
-        # Initialize vec2text corrector
+        # Initialize vec2text corrector on dedicated device
         self.vec2text_corrector = vec2text.load_pretrained_corrector("gtr-base")
+        # Move vec2text corrector to dedicated device to avoid memory conflicts
+        if hasattr(self.vec2text_corrector, 'to'):
+            self.vec2text_corrector.to(self.vec2text_device)
         
         # Use OFFICIAL vec2text approach for GTR as per documentation
         from transformers import AutoTokenizer, AutoModel
@@ -405,8 +410,8 @@ class PromptEditorPolicy(nn.Module):
     def decode_embeddings(self, embeddings: torch.Tensor) -> List[str]:
         """Decode embeddings back to text using vec2text with optional diverse sampling."""
         with torch.no_grad():
-            # Keep embeddings on same device as vec2text corrector
-            embeddings_for_inversion = embeddings.detach().float()  # Keep on GPU where vec2text model is
+            # Move embeddings to vec2text device to avoid memory conflicts
+            embeddings_for_inversion = embeddings.detach().float().to(self.vec2text_device)
             
             try:
                 # Test with a simple text first to verify vec2text is working
