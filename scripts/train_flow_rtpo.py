@@ -102,7 +102,7 @@ def start_reward_workers(num_reward_gpus, reward_fn_config, result_queue, stop_e
     """Start dedicated reward computation workers."""
     workers = []
     for i in range(num_reward_gpus):
-        gpu_id = 6 + i  # Use GPUs 6, 7 for reward computation
+        gpu_id = 4 + i  # Use GPUs 4, 5 for reward computation (after training GPUs 0-3)
         worker = RewardComputeWorker(i, gpu_id, reward_fn_config, result_queue, stop_event)
         process = Process(target=worker.run)
         process.start()
@@ -458,7 +458,7 @@ def main(_):
     num_train_timesteps = int(config.sample.num_steps * config.train.timestep_fraction)
     
     # Multi-GPU configuration
-    num_training_gpus = 6  # 6 GPUs for training
+    num_training_gpus = 4  # 4 GPUs for training
     num_reward_gpus = 2    # 2 GPUs for reward computation
     total_gpus = num_training_gpus + num_reward_gpus
     
