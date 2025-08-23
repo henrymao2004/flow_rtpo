@@ -31,19 +31,19 @@ def flow_rtpo_sd3():
     config.prompt_fn_kwargs = {}
     
     # Sampling configuration - Reduced for 8 GPUs
-    config.sample.batch_size = 2  # Reduced from 4 to 2 per GPU
-    config.sample.num_batches_per_epoch = 32  # Increased to maintain total samples
-    config.sample.num_image_per_prompt = 2  # Reduced from 4 to 2 for memory efficiency
+    config.sample.batch_size = 6  # Reduced from 4 to 2 per GPU
+    config.sample.num_batches_per_epoch = 59  # Increased to maintain total samples
+    config.sample.num_image_per_prompt = 4  # Reduced from 4 to 2 for memory efficiency
     config.sample.sample_time_per_prompt = 1
     config.sample.num_steps = 40
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale = 4.5
-    config.sample.test_batch_size = 2  # Reduced from 4 to 2
+    config.sample.test_batch_size = 6 # Reduced from 4 to 2
     config.sample.train_batch_size = config.sample.batch_size
     
     # Training configuration
     config.train.batch_size = config.sample.train_batch_size
-    config.train.gradient_accumulation_steps = 16  # Adjusted for new batch size
+    config.train.gradient_accumulation_steps = 3  # Adjusted for new batch size
     config.train.num_inner_epochs = 1
     config.train.timestep_fraction = 0.99
     
