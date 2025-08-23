@@ -475,7 +475,6 @@ def main(_):
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
         gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
-        num_processes=num_training_gpus,  # Use 6 GPUs for training
     )
     
     if accelerator.is_main_process:
