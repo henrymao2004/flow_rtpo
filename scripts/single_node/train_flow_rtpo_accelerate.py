@@ -21,7 +21,7 @@ def main():
     
     # Optional: Set master address and port for distributed training
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "29501"
+    os.environ["MASTER_PORT"] = "0"
     
     # Create output directory
     output_dir = f"logs/flow_rtpo/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -64,7 +64,7 @@ def main():
             "accelerate", "launch",
             "--num_processes=8",
             "--num_machines=1", 
-            "--mixed_precision=no",
+            "--mixed_precision=bf16",
             "--dynamo_backend=no",
             train_script,
             f"--config={config_path}:{config_name}"
