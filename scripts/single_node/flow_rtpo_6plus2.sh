@@ -8,7 +8,7 @@ CONFIG_NAME="flow_rtpo_sd3"  # or "flow_rtpo_debug" for testing
 ACCELERATE_CONFIG="/workspace/flow_rtpo/scripts/accelerate_configs/flow_rtpo_6plus2.yaml"
 
 # Set environment variables for multi-GPU
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5  # All 6 GPUs (4 for training, 2 for reward)
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7  # All 8 GPUs (6 for training, 2 for reward)
 export TOKENIZERS_PARALLELISM=false
 export WANDB_PROJECT="flow_rtpo_6plus2"
 
@@ -24,14 +24,14 @@ echo "Starting Flow-RTPO 6+2 GPU Training..."
 echo "Config: $CONFIG_NAME"
 echo "Output Dir: $OUTPUT_DIR"
 echo "GPUs: $CUDA_VISIBLE_DEVICES"
-echo "Training GPUs: 0,1,2,3 (4 GPUs)"
-echo "Reward GPUs: 4,5 (2 GPUs)"
-echo "Number of training processes: 4"
+echo "Training GPUs: 0,1,2,3,4,5 (6 GPUs)"
+echo "Reward GPUs: 6,7 (2 GPUs)"
+echo "Number of training processes: 6"
 
-# Run training with accelerate (4 GPUs for training)
+# Run training with accelerate (6 GPUs for training)
 accelerate launch \
     --config_file=$ACCELERATE_CONFIG \
-    --num_processes=4 \
+    --num_processes=6 \
     --num_machines=1 \
     --machine_rank=0 \
     --main_process_port=29501 \
