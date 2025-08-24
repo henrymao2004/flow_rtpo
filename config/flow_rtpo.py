@@ -60,7 +60,7 @@ def flow_rtpo_sd3():
     # Enhanced hierarchical policy configuration
     config.prompt_editor = ml_collections.ConfigDict()
     config.prompt_editor.learning_rate = 1e-4
-    config.prompt_editor.epsilon_p = 0.03  # Base proximity constraint (减小基础编辑半径)
+    config.prompt_editor.epsilon_p = 0.02  # Base proximity constraint (减小基础编辑半径)
     config.prompt_editor.embedding_dim = 768
     config.prompt_editor.reg_weight = 0.1  # Regularization weight
     config.prompt_editor.perturbation_scale = 0.01  # Raw mu scaling factor
