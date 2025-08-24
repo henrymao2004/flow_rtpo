@@ -171,7 +171,7 @@ def flow_rtpo_large():
     # Larger batch settings
     config.sample.batch_size = 16
     config.sample.num_batches_per_epoch = 8
-    config.sample.num_image_per_prompt = 12
+    config.sample.num_image_per_prompt = 4
     config.train.gradient_accumulation_steps = 4
     
     # Extended training
@@ -180,10 +180,63 @@ def flow_rtpo_large():
     config.eval_freq = 10
     
     # More aggressive toxicity optimization
-    config.toxicity_reward.w_cvar = 0.2
-    config.toxicity_reward.tau = 0.05  # Top 5% for even more extreme cases
+    config.toxicity_reward.w_cvar = 1.0
+    config.toxicity_reward.tau = 0.2  
     
     config.run_name = "flow_rtpo_large_scale"
+    config.save_dir = f'logs/flow_rtpo/{config.run_name}'
+    
+    return config
+
+
+def flow_rtpo_memory_optimized():
+    """Memory-optimized configuration to prevent CUDA OOM errors."""
+    config = flow_rtpo_sd3()
+    
+    # Reduce batch sizes to minimize memory usage
+    config.sample.batch_size = 1  # Reduce from 2 to 1
+    config.sample.num_batches_per_epoch = 44  # Increase to maintain same total samples
+    config.sample.num_image_per_prompt = 2  # Reduce from 4 to 2
+    config.sample.test_batch_size = 1  # Reduce from 4 to 1
+    config.sample.train_batch_size = config.sample.batch_size
+    
+    # Reduce resolution to save memory
+    config.resolution = 512  # Reduce from 768 to 512
+    config.height = 512
+    config.width = 512
+    
+    # Reduce sampling steps
+    config.sample.num_steps = 8  # Reduce from 10 to 8
+    config.sample.eval_num_steps = 20  # Reduce from 40 to 20
+    
+    # Enable gradient checkpointing to save memory
+    config.gradient_checkpointing = True
+    
+    # Reduce LoRA rank to save memory
+    config.lora_rank = 8  # Reduce from 16 to 8
+    config.lora_alpha = 16  # Reduce from 32 to 16
+    
+    # Reduce prompt editor parameters
+    config.prompt_editor.embedding_dim = 512  # Reduce from 768 to 512
+    config.prompt_editor.decode_num_steps = 10  # Reduce from 20 to 10
+    config.prompt_editor.decode_beam_width = 2  # Reduce from 4 to 2
+    config.prompt_editor.k_samples = 2  # Reduce from 4 to 2
+    
+    # Memory management settings
+    config.mixed_precision = "fp16"  # Use fp16 instead of bf16 for better memory efficiency
+    config.allow_tf32 = False  # Disable tf32 to save memory
+    
+    # Reduce dataset size for testing
+    config.max_prompts = 10  # Reduce for testing
+    
+    # Training adjustments
+    config.train.gradient_accumulation_steps = 22  # Adjust for new batch size
+    config.train.num_inner_epochs = 1
+    
+    # Evaluation settings
+    config.eval.num_samples = 10  # Reduce from 20 to 10
+    
+    config.run_name = "flow_rtpo_memory_optimized"
     config.save_dir = f'logs/flow_rtpo/{config.run_name}'
     
     return config
@@ -197,6 +250,8 @@ def get_config(config_name="flow_rtpo_sd3"):
         return flow_rtpo_debug()
     elif config_name == "flow_rtpo_large":
         return flow_rtpo_large()
+    elif config_name == "flow_rtpo_memory_optimized":
+        return flow_rtpo_memory_optimized()
     else:
         return flow_rtpo_sd3()
 

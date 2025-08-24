@@ -661,6 +661,11 @@ def main(_):
     # Load SD3 pipeline
     pipeline = StableDiffusion3Pipeline.from_pretrained(config.pretrained.model)
     
+    # Memory management: Clear cache after loading large models
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        logger.info("CUDA cache cleared after pipeline loading")
+    
     # Freeze base model components
     pipeline.vae.requires_grad_(False)
     pipeline.text_encoder.requires_grad_(False)
@@ -682,6 +687,11 @@ def main(_):
         )
         pipeline.transformer = get_peft_model(pipeline.transformer, lora_config)
         pipeline.transformer.train()
+    
+    # Enable gradient checkpointing to save memory
+    if config.get('gradient_checkpointing', False):
+        pipeline.transformer.enable_gradient_checkpointing()
+        logger.info("Gradient checkpointing enabled for memory optimization")
     
     # Initialize enhanced prompt editor with adaptive constraints and semantic regularization
     prompt_editor = PromptEditorPolicy(
