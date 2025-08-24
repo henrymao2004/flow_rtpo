@@ -563,7 +563,7 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
                     "sample_id": sample_id,
                     "epoch": epoch,
                     "batch": batch_idx,
-                    "prompt_idx": prompt_idx,
+                    "prompt_idx": original_idx,  # Fix: use original_idx instead of undefined prompt_idx
                     "img_idx": img_idx,
                     "original_prompt": sample["original_prompt"],
                     "modified_prompt": sample["modified_prompt"],
@@ -889,6 +889,7 @@ def main(_):
         epoch_samples = []
         epoch_prompts = []
         epoch_metadata = []
+        epoch_clip_scores = []  # Track CLIP similarity scores for quality_mean
         
         for batch_idx, (prompts, metadata) in enumerate(train_dataloader):
             if batch_idx >= config.sample.num_batches_per_epoch:
@@ -920,10 +921,13 @@ def main(_):
                     batch_rewards, batch_reward_metadata = reward_fn(batch_images, batch_prompts, [{}] * len(batch_samples))
                     logger.info("Reward computation completed!")
                     
-                    # Assign rewards to samples
+                    # Assign rewards to samples and collect CLIP scores
                     for i, sample in enumerate(batch_samples):
                         sample["reward"] = batch_rewards[i]
                         sample["final_toxicity"] = batch_reward_metadata["toxicity_scores"]["primary"][i]
+                    
+                    # Collect CLIP similarity scores for epoch quality_mean
+                    epoch_clip_scores.extend(batch_reward_metadata["quality_scores"]["clip_similarity"])
                 else:
                     # Non-main processes: initialize dummy rewards that will be overwritten by broadcast
                     batch_rewards = [0.0] * len(batch_samples)
@@ -1061,7 +1065,7 @@ def main(_):
                 "mean_toxicity": np.mean(all_toxicity_scores),
                 "max_toxicity": max(all_toxicity_scores),
                 "cvar_mean": np.mean(all_rewards),  # Approximate CVaR from rewards
-                "quality_mean": 0.0  # Will be computed from individual samples if needed
+                "quality_mean": float(np.mean(epoch_clip_scores)) if epoch_clip_scores else 0.0
             },
             "cvar_threshold": np.percentile(all_rewards, 10) if len(all_rewards) > 0 else 0.0,
             "toxicity_scores": {"primary": all_toxicity_scores}
@@ -1095,6 +1099,20 @@ def main(_):
         ]
         
         train_info = defaultdict(list)
+        
+        # Target-KL control variables
+        target_kl = 0.01  # Target KL divergence
+        beta_min = 1e-6
+        beta_max = 1.0
+        current_beta = config.train.beta
+        kl_history = []
+        
+        # Target-KL control variables
+        target_kl = 0.01  # Target KL divergence
+        current_beta = config.train.beta  # Initial beta value
+        beta_min = 0.001
+        beta_max = 0.1
+        kl_history = []  # History for KL averaging
         
         for inner_epoch in range(config.train.num_inner_epochs):
             logger.info(f"Training inner epoch {inner_epoch + 1}/{config.train.num_inner_epochs}")
@@ -1141,17 +1159,34 @@ def main(_):
                             )
                             policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
                             
-                            # KL regularization
+                            # KL regularization with adaptive beta
                             if config.train.beta > 0:
                                 kl_loss = ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean() / (2 * std_dev_t ** 2)
                                 kl_loss = torch.mean(kl_loss)
-                                flow_loss = policy_loss + config.train.beta * kl_loss
+                                flow_loss = policy_loss + current_beta * kl_loss
                             else:
                                 flow_loss = policy_loss
                                 kl_loss = torch.tensor(0.0)
                             
                             # Backward pass
                             accelerator.backward(flow_loss)
+                            
+                            # Gradient clipping
+                            torch.nn.utils.clip_grad_norm_(transformer_trainable_parameters, 1.0)
+                            
+                            # Track KL divergence for adaptive control
+                            if config.train.beta > 0:
+                                kl_history.append(kl_loss.item())
+                                if len(kl_history) > 10:  # Keep last 10 KL values
+                                    kl_history.pop(0)
+                                kl_avg = np.mean(kl_history)
+                                
+                                # Target-KL control: adjust beta based on KL divergence
+                                if kl_avg > target_kl * 1.5:
+                                    current_beta *= 1.5
+                                elif kl_avg < target_kl / 1.5:
+                                    current_beta /= 1.5
+                                current_beta = float(np.clip(current_beta, beta_min, beta_max))
                             
                             train_info["flow_policy_loss"].append(policy_loss.item())
                             train_info["kl_loss"].append(kl_loss.item())
@@ -1198,9 +1233,18 @@ def main(_):
                 current_rewards = [sample["reward"] for sample in epoch_samples]
                 baseline_value = np.mean(current_rewards)
                 
-                # Use enhanced policy gradient training method
+                # Group trajectories by group_key for GRPO (Group Relative Policy Optimization)
+                from collections import defaultdict
+                groups = defaultdict(list)
+                for traj in trajectories:
+                    groups[traj['group_key']].append(traj)
+                
+                grouped_trajectories = list(groups.values())  # Each element is k samples from same original prompt
+                logger.info(f"GRPO grouping: {len(trajectories)} trajectories grouped into {len(grouped_trajectories)} groups")
+                
+                # Use enhanced policy gradient training method with grouped trajectories
                 prompt_metrics = prompt_editor.module.update_policy(
-                    trajectories, prompt_optimizer, baseline_value
+                    grouped_trajectories, prompt_optimizer, baseline_value
                 )
                 
                 # Log enhanced metrics

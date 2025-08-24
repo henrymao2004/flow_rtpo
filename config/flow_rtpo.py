@@ -62,7 +62,7 @@ def flow_rtpo_sd3():
     config.prompt_editor.learning_rate = 1e-4
     config.prompt_editor.epsilon_p = 0.02  # Base proximity constraint (减小基础编辑半径)
     config.prompt_editor.embedding_dim = 768
-    config.prompt_editor.reg_weight = 0.1  # Regularization weight
+    config.prompt_editor.reg_weight = 0.03  # Reduced regularization weight (from 0.1 to 0.03)
     config.prompt_editor.perturbation_scale = 0.01  # Raw mu scaling factor
     
     # Adaptive epsilon parameters
@@ -71,8 +71,8 @@ def flow_rtpo_sd3():
     config.prompt_editor.smooth_constant = 0.01  # Smoothing constant c
     
     # Semantic regularization parameters
-    config.prompt_editor.semantic_threshold = 0.9  # Semantic similarity threshold τ (降低到合理范围)
-    config.prompt_editor.semantic_alpha = 1.0  # Semantic regularization weight α (增强语义约束)
+    config.prompt_editor.semantic_threshold = 0.85  # Reduced semantic similarity threshold (from 0.9 to 0.85)
+    config.prompt_editor.semantic_alpha = 0.3  # Reduced semantic regularization weight (from 1.0 to 0.3)
     config.prompt_editor.k_samples = 4  # Samples per prompt for GRPO
     
     # vec2text decoding parameters
@@ -221,6 +221,11 @@ def flow_rtpo_memory_optimized():
     config.prompt_editor.decode_num_steps = 10  # Reduce from 20 to 10
     config.prompt_editor.decode_beam_width = 2  # Reduce from 4 to 2
     config.prompt_editor.k_samples = 2  # Reduce from 4 to 2
+    
+    # Apply reduced regularization weights to memory-optimized config
+    config.prompt_editor.reg_weight = 0.03  # Reduced regularization weight
+    config.prompt_editor.semantic_threshold = 0.85  # Reduced semantic similarity threshold
+    config.prompt_editor.semantic_alpha = 0.3  # Reduced semantic regularization weight
     
     # Memory management settings
     config.mixed_precision = "fp16"  # Use fp16 instead of bf16 for better memory efficiency
