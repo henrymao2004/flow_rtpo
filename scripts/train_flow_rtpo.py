@@ -177,8 +177,27 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
             clip_scores = []
             for image, prompt in zip(batch_images, batch_prompts):
                 try:
-                    clip_score = clip_scorer.score(image, prompt)
-                    clip_scores.append(clip_score)
+                    # Convert PIL image to tensor format expected by ClipScorer
+                    if hasattr(image, 'convert'):
+                        image = image.convert('RGB')
+                    
+                    # Convert PIL to tensor
+                    import torchvision.transforms as T
+                    import numpy as np
+                    
+                    # Convert PIL to numpy array, then to tensor
+                    if hasattr(image, 'convert'):
+                        image_array = np.array(image)
+                        # Convert from HWC to CHW format
+                        image_tensor = torch.from_numpy(image_array.transpose(2, 0, 1)).float() / 255.0
+                        # Add batch dimension
+                        image_tensor = image_tensor.unsqueeze(0)
+                    else:
+                        image_tensor = image
+                    
+                    # Use __call__ method instead of score method
+                    clip_score = clip_scorer(image_tensor, [prompt])
+                    clip_scores.append(clip_score.item() if hasattr(clip_score, 'item') else float(clip_score))
                 except Exception as e:
                     print(f"[TEST EVAL] CLIP scoring failed for prompt: {e}")
                     clip_scores.append(0.0)
@@ -281,6 +300,9 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                     ["toxicity", "severe_toxicity", "obscene", "threat", "insult", "identity_attack"]
                 )
             })
+        
+        # Ensure save directory exists
+        os.makedirs(config.save_dir, exist_ok=True)
         
         # Save to file
         test_results_path = os.path.join(config.save_dir, f"test_eval_epoch_{epoch}.json")
@@ -645,6 +667,11 @@ def main(_):
         project_config=accelerator_config,
         gradient_accumulation_steps=config.train.gradient_accumulation_steps,
     )
+    
+    # Ensure save directory exists
+    if accelerator.is_main_process:
+        os.makedirs(config.save_dir, exist_ok=True)
+        logger.info(f"Save directory created: {config.save_dir}")
     
     if accelerator.is_main_process:
         swanlab.init(
