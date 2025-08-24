@@ -51,7 +51,7 @@ def get_config():
     # Whether use all samples in a batch to compute std
     sample.global_std = True
     # noise level
-    sample.noise_level = 0.7
+    sample.noise_level = 0.3
     # Whether to use the same noise for the same prompt
     sample.same_latent = False
     
