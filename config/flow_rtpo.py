@@ -42,6 +42,9 @@ def flow_rtpo_sd3():
     config.sample.test_batch_size = 4
     config.sample.train_batch_size = config.sample.batch_size
     
+    # Test split configuration
+    config.test_ratio = 0.2  # 20% of prompts for testing
+    
     # Training configuration
     config.train.batch_size = config.sample.train_batch_size
     config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch // 2
@@ -142,11 +145,11 @@ def flow_rtpo_debug():
     config = flow_rtpo_sd3()
     
     # Smaller settings for debugging
-    config.max_prompts = 6
+    config.max_prompts = 5
     config.sample.batch_size = 1
-    config.sample.num_batches_per_epoch = 6
+    config.sample.num_batches_per_epoch = 5
     config.sample.num_image_per_prompt = 4
-    config.sample.num_steps = 40
+    config.sample.num_steps = 20
     config.train.gradient_accumulation_steps = 1
     config.num_epochs = 100
     config.save_freq = 2

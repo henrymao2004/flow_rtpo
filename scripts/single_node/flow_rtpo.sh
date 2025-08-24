@@ -4,7 +4,7 @@
 set -e
 
 # Configuration
-CONFIG_NAME="flow_rtpo_sd3"  # or "flow_rtpo_debug" for testing
+CONFIG_NAME="flow_rtpo_debug"  # or "flow_rtpo_debug" for testing
 ACCELERATE_CONFIG="/workspace/flow_rtpo/scripts/accelerate_configs/multi_gpu.yaml"
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
