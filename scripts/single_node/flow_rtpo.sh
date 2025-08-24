@@ -14,6 +14,9 @@ export CUDA_CACHE_DISABLE=0
 export CUDA_CACHE_MAXSIZE=0
 export CUDA_MODULE_LOADING=LAZY
 export TORCH_USE_CUDA_DSA=1
+# Additional CUDA environment variables for stability
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
 # Additional memory optimizations
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
