@@ -31,8 +31,8 @@ def flow_rtpo_sd3():
     config.prompt_fn_kwargs = {}
     
     # Sampling configuration - Reduced for 8 GPUs
-    config.sample.batch_size = 4  # Reduced from 4 to 2 per GPU
-    config.sample.num_batches_per_epoch = 88  # Increased to maintain total samples
+    config.sample.batch_size = 2  # Reduced from 4 to 2 per GPU
+    config.sample.num_batches_per_epoch = 176  # Increased to maintain total samples
     config.sample.num_image_per_prompt = 2 # Reduced from 4 to 2 for memory efficiency
     config.sample.sample_time_per_prompt = 1
     config.sample.num_steps = 10
