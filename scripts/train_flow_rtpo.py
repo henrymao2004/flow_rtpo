@@ -52,28 +52,64 @@ config_flags.DEFINE_config_file("config", "config/flow_rtpo.py", "Training confi
 logger = get_logger(__name__)
 
 
-def start_reward_workers(num_reward_gpus, reward_fn_config, result_queue, stop_event):
-    """Start dedicated reward computation workers using subprocess for proper GPU isolation."""
-    import subprocess
-    import sys
+def start_reward_workers(num_reward_gpus, reward_fn_config, reward_queue, stop_event):
+    """Start dedicated reward computation workers using multiprocessing for proper queue sharing."""
+    from multiprocessing import Process
+    
+    def reward_worker_process(worker_id, gpu_id, config, queue, stop_event):
+        # Set CUDA_VISIBLE_DEVICES BEFORE importing torch/transformers
+        import os
+        import queue
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:256"
+        
+        # Now import torch and set device
+        import torch
+        torch.cuda.set_device(0)  # Use local device 0 (which is physical GPU gpu_id)
+        print(f"Reward worker {worker_id} started on GPU {gpu_id} (local device 0)")
+        
+        # Import reward function after GPU setup
+        from flow_grpo.toxicity_rewards import toxicity_reward_function
+        
+        # Initialize reward function
+        reward_fn = toxicity_reward_function(
+            device="cuda:0",  # Use local device 0
+            vlm_model=config["vlm_model"],
+            w_cvar=config["w_cvar"],
+            w_quality=config["w_quality"],
+            vlm_batch_size=config["vlm_batch_size"]
+        )
+        
+        print(f"Reward worker {worker_id} initialized successfully")
+        
+        while not stop_event.is_set():
+            try:
+                # Get task from queue with timeout
+                batch_id, batch_images, batch_prompts, batch_metadata = queue.get(timeout=1.0)
+                
+                # Compute rewards
+                batch_rewards, reward_metadata = reward_fn(batch_images, batch_prompts, batch_metadata)
+                
+                # Put results back
+                queue.put((batch_id, batch_rewards, reward_metadata))
+                print(f"Reward worker {worker_id} processed batch {batch_id}")
+                
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Reward worker {worker_id} error: {e}")
+                # Put error result with a default batch_id if not available
+                error_batch_id = batch_id if 'batch_id' in locals() else f"error_{worker_id}"
+                queue.put((error_batch_id, None, {"error": str(e)}))
+        
+        print(f"Reward worker {worker_id} stopped")
     
     workers = []
     for i in range(num_reward_gpus):
         phys_gpu = 6 + i  # Use GPUs 6, 7 for reward computation
-        env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = str(phys_gpu)
-        env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:256"
-        
-        # Launch reward worker as separate process with proper env isolation
-        p = subprocess.Popen([
-            sys.executable, "scripts/reward_worker_entry.py",
-            "--worker_id", str(i),
-            "--gpu_id", str(phys_gpu),
-            "--vlm_model", reward_fn_config["vlm_model"],
-            "--w_cvar", str(reward_fn_config["w_cvar"]),
-            "--w_quality", str(reward_fn_config["w_quality"]),
-            "--vlm_batch_size", str(reward_fn_config["vlm_batch_size"])
-        ], env=env)
+        p = Process(target=reward_worker_process, 
+                   args=(i, phys_gpu, reward_fn_config, reward_queue, stop_event))
+        p.start()
         workers.append(p)
     
     return workers
