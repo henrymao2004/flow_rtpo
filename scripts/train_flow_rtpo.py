@@ -1153,12 +1153,8 @@ def main(_):
         
         train_info = defaultdict(list)
         
-        # Target-KL control variables
-        target_kl = 0.01  # Target KL divergence
-        current_beta = config.train.beta  # Initial beta value
-        beta_min = 0.001
-        beta_max = 0.1
-        kl_history = []  # History for KL averaging
+        # KL regularization coefficient
+        current_beta = config.train.beta  # Fixed beta value
         
         for inner_epoch in range(config.train.num_inner_epochs):
             logger.info(f"Training inner epoch {inner_epoch + 1}/{config.train.num_inner_epochs}")
@@ -1205,9 +1201,9 @@ def main(_):
                             )
                             policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
                             
-                            # KL regularization with adaptive beta
+                            # KL regularization with fixed beta
                             if config.train.beta > 0:
-                                kl_loss = ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean() / (2 * std_dev_t ** 2)
+                                kl_loss = ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean(dim=(1,2,3), keepdim=True) / (2 * std_dev_t ** 2)
                                 kl_loss = torch.mean(kl_loss)
                                 flow_loss = policy_loss + current_beta * kl_loss
                             else:
@@ -1220,19 +1216,9 @@ def main(_):
                             # Gradient clipping
                             torch.nn.utils.clip_grad_norm_(transformer_trainable_parameters, 1.0)
                             
-                            # Track KL divergence for adaptive control
+                            # Track KL divergence for logging
                             if config.train.beta > 0:
-                                kl_history.append(kl_loss.item())
-                                if len(kl_history) > 10:  # Keep last 10 KL values
-                                    kl_history.pop(0)
-                                kl_avg = np.mean(kl_history)
-                                
-                                # Target-KL control: adjust beta based on KL divergence
-                                if kl_avg > target_kl * 1.5:
-                                    current_beta *= 1.5
-                                elif kl_avg < target_kl / 1.5:
-                                    current_beta /= 1.5
-                                current_beta = float(np.clip(current_beta, beta_min, beta_max))
+                                pass  # No adaptive control needed
                             
                             train_info["flow_policy_loss"].append(policy_loss.item())
                             train_info["kl_loss"].append(kl_loss.item())
