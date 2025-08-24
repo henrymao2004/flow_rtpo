@@ -1,7 +1,11 @@
 import sys
+import os
 
 # Add flow_grpo to Python path
-sys.path.insert(0, '/workspace/flow_rtpo/flow_grpo')
+current_dir = os.path.dirname(os.path.abspath(__file__))
+workspace_dir = os.path.dirname(current_dir)
+flow_grpo_path = os.path.join(workspace_dir, 'flow_grpo')
+sys.path.insert(0, flow_grpo_path)
 
 from collections import defaultdict
 import contextlib
