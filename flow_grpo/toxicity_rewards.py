@@ -14,6 +14,7 @@ import warnings
 import multiprocessing as mp
 import pickle
 import signal
+import os
 warnings.filterwarnings("ignore")
 
 
@@ -94,52 +95,67 @@ class ToxicityRewardSystem:
         # Track last CVaR threshold for logging/fallbacks
         self.last_cvar_threshold = None
         
+        # Set memory optimization environment variables
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:256"
+        
         # Initialize VLM for image-text evaluation
         try:
             print(f"[DEBUG] Loading LLaVA model: {vlm_model}")
-            from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
+            print(f"[DEBUG] Device: {device}")
+            print(f"[DEBUG] Available GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
+            print(f"[DEBUG] Used GPU memory before loading: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
+            
+            from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration, BitsAndBytesConfig
             
             print(f"[DEBUG] Loading LLaVA processor...")
             self.vlm_processor = LlavaNextProcessor.from_pretrained(vlm_model)
             print(f"[DEBUG] LLaVA processor loaded successfully")
             
-            print(f"[DEBUG] Loading LLaVA model with stable configuration...")
-            print(f"[DEBUG] Available GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
-            print(f"[DEBUG] Used GPU memory before loading: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
+            # Configure 4-bit quantization for memory efficiency
+            if enable_quantization:
+                print(f"[DEBUG] Using 4-bit quantization for memory efficiency")
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                )
+            else:
+                bnb_config = None
+                print(f"[DEBUG] Quantization disabled")
             
-            # Disable quantization and FlashAttention for stability
-            print(f"[DEBUG] Using stable configuration: single device, SDPA attention, no quantization")
+            # Load model with memory-optimized configuration
+            print(f"[DEBUG] Loading LLaVA model with memory optimization...")
             
-            # Load model with simple, stable configuration
+            # Determine the local device ID (0 for the isolated GPU)
+            local_device_id = 0  # Since we're using CUDA_VISIBLE_DEVICES to isolate
+            
             self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
                 vlm_model,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                device_map="auto" if device == "cuda" else None,   # Use "auto" for better device mapping
+                quantization_config=bnb_config,
+                device_map={"": local_device_id},  # Force everything to local device 0
+                torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=True,
-                attn_implementation="sdpa",                   # 改成 sdpa 更稳
-                # quantization_config=None                    # 暂时禁用 8bit
-                max_memory={0: "30GB"},  # Reduced from 70GB to 30GB for memory efficiency
-                offload_folder="offload",  # Enable disk offloading for large models
+                attn_implementation="sdpa",  # Use SDPA for memory efficiency
             )
             
-            # Explicitly move to device if device_map didn't work as expected
-            if device == "cuda" and next(self.vlm_model.parameters()).device.type == "cpu":
-                print(f"[DEBUG] Model still on CPU, explicitly moving to {device}")
-                self.vlm_model = self.vlm_model.to(device)
-            print(f"[DEBUG] Successfully loaded with SDPA attention, single device (cuda:0)")
+            print(f"[DEBUG] LLaVA model loaded successfully")
+            print(f"[DEBUG] Model device: {next(self.vlm_model.parameters()).device}")
+            
+            # Set generation config for memory efficiency
+            self.vlm_model.generation_config.max_new_tokens = 64  # Keep reward decoding short
+            self.vlm_model.generation_config.temperature = 0.2
+            self.vlm_model.generation_config.do_sample = True
+            self.vlm_model.generation_config.top_p = 0.95
+            self.vlm_model.generation_config.repetition_penalty = 1.1
             
             print(f"[DEBUG] LLaVA model loaded, setting to eval mode...")
             self.vlm_model.eval()
             
-            # Debug: Print actual device map to understand layer distribution
-            if hasattr(self.vlm_model, 'hf_device_map'):
-                print(f"[DEBUG] Actual device map: {self.vlm_model.hf_device_map}")
-            else:
-                print(f"[DEBUG] Model device: {next(self.vlm_model.parameters()).device}")
-            
             print(f"[DEBUG] Used GPU memory after loading: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
             print(f"[DEBUG] LLaVA initialization completed successfully")
             self.use_llava = True
+            
         except Exception as e:
             print(f"Failed to load LLaVA model, using generic pipeline: {e}")
             self.vlm = pipeline(
@@ -156,8 +172,6 @@ class ToxicityRewardSystem:
         # Initialize CLIP for image-text similarity
         self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
         self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-        
-        # Aesthetic scorer removed per user request
         
         # Store model path for subprocess use
         self.vlm_model_path = vlm_model
@@ -814,7 +828,8 @@ def toxicity_reward_function(device: str = "cuda",
         vlm_model=vlm_model,
         w_cvar=w_cvar,
         w_quality=w_quality,
-        vlm_batch_size=vlm_batch_size
+        vlm_batch_size=vlm_batch_size,
+        enable_quantization=True  # Enable 4-bit quantization by default
     )
     
     def _fn(images, prompts, metadata):

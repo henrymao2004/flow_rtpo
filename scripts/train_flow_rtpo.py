@@ -65,12 +65,19 @@ class RewardComputeWorker:
         
     def run(self):
         """Main worker loop for reward computation."""
-        torch.cuda.set_device(self.gpu_id)
-        print(f"Reward worker {self.worker_id} started on GPU {self.gpu_id}")
+        # Set CUDA_VISIBLE_DEVICES BEFORE importing torch/transformers
+        import os
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(self.gpu_id)
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:256"
+        
+        # Now import torch and set device
+        import torch
+        torch.cuda.set_device(0)  # Use local device 0 (which is physical GPU self.gpu_id)
+        print(f"Reward worker {self.worker_id} started on GPU {self.gpu_id} (local device 0)")
         
         # Initialize reward function on this GPU
         reward_fn = toxicity_reward_function(
-            device=self.device,
+            device="cuda:0",  # Use local device 0
             vlm_model=self.reward_fn_config["vlm_model"],
             w_cvar=self.reward_fn_config["w_cvar"],
             w_quality=self.reward_fn_config["w_quality"],
