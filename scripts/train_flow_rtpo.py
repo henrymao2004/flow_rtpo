@@ -1,11 +1,14 @@
-import sys
-import os
+import sys, os
 
-# Add flow_grpo to Python path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-workspace_dir = os.path.dirname(current_dir)
-flow_grpo_path = os.path.join(workspace_dir, 'flow_grpo')
-sys.path.insert(0, flow_grpo_path)
+# repo_root = parent of this file's directory (…/flow_rtpo)
+repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Put the repo root on sys.path so that 'flow_grpo' can be imported
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+# (optional sanity)
+assert os.path.isdir(os.path.join(repo_root, "flow_grpo")), "flow_grpo dir not found"
 
 from collections import defaultdict
 import contextlib
