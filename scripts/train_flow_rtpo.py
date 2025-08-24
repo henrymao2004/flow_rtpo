@@ -672,27 +672,13 @@ def main(_):
     
     # Memory debugging: Print real available memory for current device only
     if torch.cuda.is_available():
-        # Set device to current process's assigned GPU
-        torch.cuda.set_device(accelerator.local_process_index)
-        dev = torch.cuda.current_device()
-        free, total = torch.cuda.mem_get_info(dev)
-        print(f"[rank {accelerator.process_index}] cuda:{dev} free={free/1e9:.2f}GB / total={total/1e9:.2f}GB")
-    
-    # Global memory snapshot from rank 0 only (using nvidia-smi to avoid context creation)
-    if accelerator.process_index == 0:
-        try:
-            import subprocess
-            print("=== Global GPU Memory Status (from nvidia-smi) ===")
-            result = subprocess.check_output(["nvidia-smi", "--query-gpu=index,memory.used,memory.total", "--format=csv,noheader,nounits"]).decode().strip()
-            for line in result.split('\n'):
-                if line.strip():
-                    parts = line.split(', ')
-                    if len(parts) >= 3:
-                        gpu_id, used_mb, total_mb = parts[0], parts[1], parts[2]
-                        print(f"GPU {gpu_id}: {used_mb}MB used / {total_mb}MB total")
-            print("================================================")
-        except Exception as e:
-            print(f"Could not get nvidia-smi output: {e}")
+        # Make sure this rank uses exactly one device
+        torch.cuda.set_device(accelerator.local_process_index)          # 0..N-1 on each node
+        with torch.cuda.device(torch.cuda.current_device()):            # important on some PT versions
+            free, total = torch.cuda.mem_get_info()                     # no argument -> current device
+        
+        print(f"[rank {accelerator.process_index}] cuda:{torch.cuda.current_device()} "
+              f"free={free/1e9:.2f}GB total={total/1e9:.2f}GB")
     
     # Ensure save directory exists
     if accelerator.is_main_process:
