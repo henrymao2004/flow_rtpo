@@ -13,8 +13,6 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5"
 
 # VRAM optimization helpers
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:256")
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
 
 from absl import app, flags
 from accelerate import Accelerator
@@ -26,6 +24,10 @@ from diffusers.utils.torch_utils import is_compiled_module
 import numpy as np
 import torch
 import swanlab
+
+# Enable TF32 for better performance and memory efficiency
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 from functools import partial
 import tqdm
 import tempfile
