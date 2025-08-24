@@ -72,7 +72,7 @@ def flow_rtpo_sd3():
     config.prompt_editor.k_samples = 3  # Samples per prompt for GRPO
     
     # vec2text decoding parameters
-    config.prompt_editor.decode_num_steps = 10  # Number of inversion steps
+    config.prompt_editor.decode_num_steps = 20  # Number of inversion steps
     config.prompt_editor.decode_beam_width = 2  # Beam width for text inversion quality
     
     # Manual sampling for diversity
