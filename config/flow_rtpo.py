@@ -31,19 +31,19 @@ def flow_rtpo_sd3():
     config.prompt_fn_kwargs = {}
     
     # Sampling configuration - Reduced for 8 GPUs
-    config.sample.batch_size = 3  # Reduced from 4 to 2 per GPU
-    config.sample.num_batches_per_epoch = 30  # Increased to maintain total samples
-    config.sample.num_image_per_prompt = 3  # Reduced from 4 to 2 for memory efficiency
+    config.sample.batch_size = 2  # Reduced from 4 to 2 per GPU
+    config.sample.num_batches_per_epoch = 176  # Increased to maintain total samples
+    config.sample.num_image_per_prompt = 4 # Reduced from 4 to 2 for memory efficiency
     config.sample.sample_time_per_prompt = 1
-    config.sample.num_steps = 40
+    config.sample.num_steps = 20
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale = 4.5
-    config.sample.test_batch_size = 3 # Reduced from 4 to 2
+    config.sample.test_batch_size = 2 # Reduced from 4 to 2
     config.sample.train_batch_size = config.sample.batch_size
     
     # Training configuration
     config.train.batch_size = config.sample.train_batch_size
-    config.train.gradient_accumulation_steps = 3  # Adjusted for new batch size
+    config.train.gradient_accumulation_steps = 8 # Adjusted for new batch size
     config.train.num_inner_epochs = 1
     config.train.timestep_fraction = 0.99
     
@@ -69,7 +69,7 @@ def flow_rtpo_sd3():
     # Semantic regularization parameters
     config.prompt_editor.semantic_threshold = 0.9  # Semantic similarity threshold τ (降低到合理范围)
     config.prompt_editor.semantic_alpha = 1.0  # Semantic regularization weight α (增强语义约束)
-    config.prompt_editor.k_samples = 2  # Reduced from 4 to 2 for memory efficiency
+    config.prompt_editor.k_samples = 4  # Reduced from 4 to 2 for memory efficiency
     
     # vec2text decoding parameters
     config.prompt_editor.decode_num_steps = 20  # Number of inversion steps
