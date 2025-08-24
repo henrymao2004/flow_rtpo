@@ -18,63 +18,6 @@ import os
 warnings.filterwarnings("ignore")
 
 
-def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue):
-    """Worker function for subprocess VLM generation."""
-    try:
-        import torch
-        from transformers import LlavaNextForConditionalGeneration, LlavaNextProcessor
-        import pickle
-        
-        print(f"[SUBPROCESS] Loading model: {model_path}", flush=True)
-        processor = LlavaNextProcessor.from_pretrained(model_path)
-        model = LlavaNextForConditionalGeneration.from_pretrained(
-            model_path,
-            torch_dtype=torch.float16,
-            device_map=0,
-            low_cpu_mem_usage=True,
-            attn_implementation="sdpa",
-        )
-        model.eval()
-        print(f"[SUBPROCESS] Model loaded successfully", flush=True)
-        
-        # Deserialize inputs
-        inputs = pickle.loads(inputs_pkl)
-        print(f"[SUBPROCESS] Inputs deserialized", flush=True)
-        
-        # Move to GPU
-        model_device = next(model.parameters()).device
-        model_inputs = {}
-        for k, v in inputs.items():
-            if torch.is_tensor(v):
-                model_inputs[k] = v.to(model_device)
-            else:
-                model_inputs[k] = v
-        print(f"[SUBPROCESS] Inputs moved to device: {model_device}", flush=True)
-        
-        # Generate
-        print(f"[SUBPROCESS] Starting generation...", flush=True)
-        with torch.no_grad():
-            outputs = model.generate(
-                **model_inputs,
-                max_new_tokens=50,
-                do_sample=True,
-                temperature=0.8,
-                top_p=0.95,
-                repetition_penalty=1.1,
-                pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
-            )
-        print(f"[SUBPROCESS] Generation completed", flush=True)
-        
-        # Decode
-        responses = processor.batch_decode(outputs, skip_special_tokens=True)
-        print(f"[SUBPROCESS] Decoded {len(responses)} responses", flush=True)
-        result_queue.put(responses)
-        
-    except Exception as e:
-        print(f"[SUBPROCESS ERROR] {str(e)}", flush=True)
-        error_queue.put(str(e))
-
-
 class ToxicityRewardSystem:
     """Complete toxicity reward system with CVaR optimization for Flow-RTPO."""
     
@@ -177,52 +120,6 @@ class ToxicityRewardSystem:
         self.vlm_model_path = vlm_model
         
     # Aesthetic scorer initialization removed per user request
-    
-    def safe_generate(self, inputs: Dict, timeout: int = 60) -> List[str]:
-        """Safe VLM generation with subprocess timeout."""
-        try:
-            # Serialize inputs
-            inputs_pkl = pickle.dumps(inputs)
-            
-            # Create queues
-            result_queue = mp.Queue()
-            error_queue = mp.Queue()
-            
-            # Start subprocess
-            process = mp.Process(
-                target=_vlm_generate_worker,
-                args=(self.vlm_model_path, inputs_pkl, result_queue, error_queue)
-            )
-            process.start()
-            
-            # Wait with timeout
-            process.join(timeout)
-            
-            if process.is_alive():
-                print(f"[VLM TIMEOUT] Generation timed out after {timeout}s, terminating process", flush=True)
-                process.terminate()
-                process.join(5)  # Wait 5s for clean termination
-                if process.is_alive():
-                    process.kill()  # Force kill if needed
-                
-                # Clean up GPU memory
-                torch.cuda.empty_cache()
-                raise TimeoutError(f"VLM generation timed out after {timeout}s")
-            
-            # Check for errors
-            if not error_queue.empty():
-                error = error_queue.get()
-                raise RuntimeError(f"VLM generation failed: {error}")
-            
-            # Get results
-            if not result_queue.empty():
-                return result_queue.get()
-            else:
-                raise RuntimeError("No results from VLM generation")
-                
-        except Exception as e:
-            print(f"[VLM ERROR] Safe generation failed: {e}", flush=True)
-            raise e
     
     def evaluate_vlm_response(self, images: List[Image.Image], prompts: List[str]) -> List[str]:
         """Get VLM responses for image-prompt pairs with batch processing optimization."""
@@ -337,20 +234,37 @@ class ToxicityRewardSystem:
                     
                     start_generation_time = time.time()
                     
-                    # Try safe batch generation with subprocess timeout
+                    # Try direct generation with the already-loaded model
                     try:
-                        print(f"[VLM GEN] Starting safe generation with 60s timeout", flush=True)
-                        batch_responses = self.safe_generate(batch_inputs, timeout=60)
+                        print(f"[VLM GEN] Starting direct generation", flush=True)
+                        
+                        with torch.no_grad():
+                            # Move inputs to the model device
+                            dev = next(self.vlm_model.parameters()).device
+                            batch_inputs = {k: (v.to(dev) if hasattr(v, "to") else v) for k, v in batch_inputs.items()}
+                            
+                            outputs = self.vlm_model.generate(
+                                **batch_inputs,
+                                max_new_tokens=64,  # Keep reward decoding short
+                                do_sample=True,
+                                temperature=0.2,
+                                top_p=0.95,
+                                repetition_penalty=1.1,
+                                pad_token_id=getattr(self.vlm_processor, 'eos_token_id',
+                                                   getattr(self.vlm_processor, 'tokenizer', self.vlm_processor).eos_token_id)
+                            )
+                            
+                            batch_responses = self.vlm_processor.batch_decode(outputs, skip_special_tokens=True)
                         
                         generation_time = time.time() - start_generation_time
-                        print(f"[VLM STEP] Batch generation completed in {generation_time:.3f}s!", flush=True)
+                        print(f"[VLM STEP] Direct generation completed in {generation_time:.3f}s!", flush=True)
                         print(f"[VLM STEP] Got {len(batch_responses)} responses", flush=True)
                         
                         # Add batch responses to overall results
                         all_batch_responses.extend(batch_responses)
                         
-                    except (TimeoutError, Exception) as e:
-                        print(f"[VLM ERROR] Batch generation failed: {e}", flush=True)
+                    except Exception as e:
+                        print(f"[VLM ERROR] Direct generation failed: {e}", flush=True)
                         print(f"[VLM FALLBACK] Using prompts as fallback for this batch", flush=True)
                         
                         # Fallback: use original prompts for this batch

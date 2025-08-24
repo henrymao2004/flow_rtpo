@@ -52,73 +52,30 @@ config_flags.DEFINE_config_file("config", "config/flow_rtpo.py", "Training confi
 logger = get_logger(__name__)
 
 
-class RewardComputeWorker:
-    """Dedicated worker for reward computation on separate GPUs."""
-    
-    def __init__(self, worker_id, gpu_id, reward_fn_config, reward_queue, stop_event):
-        self.worker_id = worker_id
-        self.gpu_id = gpu_id
-        self.reward_fn_config = reward_fn_config
-        self.reward_queue = reward_queue
-        self.stop_event = stop_event
-        self.device = torch.device(f"cuda:{gpu_id}")
-        
-    def run(self):
-        """Main worker loop for reward computation."""
-        # Set CUDA_VISIBLE_DEVICES BEFORE importing torch/transformers
-        import os
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(self.gpu_id)
-        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:256"
-        
-        # Now import torch and set device
-        import torch
-        torch.cuda.set_device(0)  # Use local device 0 (which is physical GPU self.gpu_id)
-        print(f"Reward worker {self.worker_id} started on GPU {self.gpu_id} (local device 0)")
-        
-        # Initialize reward function on this GPU
-        reward_fn = toxicity_reward_function(
-            device="cuda:0",  # Use local device 0
-            vlm_model=self.reward_fn_config["vlm_model"],
-            w_cvar=self.reward_fn_config["w_cvar"],
-            w_quality=self.reward_fn_config["w_quality"],
-            vlm_batch_size=self.reward_fn_config["vlm_batch_size"]
-        )
-        
-        while not self.stop_event.is_set():
-            try:
-                # Get task from queue with timeout
-                task = self.reward_queue.get(timeout=1.0)
-                if task is None:  # Poison pill
-                    break
-                    
-                batch_id, images, prompts, metadata = task
-                
-                # Compute rewards
-                rewards, reward_metadata = reward_fn(images, prompts, metadata)
-                
-                # Put results back
-                self.reward_queue.put((batch_id, rewards, reward_metadata))
-                
-            except queue.Empty:
-                continue
-            except Exception as e:
-                print(f"Reward worker {self.worker_id} error: {e}")
-                # Put error result with a default batch_id if not available
-                error_batch_id = batch_id if 'batch_id' in locals() else f"error_{self.worker_id}"
-                self.reward_queue.put((error_batch_id, None, {"error": str(e)}))
-        
-        print(f"Reward worker {self.worker_id} stopped")
-
-
 def start_reward_workers(num_reward_gpus, reward_fn_config, result_queue, stop_event):
-    """Start dedicated reward computation workers."""
+    """Start dedicated reward computation workers using subprocess for proper GPU isolation."""
+    import subprocess
+    import sys
+    
     workers = []
     for i in range(num_reward_gpus):
-        gpu_id = 6 + i  # Use GPUs 6, 7 for reward computation
-        worker = RewardComputeWorker(i, gpu_id, reward_fn_config, result_queue, stop_event)
-        process = Process(target=worker.run)
-        process.start()
-        workers.append(process)
+        phys_gpu = 6 + i  # Use GPUs 6, 7 for reward computation
+        env = os.environ.copy()
+        env["CUDA_VISIBLE_DEVICES"] = str(phys_gpu)
+        env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:256"
+        
+        # Launch reward worker as separate process with proper env isolation
+        p = subprocess.Popen([
+            sys.executable, "scripts/reward_worker_entry.py",
+            "--worker_id", str(i),
+            "--gpu_id", str(phys_gpu),
+            "--vlm_model", reward_fn_config["vlm_model"],
+            "--w_cvar", str(reward_fn_config["w_cvar"]),
+            "--w_quality", str(reward_fn_config["w_quality"]),
+            "--vlm_batch_size", str(reward_fn_config["vlm_batch_size"])
+        ], env=env)
+        workers.append(p)
+    
     return workers
 
 
@@ -486,7 +443,7 @@ def main(_):
     accelerator = Accelerator(
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
-        gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
+        gradient_accumulation_steps=config.train.gradient_accumulation_steps,  # Remove multiplication
     )
     
     if accelerator.is_main_process:
@@ -545,6 +502,11 @@ def main(_):
         )
         pipeline.transformer = get_peft_model(pipeline.transformer, lora_config)
         pipeline.transformer.train()
+    
+    # Enable gradient checkpointing for memory efficiency
+    if hasattr(pipeline.transformer, "enable_gradient_checkpointing"):
+        pipeline.transformer.enable_gradient_checkpointing()
+        print("Enabled gradient checkpointing for memory efficiency")
     
     # Initialize enhanced prompt editor with adaptive constraints and semantic regularization
     prompt_editor = PromptEditorPolicy(
