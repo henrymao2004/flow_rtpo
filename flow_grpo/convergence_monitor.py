@@ -62,7 +62,7 @@ class ConvergenceMonitor:
         # 收敛状态
         self.convergence_status = {
             "is_converged": False,
-            "convergence_reason": "",
+            "convergence_reason": 0,  # 0: not converged, 1: converged, 2: false convergence
             "epoch": 0
         }
     
@@ -180,7 +180,7 @@ class ConvergenceMonitor:
             self.state["since_improve"] >= self.patience):
             self.convergence_status.update({
                 "is_converged": True,
-                "convergence_reason": "All metrics converged",
+                "convergence_reason": 1,  # 1: converged
                 "epoch": epoch
             })
             logger.info(f"Training converged at epoch {epoch}")
@@ -228,6 +228,16 @@ class ConvergenceMonitor:
             "total_steps": self.state["step"]
         }
     
+    def get_convergence_reason_text(self) -> str:
+        """获取收敛原因的文本描述"""
+        reason_code = self.convergence_status.get("convergence_reason", 0)
+        reason_map = {
+            0: "Not converged",
+            1: "All metrics converged",
+            2: "False convergence detected"
+        }
+        return reason_map.get(reason_code, "Unknown")
+    
     def reset(self):
         """重置监控器状态"""
         self.state = {
@@ -243,7 +253,7 @@ class ConvergenceMonitor:
         }
         self.convergence_status = {
             "is_converged": False,
-            "convergence_reason": "",
+            "convergence_reason": 0,  # 0: not converged, 1: converged, 2: false convergence
             "epoch": 0
         }
 

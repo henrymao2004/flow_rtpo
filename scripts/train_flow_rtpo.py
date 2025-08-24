@@ -1434,7 +1434,10 @@ def main(_):
             config.convergence.early_stopping and 
             convergence_monitor.should_early_stop()):
             logger.info(f"Early stopping triggered at epoch {epoch}")
-            logger.info(f"Convergence summary: {convergence_monitor.get_convergence_summary()}")
+            summary = convergence_monitor.get_convergence_summary()
+            reason_text = convergence_monitor.get_convergence_reason_text()
+            logger.info(f"Convergence summary: {summary}")
+            logger.info(f"Convergence reason: {reason_text}")
             break
         
         # Save best model based on EMA reward
@@ -1458,7 +1461,9 @@ def main(_):
     # Log final convergence summary
     if convergence_monitor is not None:
         final_summary = convergence_monitor.get_convergence_summary()
+        reason_text = convergence_monitor.get_convergence_reason_text()
         logger.info(f"Final convergence summary: {final_summary}")
+        logger.info(f"Final convergence reason: {reason_text}")
     
     logger.info("Training completed!")
 
