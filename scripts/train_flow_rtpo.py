@@ -24,6 +24,10 @@ from peft import LoraConfig, get_peft_model, set_peft_model_state_dict, PeftMode
 import random
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
+import sys
+
+# Add flow_grpo to Python path
+sys.path.insert(0, '/workspace/flow_rtpo/flow_grpo')
 
 # Flow-GRPO imports
 from flow_grpo.stat_tracking import PerPromptStatTracker
