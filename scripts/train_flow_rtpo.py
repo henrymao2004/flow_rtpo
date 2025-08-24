@@ -1226,17 +1226,17 @@ def main(_):
                 current_rewards = [sample["reward"] for sample in epoch_samples]
                 baseline_value = np.mean(current_rewards)
                 
-                # Group trajectories by group_key for GRPO (Group Relative Policy Optimization)
+                # Log GRPO grouping info
                 groups = defaultdict(list)
                 for traj in trajectories:
                     groups[traj['group_key']].append(traj)
+                num_groups = len(groups)
+                logger.info(f"GRPO grouping: {len(trajectories)} trajectories grouped into {num_groups} groups")
                 
-                grouped_trajectories = list(groups.values())  # Each element is k samples from same original prompt
-                logger.info(f"GRPO grouping: {len(trajectories)} trajectories grouped into {len(grouped_trajectories)} groups")
-                
-                # Use enhanced policy gradient training method with grouped trajectories
+                # Use enhanced policy gradient training method with individual trajectories
+                # The prompt editor handles GRPO grouping internally
                 prompt_metrics = prompt_editor.module.update_policy(
-                    grouped_trajectories, prompt_optimizer, baseline_value
+                    trajectories, prompt_optimizer, baseline_value
                 )
                 
                 # Log enhanced metrics
