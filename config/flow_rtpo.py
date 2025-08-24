@@ -73,7 +73,7 @@ def flow_rtpo_sd3():
     
     # vec2text decoding parameters
     config.prompt_editor.decode_num_steps = 20  # Number of inversion steps
-    config.prompt_editor.decode_beam_width = 2  # Beam width for text inversion quality
+    config.prompt_editor.decode_beam_width = 4  # Beam width for text inversion quality
     
     # Manual sampling for diversity
     config.prompt_editor.use_manual_sampling = False # Enable temperature + top-p sampling
