@@ -9,10 +9,11 @@ ACCELERATE_CONFIG="/workspace/flow_rtpo/scripts/accelerate_configs/multi_gpu.yam
 
 # Memory optimization: Reduce startup memory pressure
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128
-export CUDA_LAUNCH_BLOCKING=0
+export CUDA_LAUNCH_BLOCKING=1
 export CUDA_CACHE_DISABLE=0
 export CUDA_CACHE_MAXSIZE=0
 export CUDA_MODULE_LOADING=LAZY
+export TORCH_USE_CUDA_DSA=1
 # Additional memory optimizations
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
