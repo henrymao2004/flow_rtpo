@@ -7,40 +7,14 @@ from PIL import Image
 import requests
 from io import BytesIO
 import base64
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification, AutoModelForCausalLM, BitsAndBytesConfig
+from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 from detoxify import Detoxify
-from flow_grpo.clip_scorer import ClipScorer
+import clip
 import warnings
 import multiprocessing as mp
 import pickle
 import signal
 warnings.filterwarnings("ignore")
-
-
-def build_vlm(vlm_model: str, vlm_device_map_gpus=(4,5), bf16=True, load_in_4bit=True):
-    """Build VLM with device mapping for multi-GPU setup."""
-    torch_dtype = torch.bfloat16 if bf16 else torch.float16
-    
-    # Limit "auto" to the chosen GPUs by giving max_memory only for them
-    max_memory = {i: "60GiB" for i in vlm_device_map_gpus}  # adjust to your H100 NVL slice size
-    
-    # Optional: 4-bit to keep headroom; still on GPU
-    quant = BitsAndBytesConfig(
-        load_in_4bit=load_in_4bit,
-        bnb_4bit_compute_dtype=torch_dtype,
-        bnb_4bit_quant_type="nf4"
-    ) if load_in_4bit else None
-    
-    tok = AutoTokenizer.from_pretrained(vlm_model, use_fast=True)
-    vlm = AutoModelForCausalLM.from_pretrained(
-        vlm_model,
-        device_map="auto",
-        max_memory=max_memory,          # forces sharding over specified GPUs
-        quantization_config=quant,
-        torch_dtype=torch_dtype
-    ).eval()
-    
-    return tok, vlm
 
 
 def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue):
@@ -109,10 +83,7 @@ class ToxicityRewardSystem:
                  w_cvar: float = 0.1,
                  w_quality: float = 0.05,
                  tau: float = 0.1,
-                 enable_quantization: bool = True,
-                 vlm_device_map_gpus: tuple = None,
-                 bf16: bool = True,
-                 load_in_4bit: bool = True):
+                 enable_quantization: bool = True):
         self.device = device
         self.w_cvar = w_cvar
         self.w_quality = w_quality
@@ -124,62 +95,49 @@ class ToxicityRewardSystem:
         # Initialize VLM for image-text evaluation
         try:
             print(f"[DEBUG] Loading LLaVA model: {vlm_model}")
+            from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
             
-            if vlm_device_map_gpus is not None:
-                # Use device mapping for multi-GPU setup
-                print(f"[DEBUG] Using device mapping across GPUs: {vlm_device_map_gpus}")
-                self.vlm_processor, self.vlm_model = build_vlm(
-                    vlm_model, 
-                    vlm_device_map_gpus=vlm_device_map_gpus,
-                    bf16=bf16,
-                    load_in_4bit=load_in_4bit
-                )
-                self.use_llava = True
+            print(f"[DEBUG] Loading LLaVA processor...")
+            self.vlm_processor = LlavaNextProcessor.from_pretrained(vlm_model)
+            print(f"[DEBUG] LLaVA processor loaded successfully")
+            
+            print(f"[DEBUG] Loading LLaVA model with stable configuration...")
+            print(f"[DEBUG] Available GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
+            print(f"[DEBUG] Used GPU memory before loading: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
+            
+            # Disable quantization and FlashAttention for stability
+            print(f"[DEBUG] Using stable configuration: single device, SDPA attention, no quantization")
+            
+            # Load model with simple, stable configuration
+            self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
+                vlm_model,
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                device_map="auto" if device == "cuda" else None,   # Use "auto" for better device mapping
+                low_cpu_mem_usage=True,
+                attn_implementation="sdpa",                   # 改成 sdpa 更稳
+                # quantization_config=None                    # 暂时禁用 8bit
+                max_memory={0: "70GB"},  # Limit GPU memory usage to 70GB
+                offload_folder="offload",  # Enable disk offloading for large models
+            )
+            
+            # Explicitly move to device if device_map didn't work as expected
+            if device == "cuda" and next(self.vlm_model.parameters()).device.type == "cpu":
+                print(f"[DEBUG] Model still on CPU, explicitly moving to {device}")
+                self.vlm_model = self.vlm_model.to(device)
+            print(f"[DEBUG] Successfully loaded with SDPA attention, single device (cuda:0)")
+            
+            print(f"[DEBUG] LLaVA model loaded, setting to eval mode...")
+            self.vlm_model.eval()
+            
+            # Debug: Print actual device map to understand layer distribution
+            if hasattr(self.vlm_model, 'hf_device_map'):
+                print(f"[DEBUG] Actual device map: {self.vlm_model.hf_device_map}")
             else:
-                # Fallback to original single-GPU loading
-                from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
-                
-                print(f"[DEBUG] Loading LLaVA processor...")
-                self.vlm_processor = LlavaNextProcessor.from_pretrained(vlm_model)
-                print(f"[DEBUG] LLaVA processor loaded successfully")
-                
-                print(f"[DEBUG] Loading LLaVA model with stable configuration...")
-                print(f"[DEBUG] Available GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
-                print(f"[DEBUG] Used GPU memory before loading: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
-                
-                # Disable quantization and FlashAttention for stability
-                print(f"[DEBUG] Using stable configuration: single device, SDPA attention, no quantization")
-                
-                # Load model with simple, stable configuration
-                self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
-                    vlm_model,
-                    torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                    device_map="auto" if device == "cuda" else None,   # Use "auto" for better device mapping
-                    low_cpu_mem_usage=True,
-                    attn_implementation="sdpa",                   # 改成 sdpa 更稳
-                    # quantization_config=None                    # 暂时禁用 8bit
-                    max_memory={0: "70GB"},  # Limit GPU memory usage to 70GB
-                    offload_folder="offload",  # Enable disk offloading for large models
-                )
-                
-                # Explicitly move to device if device_map didn't work as expected
-                if device == "cuda" and next(self.vlm_model.parameters()).device.type == "cpu":
-                    print(f"[DEBUG] Model still on CPU, explicitly moving to {device}")
-                    self.vlm_model = self.vlm_model.to(device)
-                print(f"[DEBUG] Successfully loaded with SDPA attention, single device (cuda:0)")
-                
-                print(f"[DEBUG] LLaVA model loaded, setting to eval mode...")
-                self.vlm_model.eval()
-                
-                # Debug: Print actual device map to understand layer distribution
-                if hasattr(self.vlm_model, 'hf_device_map'):
-                    print(f"[DEBUG] Actual device map: {self.vlm_model.hf_device_map}")
-                else:
-                    print(f"[DEBUG] Model device: {next(self.vlm_model.parameters()).device}")
-                
-                print(f"[DEBUG] Used GPU memory after loading: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
-                print(f"[DEBUG] LLaVA initialization completed successfully")
-                self.use_llava = True
+                print(f"[DEBUG] Model device: {next(self.vlm_model.parameters()).device}")
+            
+            print(f"[DEBUG] Used GPU memory after loading: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
+            print(f"[DEBUG] LLaVA initialization completed successfully")
+            self.use_llava = True
         except Exception as e:
             print(f"Failed to load LLaVA model, using generic pipeline: {e}")
             self.vlm = pipeline(
@@ -194,7 +152,7 @@ class ToxicityRewardSystem:
         self.detoxify = Detoxify('original', device=device)
         
         # Initialize CLIP for image-text similarity
-        self.clip_scorer = ClipScorer(device=device)
+        self.clip_model, self.clip_preprocess = clip.load("ViT-B/32", device=device)
         
         # Aesthetic scorer removed per user request
         
@@ -626,17 +584,23 @@ class ToxicityRewardSystem:
                     
                     print(f"[CLIP SAMPLE {i+1}] Image mode: {image.mode}, size: {image.size}")
                     
-                    # Convert PIL image to tensor format expected by ClipScorer
-                    import numpy as np
-                    image_array = np.array(image)
-                    if len(image_array.shape) == 3:
-                        image_array = image_array.transpose(2, 0, 1)  # HWC -> CHW
-                    image_tensor = torch.tensor(image_array, dtype=torch.float32) / 255.0
-                    image_tensor = image_tensor.unsqueeze(0)  # Add batch dimension
-                    print(f"[CLIP SAMPLE {i+1}] Image converted to tensor, shape: {image_tensor.shape}")
+                    # Preprocess image
+                    image_input = self.clip_preprocess(image).unsqueeze(0).to(self.device)
+                    print(f"[CLIP SAMPLE {i+1}] Image preprocessed, shape: {image_input.shape}")
                     
-                    # Use ClipScorer to compute similarity
-                    similarity = self.clip_scorer(image_tensor, [prompt]).item()
+                    # Tokenize text
+                    text_input = clip.tokenize([prompt]).to(self.device)
+                    print(f"[CLIP SAMPLE {i+1}] Text tokenized, shape: {text_input.shape}")
+                    
+                    # Get features
+                    image_features = self.clip_model.encode_image(image_input)
+                    text_features = self.clip_model.encode_text(text_input)
+                    print(f"[CLIP SAMPLE {i+1}] Features extracted - image: {image_features.shape}, text: {text_features.shape}")
+                    
+                    # Compute similarity
+                    similarity = torch.cosine_similarity(
+                        image_features, text_features, dim=-1
+                    ).item()
                     print(f"[CLIP SAMPLE {i+1}] Similarity computed: {similarity:.6f}")
                     
                     similarities.append(similarity)
@@ -817,10 +781,7 @@ class ToxicityRewardSystem:
 def toxicity_reward_function(device: str = "cuda", 
                              vlm_model: str = "llava-hf/llava-v1.6-mistral-7b-hf",
                              w_cvar: float = 0.1,
-                             w_quality: float = 0.05,
-                             vlm_device_map_gpus: tuple = None,
-                             bf16: bool = True,
-                             load_in_4bit: bool = True):
+                             w_quality: float = 0.05):
     """Factory function to create toxicity reward function for flow_grpo."""
     # Set multiprocessing start method for CUDA compatibility
     try:
@@ -832,10 +793,7 @@ def toxicity_reward_function(device: str = "cuda",
         device=device,
         vlm_model=vlm_model,
         w_cvar=w_cvar,
-        w_quality=w_quality,
-        vlm_device_map_gpus=vlm_device_map_gpus,
-        bf16=bf16,
-        load_in_4bit=load_in_4bit
+        w_quality=w_quality
     )
     
     def _fn(images, prompts, metadata):
