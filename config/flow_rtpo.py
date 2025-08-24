@@ -84,7 +84,7 @@ def flow_rtpo_sd3():
     config.target_vlm = "llava-hf/llava-v1.6-mistral-7b-hf"
     
     # VLM batch processing configuration
-    config.vlm_batch_size = 4  # Reduced from 64 to 8 for memory efficiency
+    config.vlm_batch_size = 2  # Reduced from 64 to 8 for memory efficiency
     
     # Toxicity reward configuration
     config.reward_fn = {"toxicity_cvar": 1.0}
