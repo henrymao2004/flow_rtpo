@@ -675,22 +675,19 @@ def main(_):
     print(f"[rank{accelerator.process_index}] Local process index: {accelerator.local_process_index}")
     print(f"[rank{accelerator.process_index}] Device: {accelerator.device}")
     print(f"[rank{accelerator.process_index}] CUDA available: {torch.cuda.is_available()}")
-    if torch.cuda.is_available():
-        print(f"[rank{accelerator.process_index}] CUDA device count: {torch.cuda.device_count()}")
     
-    # Memory debugging: Print real available memory for current device only
+    # Safe device initialization without memory probing
     if torch.cuda.is_available():
         try:
-            # Make sure this rank uses exactly one device
-            torch.cuda.set_device(accelerator.local_process_index)          # 0..N-1 on each node
-            with torch.cuda.device(torch.cuda.current_device()):            # important on some PT versions
-                free, total = torch.cuda.mem_get_info()                     # no argument -> current device
+            print(f"[rank{accelerator.process_index}] CUDA device count: {torch.cuda.device_count()}")
+            print(f"[rank{accelerator.process_index}] Current device before set: {torch.cuda.current_device()}")
             
-            # Only print from rank 0 to avoid spam
-            if accelerator.process_index == 0:
-                print(f"[rank{accelerator.process_index}] cuda:{torch.cuda.current_device()} free={free/1e9:.2f}GB / total={total/1e9:.2f}GB")
+            # Set device safely
+            torch.cuda.set_device(accelerator.local_process_index)
+            print(f"[rank{accelerator.process_index}] Device set to: {torch.cuda.current_device()}")
+            
         except Exception as e:
-            print(f"[rank{accelerator.process_index}] Error during memory check: {e}")
+            print(f"[rank{accelerator.process_index}] Error during device setup: {e}")
             import traceback
             traceback.print_exc()
     
