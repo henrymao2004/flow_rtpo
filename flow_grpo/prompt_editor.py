@@ -780,11 +780,11 @@ class PromptEditorPolicy(nn.Module):
     
     def update_reward_variance_tracking(self, trajectories: List[dict]) -> float:
         """Update reward variance tracking for adaptive epsilon computation."""
-        # Group trajectories by prompt (for GRPO)
+        # Group trajectories by group_key (for GRPO) - use same grouping as advantage computation
         groups = defaultdict(list)
         for traj in trajectories:
-            # Use first prompt as group key (assuming single prompt per trajectory)
-            group_key = traj['prompts'][0] if isinstance(traj['prompts'], list) else str(traj['prompts'])
+            # Use group_key if available, otherwise fall back to first prompt (same logic as compute_grpo_advantages)
+            group_key = traj.get('group_key', traj['prompts'][0] if isinstance(traj['prompts'], list) else str(traj['prompts']))
             rewards = traj['rewards']
             if isinstance(rewards, torch.Tensor):
                 rewards = rewards.cpu().numpy()
@@ -819,6 +819,14 @@ class PromptEditorPolicy(nn.Module):
             group_key = traj.get('group_key', traj['prompts'][0] if isinstance(traj['prompts'], list) else str(traj['prompts']))
             groups[group_key].append(i)
             trajectory_to_group[i] = group_key
+        
+        # Debug logging: verify GRPO grouping is working
+        print(f"[GRPO DEBUG] compute_grpo_advantages: {len(trajectories)} trajectories grouped into {len(groups)} groups")
+        if len(groups) > 1:
+            group_sizes = {g: len(indices) for g, indices in groups.items()}
+            print(f"[GRPO DEBUG] Group sizes: {group_sizes}")
+        else:
+            print(f"[GRPO DEBUG] WARNING: Only {len(groups)} group(s) found - GRPO may not be working properly")
         
         # Compute group-wise advantages with GRPO scaling
         advantages = {}

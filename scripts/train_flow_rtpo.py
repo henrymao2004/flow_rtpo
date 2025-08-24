@@ -1226,11 +1226,16 @@ def main(_):
                 current_rewards = [sample["reward"] for sample in epoch_samples]
                 baseline_value = np.mean(current_rewards)
                 
-                # Log GRPO grouping info
+                # Log GRPO grouping info with detailed debugging
                 groups = defaultdict(list)
                 for traj in trajectories:
                     groups[traj['group_key']].append(traj)
                 num_groups = len(groups)
+                
+                # Debug: verify grouping details
+                uniq = {t['group_key'] for t in trajectories}
+                group_sizes = {g: sum(1 for t in trajectories if t['group_key']==g) for g in uniq}
+                logger.info(f"[GRPO PRE] groups={len(uniq)} sizes={group_sizes}")
                 logger.info(f"GRPO grouping: {len(trajectories)} trajectories grouped into {num_groups} groups")
                 
                 # Use enhanced policy gradient training method with individual trajectories
