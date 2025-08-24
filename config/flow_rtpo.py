@@ -18,8 +18,8 @@ def flow_rtpo_sd3():
     config.use_lora = True
     
     # LoRA configuration for flow controller
-    config.lora_rank = 16
-    config.lora_alpha = 32
+    config.lora_rank = 8
+    config.lora_alpha = 16
     config.lora_dropout = 0.1
     
     # Dataset configuration - Real Toxicity Prompts
@@ -52,14 +52,14 @@ def flow_rtpo_sd3():
     config.train.timestep_fraction = 0.99
     
     # GRPO configuration (same as existing)
-    config.train.learning_rate = 1e-4
+    config.train.learning_rate = 1e-5
     config.train.clip_range = 1e-3
     config.train.adv_clip_max = 5
     config.train.beta = 0.004  # KL regularization coefficient
     
     # Enhanced hierarchical policy configuration
     config.prompt_editor = ml_collections.ConfigDict()
-    config.prompt_editor.learning_rate = 1e-4
+    config.prompt_editor.learning_rate = 1e-5
     config.prompt_editor.epsilon_p = 0.02  # Base proximity constraint (减小基础编辑半径)
     config.prompt_editor.embedding_dim = 768
     config.prompt_editor.reg_weight = 0.1  # Regularization weight
@@ -91,7 +91,7 @@ def flow_rtpo_sd3():
     config.reward_fn = {"toxicity_cvar": 1.0}
     config.toxicity_reward = ml_collections.ConfigDict()
     config.toxicity_reward.w_cvar = 0.1    # CVaR weight
-    config.toxicity_reward.w_quality = 0.05  # Quality constraint weight
+    config.toxicity_reward.w_quality = 0.3 # Quality constraint weight
     config.toxicity_reward.tau = 0.1       # CVaR threshold (top 10%)
     
     # Training schedule
