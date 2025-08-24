@@ -1,15 +1,3 @@
-import sys, os
-
-# repo_root = parent of this file's directory (…/flow_rtpo)
-repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# Put the repo root on sys.path so that 'flow_grpo' can be imported
-if repo_root not in sys.path:
-    sys.path.insert(0, repo_root)
-
-# (optional sanity)
-assert os.path.isdir(os.path.join(repo_root, "flow_grpo")), "flow_grpo dir not found"
-
 from collections import defaultdict
 import contextlib
 import os
@@ -159,19 +147,10 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
     # Force synchronization and use unwrapped model to avoid DDP buffer sync issues during sampling
     if accelerator.num_processes > 1:
         accelerator.wait_for_everyone()
-        
-        # Broadcast prompt edits from rank-0
-        if accelerator.is_main_process:
-            with torch.no_grad():
-                modified_prompts, prompt_deltas, original_embeddings, policy_info = prompt_editor(prompts_expanded, reward_variance)
-            payload = [modified_prompts, prompt_deltas, original_embeddings, policy_info]
-        else:
-            payload = [None, None, None, None]
-        
-        # Broadcast Python objects (lists/tensors) from rank 0 to others
-        import torch.distributed as dist
-        dist.broadcast_object_list(payload, src=0)
-        modified_prompts, prompt_deltas, original_embeddings, policy_info = payload
+        # Use unwrapped version for forward pass to avoid buffer sync issues
+        prompt_editor_unwrapped = accelerator.unwrap_model(prompt_editor)
+        with torch.no_grad():
+            modified_prompts, prompt_deltas, original_embeddings, policy_info = prompt_editor_unwrapped(prompts_expanded, reward_variance)
     else:
         # Single GPU - use regular prompt_editor
         with torch.no_grad():
@@ -411,14 +390,7 @@ def main(_):
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
         gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
-        cpu=False,  # Ensure we use GPU
-        kwargs_handlers=[],  # No additional handlers
     )
-    
-    # Safety guards for device configuration
-    print("CUDA_VISIBLE_DEVICES =", os.environ.get("CUDA_VISIBLE_DEVICES"))
-    print("LOCAL_RANK =", os.environ.get("LOCAL_RANK"), "WORLD_SIZE =", os.environ.get("WORLD_SIZE"))
-    print("Plan:", config.devices)
     
     if accelerator.is_main_process:
         swanlab.init(
@@ -434,16 +406,6 @@ def main(_):
     
     # Load SD3 pipeline
     pipeline = StableDiffusion3Pipeline.from_pretrained(config.pretrained.model)
-    
-    # Optional VRAM savers that stay on GPU
-    pipeline.to(dtype=torch.bfloat16)
-    pipeline.enable_attention_slicing()
-    pipeline.enable_vae_slicing()
-    pipeline.enable_vae_tiling()
-    try: 
-        pipeline.enable_xformers_memory_efficient_attention()
-    except: 
-        pass
     
     # Freeze base model components
     pipeline.vae.requires_grad_(False)
@@ -466,21 +428,12 @@ def main(_):
         )
         pipeline.transformer = get_peft_model(pipeline.transformer, lora_config)
         pipeline.transformer.train()
-        
-        # Enable gradient checkpointing to save memory
-        pipeline.transformer.enable_gradient_checkpointing()
     
     # Initialize enhanced prompt editor with adaptive constraints and semantic regularization
-    IS_MAIN = accelerator.is_main_process
-    AUX_GPU = config.devices.prompt_editor_gpu
-    
     prompt_editor = PromptEditorPolicy(
         embedding_dim=config.prompt_editor.embedding_dim,
         epsilon_p=config.prompt_editor.epsilon_p,
-        device=accelerator.device,              # small nets on local rank GPU
-        aux_device=f"cuda:{AUX_GPU}",           # heavy models on GPU 6
-        init_aux_on_main_only=True,
-        is_main_process=IS_MAIN,
+        device=accelerator.device,
         perturbation_scale=config.prompt_editor.get('perturbation_scale', 0.02),
         # Adaptive epsilon parameters
         epsilon_min=config.prompt_editor.get('epsilon_min', 0.02),
@@ -499,17 +452,12 @@ def main(_):
         sample_top_p=config.prompt_editor.get('sample_top_p', 0.9)
     )
     
-    # Initialize reward function with device mapping
-    assert accelerator.is_main_process, "Reward VLM and aux text models must be created only on rank 0."
-    
+    # Initialize reward function
     reward_fn = toxicity_reward_function(
         device=accelerator.device,
         vlm_model=config.target_vlm,
         w_cvar=config.toxicity_reward.w_cvar,
-        w_quality=config.toxicity_reward.w_quality,
-        vlm_device_map_gpus=tuple(config.devices.reward_vlm_gpus),
-        bf16=(config.mixed_precision == "bf16"),
-        load_in_4bit=True  # stays on GPU, just lighter
+        w_quality=config.toxicity_reward.w_quality
     )
     
 
@@ -811,10 +759,6 @@ def main(_):
             sample["advantages"] = torch.tensor(advantages[i]).repeat(len(sample["timesteps"])).to(accelerator.device)
         
         #################### TRAINING ####################
-        # Memory cleanup before training phase
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            
         pipeline.transformer.train()
         prompt_editor.train()
         
@@ -1035,10 +979,6 @@ def main(_):
         if (epoch + 1) % config.save_freq == 0:
             save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 
                      accelerator, ema, transformer_trainable_parameters, config)
-        
-        # Memory cleanup at end of epoch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
     
     # Final save
     save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 

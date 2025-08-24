@@ -76,10 +76,6 @@ class PromptEditorPolicy(nn.Module):
                  # Modification noise parameters for sampling diversity
                  use_modification_noise: bool = True,  # Use random noise during embedding modification
                  modification_noise_std: float = 0.005,  # Standard deviation for modification noise
-                 # Device isolation parameters
-                 aux_device: str = "cuda:6",
-                 init_aux_on_main_only: bool = True,
-                 is_main_process: bool = True,
                  **kwargs):  # Accept extra kwargs for backward compatibility
         super().__init__()
         self.epsilon_p = epsilon_p
@@ -125,59 +121,43 @@ class PromptEditorPolicy(nn.Module):
         self.reward_variance_tracker = defaultdict(list)
         self.group_reward_stats = {}
         
-        # Initialize heavy aux models only on main process and on aux device
-        self.aux_device = aux_device
-        self.is_main = is_main_process
-        self.init_aux_on_main_only = init_aux_on_main_only
+        # Initialize SBERT model for semantic similarity
+        self.sbert_model = None
+        try:
+            # Try to import and use SentenceTransformer
+            from sentence_transformers import SentenceTransformer as ST
+            self.sbert_model = ST('all-MiniLM-L6-v2').to(device)
+            print("[INFO] SBERT model loaded for semantic regularization")
+        except ImportError:
+            print("[WARNING] sentence-transformers not available, semantic regularization disabled")
+            self.sbert_model = None
+        except Exception as e:
+            print(f"[WARNING] Failed to load SBERT model: {e}")
+            self.sbert_model = None
         
-        # Heavy text helpers (GPU 6) only on rank-0:
-        if (not self.init_aux_on_main_only) or self.is_main:
-            # Initialize SBERT model for semantic similarity
-            self.sbert_model = None
+        # Initialize vec2text corrector
+        self.vec2text_corrector = vec2text.load_pretrained_corrector("gtr-base")
+        
+        # Use OFFICIAL vec2text approach for GTR as per documentation
+        from transformers import AutoTokenizer, AutoModel
+        self.gtr_tokenizer = AutoTokenizer.from_pretrained('sentence-transformers/gtr-t5-base')
+        
+        # Try loading with different precision/settings to avoid NaN
+        try:
+            self.gtr_encoder = AutoModel.from_pretrained(
+                'sentence-transformers/gtr-t5-base',
+                torch_dtype=torch.float32  # Force float32 to avoid precision issues
+            ).encoder.to(device)
+            self.use_fallback_encoder = False
+        except Exception as e:
+            print(f"[WARNING] Failed to load GTR encoder: {e}")
+            # Use a simple fallback encoder
             try:
-                # Try to import and use SentenceTransformer
-                from sentence_transformers import SentenceTransformer as ST
-                self.sbert_model = ST('all-MiniLM-L6-v2', device=self.aux_device)
-                print(f"[INFO] SBERT model loaded for semantic regularization on {self.aux_device}")
+                from sentence_transformers import SentenceTransformer
+                self.sentence_transformer_fallback = SentenceTransformer('all-MiniLM-L6-v2').to(device)
             except ImportError:
-                print("[WARNING] sentence-transformers not available, semantic regularization disabled")
-                self.sbert_model = None
-            except Exception as e:
-                print(f"[WARNING] Failed to load SBERT model: {e}")
-                self.sbert_model = None
-            
-            # Initialize vec2text corrector
-            self.vec2text_corrector = vec2text.load_pretrained_corrector("gtr-base")
-            self.vec2text_corrector.to(self.aux_device)
-            
-            # Use OFFICIAL vec2text approach for GTR as per documentation
-            from transformers import AutoTokenizer, AutoModel
-            self.gtr_tokenizer = AutoTokenizer.from_pretrained('sentence-transformers/gtr-t5-base')
-            
-            # Try loading with different precision/settings to avoid NaN
-            try:
-                self.gtr_encoder = AutoModel.from_pretrained(
-                    'sentence-transformers/gtr-t5-base',
-                    torch_dtype=torch.float32  # Force float32 to avoid precision issues
-                ).encoder.to(self.aux_device)
-                self.use_fallback_encoder = False
-            except Exception as e:
-                print(f"[WARNING] Failed to load GTR encoder: {e}")
-                # Use a simple fallback encoder
-                try:
-                    from sentence_transformers import SentenceTransformer
-                    self.sentence_transformer_fallback = SentenceTransformer('all-MiniLM-L6-v2').to(self.aux_device)
-                except ImportError:
-                    print("[WARNING] sentence-transformers not available for fallback encoder")
-                    self.sentence_transformer_fallback = None
-                self.use_fallback_encoder = True
-        else:
-            # Non-main processes: aux models unavailable
-            self.sbert_model = None
-            self.vec2text_corrector = None
-            self.gtr_tokenizer = None
-            self.gtr_encoder = None
-            self.sentence_transformer_fallback = None
+                print("[WARNING] sentence-transformers not available for fallback encoder")
+                self.sentence_transformer_fallback = None
             self.use_fallback_encoder = True
         
         # Noise prediction network (π_θ in paper) - encoder-decoder transformer
@@ -646,9 +626,6 @@ class PromptEditorPolicy(nn.Module):
             original_embeddings: Original embeddings (for reconstruction loss)
             policy_info: Dictionary containing policy information including log probabilities
         """
-        # Check if aux models are available on this rank
-        if self.init_aux_on_main_only and (not self.is_main):
-            raise RuntimeError("Aux models unavailable on non-main rank. Call through the sampler's broadcast path.")
         # Encode original prompts
         original_embeddings = self.encode_prompts(prompts)
         

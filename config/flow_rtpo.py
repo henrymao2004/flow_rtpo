@@ -1,11 +1,8 @@
 import ml_collections
-import importlib.util
+import imp
 import os
 
-# Load base configuration using importlib instead of deprecated imp
-base_spec = importlib.util.spec_from_file_location("base", os.path.join(os.path.dirname(__file__), "base.py"))
-base = importlib.util.module_from_spec(base_spec)
-base_spec.loader.exec_module(base)
+base = imp.load_source("base", os.path.join(os.path.dirname(__file__), "base.py"))
 
 
 def flow_rtpo_sd3():
@@ -31,14 +28,14 @@ def flow_rtpo_sd3():
     config.prompt_fn_kwargs = {}
     
     # Sampling configuration
-    config.sample.batch_size = 2 # Reduced from 4 to 1 to save memory
-    config.sample.num_batches_per_epoch = 33
-    config.sample.num_image_per_prompt = 2  # Reduced from 3 to 2 to save memory
+    config.sample.batch_size = 2
+    config.sample.num_batches_per_epoch = 22
+    config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     config.sample.sample_time_per_prompt = 1
-    config.sample.num_steps = 10
+    config.sample.num_steps = 40
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale = 4.5
-    config.sample.test_batch_size = 2  # Reduced from 2 to 1
+    config.sample.test_batch_size = 4
     config.sample.train_batch_size = config.sample.batch_size
     
     # Training configuration
@@ -69,11 +66,11 @@ def flow_rtpo_sd3():
     # Semantic regularization parameters
     config.prompt_editor.semantic_threshold = 0.9  # Semantic similarity threshold τ (降低到合理范围)
     config.prompt_editor.semantic_alpha = 1.0  # Semantic regularization weight α (增强语义约束)
-    config.prompt_editor.k_samples = 2  # Reduced from 3 to 2 to save memory
+    config.prompt_editor.k_samples = 4  # Samples per prompt for GRPO
     
     # vec2text decoding parameters
-    config.prompt_editor.decode_num_steps = 15  # Reduced from 20 to 15 to save memory
-    config.prompt_editor.decode_beam_width = 2  # Reduced from 4 to 2 to save memory
+    config.prompt_editor.decode_num_steps = 20  # Number of inversion steps
+    config.prompt_editor.decode_beam_width = 4  # Beam width for text inversion quality
     
     # Manual sampling for diversity
     config.prompt_editor.use_manual_sampling = False # Enable temperature + top-p sampling
@@ -86,9 +83,9 @@ def flow_rtpo_sd3():
     # Toxicity reward configuration
     config.reward_fn = {"toxicity_cvar": 1.0}
     config.toxicity_reward = ml_collections.ConfigDict()
-    config.toxicity_reward.w_cvar = 1.0    # CVaR weight
-    config.toxicity_reward.w_quality = 0.1  # Quality constraint weight
-    config.toxicity_reward.tau = 0.2     # CVaR threshold (top 10%)
+    config.toxicity_reward.w_cvar = 0.1    # CVaR weight
+    config.toxicity_reward.w_quality = 0.05  # Quality constraint weight
+    config.toxicity_reward.tau = 0.1       # CVaR threshold (top 10%)
     
     # Training schedule
     config.num_epochs = 100
@@ -100,13 +97,6 @@ def flow_rtpo_sd3():
     config.resolution = 768
     config.height = 768
     config.width = 768
-    
-    # Device configuration for 8-GPU setup
-    config.devices = ml_collections.ConfigDict()
-    config.devices.sd3_ddp_gpus = [0, 1, 2, 3]  # SD3.5 pipeline + LoRA under DDP
-    config.devices.reward_vlm_gpus = [4, 5]      # LLaVA-7B sharded across these
-    config.devices.prompt_editor_gpu = 6         # SBERT + vec2text corrector
-    config.devices.spare = [7]                   # spare / eval
     
     # Per-prompt stat tracking for GRPO
     config.per_prompt_stat_tracking = True
