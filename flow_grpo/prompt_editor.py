@@ -9,11 +9,6 @@ import torch.nn.functional as F
 import math
 from collections import defaultdict
 import random
-import warnings
-
-# Suppress warnings about uninitialized weights in T5 model loading
-warnings.filterwarnings("ignore", message="Some weights of T5Model were not initialized from the model checkpoint")
-warnings.filterwarnings("ignore", message="You should probably TRAIN this model on a down-stream task")
 
 
 class PositionalEncoding(nn.Module):
@@ -56,7 +51,6 @@ class PromptEditorPolicy(nn.Module):
                  embedding_dim: int = 768,
                  epsilon_p: float = 0.05,  # 基础约束范围，防止过度修改
                  device: str = "cuda",
-                 vec2text_device: str = None,  # Separate device for vec2text operations
                  perturbation_scale: float = 0.01,  # 大幅减小扰动缩放因子
                  # Adaptive epsilon parameters
                  epsilon_min: float = 0.02,
@@ -86,8 +80,6 @@ class PromptEditorPolicy(nn.Module):
         super().__init__()
         self.epsilon_p = epsilon_p
         self.device = device
-        # Always use the same device for vec2text to avoid device mismatch issues
-        self.vec2text_device = device
         self.embedding_dim = embedding_dim
         self.perturbation_scale = perturbation_scale
         self.training_step = 0  # 训练步数计数器，用于热身
@@ -143,23 +135,8 @@ class PromptEditorPolicy(nn.Module):
             print(f"[WARNING] Failed to load SBERT model: {e}")
             self.sbert_model = None
         
-        # Initialize vec2text corrector on the SAME device (not a separate one)
-        print(f"[INFO] Loading vec2text corrector on device {device}")
-        try:
-            # Load vec2text model on the specified device
-            self.vec2text_corrector = vec2text.load_pretrained_corrector("gtr-base")
-            # Ensure all components are on the same device
-            if hasattr(self.vec2text_corrector, 'to'):
-                self.vec2text_corrector = self.vec2text_corrector.to(device)
-            # Move any nested models to the same device
-            if hasattr(self.vec2text_corrector, 'inversion_trainer'):
-                if hasattr(self.vec2text_corrector.inversion_trainer, 'model'):
-                    self.vec2text_corrector.inversion_trainer.model = self.vec2text_corrector.inversion_trainer.model.to(device)
-                if hasattr(self.vec2text_corrector.inversion_trainer, 'embedding_transform'):
-                    self.vec2text_corrector.inversion_trainer.embedding_transform = self.vec2text_corrector.inversion_trainer.embedding_transform.to(device)
-        except Exception as e:
-            print(f"[ERROR] Failed to load vec2text corrector: {e}")
-            self.vec2text_corrector = None
+        # Initialize vec2text corrector
+        self.vec2text_corrector = vec2text.load_pretrained_corrector("gtr-base")
         
         # Use OFFICIAL vec2text approach for GTR as per documentation
         from transformers import AutoTokenizer, AutoModel
@@ -428,8 +405,8 @@ class PromptEditorPolicy(nn.Module):
     def decode_embeddings(self, embeddings: torch.Tensor) -> List[str]:
         """Decode embeddings back to text using vec2text with optional diverse sampling."""
         with torch.no_grad():
-            # Keep on same device
-            embeddings_for_inversion = embeddings.detach().float().to(self.device)
+            # Keep embeddings on same device as vec2text corrector
+            embeddings_for_inversion = embeddings.detach().float()  # Keep on GPU where vec2text model is
             
             try:
                 # Test with a simple text first to verify vec2text is working
