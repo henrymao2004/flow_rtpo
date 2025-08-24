@@ -5,7 +5,7 @@ set -e
 
 # Configuration
 CONFIG_NAME="flow_rtpo_sd3"  # or "flow_rtpo_debug" for testing
-ACCELERATE_CONFIG="/root/autodl-tmp/flow_grpo/scripts/accelerate_configs/multi_gpu.yaml"
+ACCELERATE_CONFIG="/workspace/flow_rtpo/scripts/accelerate_configs/multi_gpu.yaml"
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # Set environment variables for multi-GPU
@@ -35,8 +35,8 @@ accelerate launch \
     --machine_rank=0 \
     --main_process_port=29501 \
     --multi_gpu \
-    /root/autodl-tmp/flow_grpo/scripts/train_flow_rtpo.py \
-    --config=/root/autodl-tmp/flow_grpo/config/flow_rtpo.py:$CONFIG_NAME \
+    /workspace/flow_rtpo/scripts/train_flow_rtpo.py \
+    --config=/workspace/flow_rtpo/config/flow_rtpo.py:$CONFIG_NAME \
     2>&1 | tee $OUTPUT_DIR/training.log
 
 echo "Training completed. Logs saved to: $OUTPUT_DIR"
