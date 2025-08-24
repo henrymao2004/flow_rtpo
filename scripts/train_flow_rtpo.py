@@ -670,16 +670,29 @@ def main(_):
         gradient_accumulation_steps=config.train.gradient_accumulation_steps,
     )
     
+    # Debug info for each rank
+    print(f"[rank{accelerator.process_index}] Accelerator initialized successfully")
+    print(f"[rank{accelerator.process_index}] Local process index: {accelerator.local_process_index}")
+    print(f"[rank{accelerator.process_index}] Device: {accelerator.device}")
+    print(f"[rank{accelerator.process_index}] CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"[rank{accelerator.process_index}] CUDA device count: {torch.cuda.device_count()}")
+    
     # Memory debugging: Print real available memory for current device only
     if torch.cuda.is_available():
-        # Make sure this rank uses exactly one device
-        torch.cuda.set_device(accelerator.local_process_index)          # 0..N-1 on each node
-        with torch.cuda.device(torch.cuda.current_device()):            # important on some PT versions
-            free, total = torch.cuda.mem_get_info()                     # no argument -> current device
-        
-        # Only print from rank 0 to avoid spam
-        if accelerator.process_index == 0:
-            print(f"[rank{accelerator.process_index}] cuda:{torch.cuda.current_device()} free={free/1e9:.2f}GB / total={total/1e9:.2f}GB")
+        try:
+            # Make sure this rank uses exactly one device
+            torch.cuda.set_device(accelerator.local_process_index)          # 0..N-1 on each node
+            with torch.cuda.device(torch.cuda.current_device()):            # important on some PT versions
+                free, total = torch.cuda.mem_get_info()                     # no argument -> current device
+            
+            # Only print from rank 0 to avoid spam
+            if accelerator.process_index == 0:
+                print(f"[rank{accelerator.process_index}] cuda:{torch.cuda.current_device()} free={free/1e9:.2f}GB / total={total/1e9:.2f}GB")
+        except Exception as e:
+            print(f"[rank{accelerator.process_index}] Error during memory check: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Global memory snapshot from rank 0 only (using nvidia-smi to avoid context creation)
     if accelerator.process_index == 0:
