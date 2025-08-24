@@ -17,7 +17,7 @@ echo "TORCH_USE_CUDA_DSA=1"
 echo "PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128"
 
 # Run the training script with memory-optimized configuration
-python scripts/train_flow_rtpo.py \
+python train_flow_rtpo.py \
     --config_name=flow_rtpo_memory_optimized \
     --num_epochs=5 \
     --save_freq=2 \
