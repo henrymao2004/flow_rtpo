@@ -12,6 +12,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128
 export CUDA_LAUNCH_BLOCKING=0
 export CUDA_CACHE_DISABLE=0
 export CUDA_CACHE_MAXSIZE=0
+export CUDA_MODULE_LOADING=LAZY
 # Additional memory optimizations
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
@@ -44,6 +45,7 @@ accelerate launch \
     --machine_rank=0 \
     --main_process_port=0 \
     --multi_gpu \
+    --gpu_ids=0,1,2,3,4,5,6,7 \
     /workspace/flow_rtpo/scripts/train_flow_rtpo.py \
     --config=/workspace/flow_rtpo/config/flow_rtpo.py:$CONFIG_NAME \
     2>&1 | tee $OUTPUT_DIR/training.log
