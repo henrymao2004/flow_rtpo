@@ -18,7 +18,7 @@ echo "PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128"
 
 # Run the training script with memory-optimized configuration
 python train_flow_rtpo.py \
-    --config_name=flow_rtpo_memory_optimized \
+    --config=flow_rtpo_debug \
     --num_epochs=5 \
     --save_freq=2 \
     --eval_freq=2 
