@@ -31,14 +31,14 @@ def flow_rtpo_sd3():
     config.prompt_fn_kwargs = {}
     
     # Sampling configuration
-    config.sample.batch_size = 4
+    config.sample.batch_size = 2 # Reduced from 4 to 1 to save memory
     config.sample.num_batches_per_epoch = 33
-    config.sample.num_image_per_prompt = 3 # Multiple samples per prompt for ranking
+    config.sample.num_image_per_prompt = 2  # Reduced from 3 to 2 to save memory
     config.sample.sample_time_per_prompt = 1
     config.sample.num_steps = 10
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale = 4.5
-    config.sample.test_batch_size = 2
+    config.sample.test_batch_size = 2  # Reduced from 2 to 1
     config.sample.train_batch_size = config.sample.batch_size
     
     # Training configuration
@@ -69,11 +69,11 @@ def flow_rtpo_sd3():
     # Semantic regularization parameters
     config.prompt_editor.semantic_threshold = 0.9  # Semantic similarity threshold τ (降低到合理范围)
     config.prompt_editor.semantic_alpha = 1.0  # Semantic regularization weight α (增强语义约束)
-    config.prompt_editor.k_samples = 3  # Samples per prompt for GRPO
+    config.prompt_editor.k_samples = 2  # Reduced from 3 to 2 to save memory
     
     # vec2text decoding parameters
-    config.prompt_editor.decode_num_steps = 20  # Number of inversion steps
-    config.prompt_editor.decode_beam_width = 4  # Beam width for text inversion quality
+    config.prompt_editor.decode_num_steps = 15  # Reduced from 20 to 15 to save memory
+    config.prompt_editor.decode_beam_width = 2  # Reduced from 4 to 2 to save memory
     
     # Manual sampling for diversity
     config.prompt_editor.use_manual_sampling = False # Enable temperature + top-p sampling

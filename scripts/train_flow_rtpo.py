@@ -402,6 +402,8 @@ def main(_):
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
         gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
+        cpu=False,  # Ensure we use GPU
+        kwargs_handlers=[],  # No additional handlers
     )
     
     if accelerator.is_main_process:
@@ -440,6 +442,9 @@ def main(_):
         )
         pipeline.transformer = get_peft_model(pipeline.transformer, lora_config)
         pipeline.transformer.train()
+        
+        # Enable gradient checkpointing to save memory
+        pipeline.transformer.enable_gradient_checkpointing()
     
     # Initialize enhanced prompt editor with adaptive constraints and semantic regularization
     prompt_editor = PromptEditorPolicy(
@@ -771,6 +776,10 @@ def main(_):
             sample["advantages"] = torch.tensor(advantages[i]).repeat(len(sample["timesteps"])).to(accelerator.device)
         
         #################### TRAINING ####################
+        # Memory cleanup before training phase
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
         pipeline.transformer.train()
         prompt_editor.train()
         
@@ -991,6 +1000,10 @@ def main(_):
         if (epoch + 1) % config.save_freq == 0:
             save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 
                      accelerator, ema, transformer_trainable_parameters, config)
+        
+        # Memory cleanup at end of epoch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     
     # Final save
     save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 
