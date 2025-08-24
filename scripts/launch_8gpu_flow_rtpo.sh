@@ -16,5 +16,5 @@ accelerate launch \
     --num_machines 1 \
     --machine_rank 0 \
     --main_process_port 29500 \
-    scripts/train_flow_rtpo.py \
-    --config config/flow_rtpo.py 
+    /workspace/flow_rtpo/scripts/train_flow_rtpo.py \
+    --config /workspace/flow_rtpo/config/flow_rtpo.py 
