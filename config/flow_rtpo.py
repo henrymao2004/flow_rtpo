@@ -101,6 +101,13 @@ def flow_rtpo_sd3():
     config.height = 768
     config.width = 768
     
+    # Device configuration for 8-GPU setup
+    config.devices = ml_collections.ConfigDict()
+    config.devices.sd3_ddp_gpus = [0, 1, 2, 3]  # SD3.5 pipeline + LoRA under DDP
+    config.devices.reward_vlm_gpus = [4, 5]      # LLaVA-7B sharded across these
+    config.devices.prompt_editor_gpu = 6         # SBERT + vec2text corrector
+    config.devices.spare = [7]                   # spare / eval
+    
     # Per-prompt stat tracking for GRPO
     config.per_prompt_stat_tracking = True
     config.sample.global_std = False
