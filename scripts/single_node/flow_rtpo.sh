@@ -7,9 +7,18 @@ set -e
 CONFIG_NAME="flow_rtpo_debug"  # or "flow_rtpo_debug" for testing
 ACCELERATE_CONFIG="/workspace/flow_rtpo/scripts/accelerate_configs/multi_gpu.yaml"
 
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Memory optimization: Reduce startup memory pressure
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128
+export CUDA_LAUNCH_BLOCKING=0
+export CUDA_CACHE_DISABLE=0
+export CUDA_CACHE_MAXSIZE=0
+# Additional memory optimizations
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+
 # Set environment variables for multi-GPU
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7  # Three GPUs
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7  # Eight GPUs
 export TOKENIZERS_PARALLELISM=false
 export WANDB_PROJECT="flow_rtpo"
 

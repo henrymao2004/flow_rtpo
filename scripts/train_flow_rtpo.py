@@ -643,6 +643,13 @@ def compute_attribution(sample, transformer, pipeline, config, accelerator):
 
 def main(_):
     """Main training function for Flow-RTPO with Policy Gradient."""
+    # Memory debugging: Print real available memory and mapping
+    print("CUDA_VISIBLE_DEVICES =", os.environ.get("CUDA_VISIBLE_DEVICES"))
+    for i in range(torch.cuda.device_count()):
+        free, total = torch.cuda.mem_get_info(i)
+        print(f"cuda:{i} free={free/1e9:.2f}GB total={total/1e9:.2f}GB")
+    print("Accelerate will set device per-rank right after this.")
+    
     # Ensure sample_batch function is accessible
     global sample_batch
     
