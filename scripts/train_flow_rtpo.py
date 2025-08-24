@@ -6,6 +6,16 @@ from concurrent import futures
 import time
 import json
 import hashlib
+
+# Set CUDA_VISIBLE_DEVICES BEFORE importing torch/transformers/diffusers
+# Only training GPUs visible to the trainer process
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5"
+
+# VRAM optimization helpers
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:256")
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 from absl import app, flags
 from accelerate import Accelerator
 from ml_collections import config_flags
@@ -63,6 +73,8 @@ def reward_worker_process(worker_id, gpu_id, config, input_queue, output_queue, 
     # Now import torch and set device
     import torch
     torch.cuda.set_device(0)  # Use local device 0 (which is physical GPU gpu_id)
+    print(f"[REWARD] CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}")
+    print(f"[REWARD] current_device={torch.cuda.current_device()}, name={torch.cuda.get_device_name(0)}")
     print(f"Reward worker {worker_id} started on GPU {gpu_id} (local device 0)")
     
     # Import reward function after GPU setup
@@ -261,15 +273,19 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
         print(f"  Original: \"{original_prompt[:80]}{'...' if len(original_prompt) > 80 else ''}\"")
         print(f"  Modified: \"{modified_prompt[:80]}{'...' if len(modified_prompt) > 80 else ''}\"")
         
-        # Encode prompts for SD3
+        # Encode prompts for SD3 on CPU, then move to GPU
         prompt_embeds, pooled_prompt_embeds = encode_prompt(
             text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
             tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
             prompt=modified_prompt,
             max_sequence_length=256,
-            device=accelerator.device,
+            device="cpu",  # Encode on CPU
             num_images_per_prompt=1
         )
+        
+        # Move embeddings to training GPU
+        prompt_embeds = prompt_embeds.to(accelerator.device, non_blocking=True)
+        pooled_prompt_embeds = pooled_prompt_embeds.to(accelerator.device, non_blocking=True)
         
         # Low-level: Flow sampling with controller
         samples_for_prompt = []
@@ -469,8 +485,8 @@ def main(_):
     num_reward_gpus = 2    # 2 GPUs for reward computation
     total_gpus = num_training_gpus + num_reward_gpus
     
-    # Set CUDA device mapping
-    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, range(total_gpus)))
+    # CUDA_VISIBLE_DEVICES already set at the top of the script for training GPUs only
+    # Reward workers will be spawned with their own CUDA_VISIBLE_DEVICES
     
     accelerator_config = ProjectConfiguration(
         project_dir=os.path.join(config.save_dir),
@@ -627,9 +643,17 @@ def main(_):
     
     # Move pipeline components to device
     pipeline.vae.to(accelerator.device)
-    pipeline.text_encoder.to(accelerator.device)
-    pipeline.text_encoder_2.to(accelerator.device)
-    pipeline.text_encoder_3.to(accelerator.device)
+    
+    # Keep text encoders on CPU to save VRAM
+    pipeline.text_encoder.to("cpu")
+    pipeline.text_encoder_2.to("cpu")
+    pipeline.text_encoder_3.to("cpu")
+    
+    # Enable VAE optimizations for memory efficiency
+    if hasattr(pipeline.vae, "enable_slicing"): 
+        pipeline.vae.enable_slicing()
+    if hasattr(pipeline.vae, "enable_tiling"):  
+        pipeline.vae.enable_tiling()
     
     global_step = 0
     
