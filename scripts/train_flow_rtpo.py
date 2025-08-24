@@ -1102,13 +1102,6 @@ def main(_):
         
         # Target-KL control variables
         target_kl = 0.01  # Target KL divergence
-        beta_min = 1e-6
-        beta_max = 1.0
-        current_beta = config.train.beta
-        kl_history = []
-        
-        # Target-KL control variables
-        target_kl = 0.01  # Target KL divergence
         current_beta = config.train.beta  # Initial beta value
         beta_min = 0.001
         beta_max = 0.1
@@ -1234,7 +1227,6 @@ def main(_):
                 baseline_value = np.mean(current_rewards)
                 
                 # Group trajectories by group_key for GRPO (Group Relative Policy Optimization)
-                from collections import defaultdict
                 groups = defaultdict(list)
                 for traj in trajectories:
                     groups[traj['group_key']].append(traj)
