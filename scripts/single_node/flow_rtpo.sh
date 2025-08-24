@@ -38,14 +38,12 @@ echo "GPUs: $CUDA_VISIBLE_DEVICES"
 echo "Number of processes: 8"
 
 # Run training with accelerate (multi-GPU)
+# All accelerate parameters must come before the script path
 accelerate launch \
-    --config_file=$ACCELERATE_CONFIG \
     --num_processes=8 \
-    --num_machines=1 \
-    --machine_rank=0 \
-    --main_process_port=0 \
     --multi_gpu \
     --gpu_ids=0,1,2,3,4,5,6,7 \
+    --mixed_precision=bf16 \
     /workspace/flow_rtpo/scripts/train_flow_rtpo.py \
     --config=/workspace/flow_rtpo/config/flow_rtpo.py:$CONFIG_NAME \
     2>&1 | tee $OUTPUT_DIR/training.log
