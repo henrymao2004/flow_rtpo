@@ -33,7 +33,7 @@ def flow_rtpo_sd3():
     # Sampling configuration - Reduced for 8 GPUs
     config.sample.batch_size = 4  # Reduced from 4 to 2 per GPU
     config.sample.num_batches_per_epoch = 88  # Increased to maintain total samples
-    config.sample.num_image_per_prompt = 4 # Reduced from 4 to 2 for memory efficiency
+    config.sample.num_image_per_prompt = 2 # Reduced from 4 to 2 for memory efficiency
     config.sample.sample_time_per_prompt = 1
     config.sample.num_steps = 10
     config.sample.eval_num_steps = 40
@@ -69,11 +69,11 @@ def flow_rtpo_sd3():
     # Semantic regularization parameters
     config.prompt_editor.semantic_threshold = 0.9  # Semantic similarity threshold τ (降低到合理范围)
     config.prompt_editor.semantic_alpha = 1.0  # Semantic regularization weight α (增强语义约束)
-    config.prompt_editor.k_samples = 4   # Reduced from 4 to 2 for memory efficiency
+    config.prompt_editor.k_samples = 2   # Reduced from 4 to 2 for memory efficiency
     
     # vec2text decoding parameters
     config.prompt_editor.decode_num_steps = 10  # Number of inversion steps
-    config.prompt_editor.decode_beam_width = 2 # Beam width for text inversion quality
+    config.prompt_editor.decode_beam_width = 1 # Beam width for text inversion quality
     
     # Manual sampling for diversity
     config.prompt_editor.use_manual_sampling = False # Enable temperature + top-p sampling
