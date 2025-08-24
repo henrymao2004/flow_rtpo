@@ -36,7 +36,7 @@ def flow_rtpo_sd3():
     config.sample.num_batches_per_epoch = 22
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     config.sample.sample_time_per_prompt = 1
-    config.sample.num_steps = 10
+    config.sample.num_steps = 40
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale = 4.5
     config.sample.test_batch_size = 4
