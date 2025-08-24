@@ -73,7 +73,8 @@ class RewardComputeWorker:
             device=self.device,
             vlm_model=self.reward_fn_config["vlm_model"],
             w_cvar=self.reward_fn_config["w_cvar"],
-            w_quality=self.reward_fn_config["w_quality"]
+            w_quality=self.reward_fn_config["w_quality"],
+            vlm_batch_size=self.reward_fn_config["vlm_batch_size"]
         )
         
         while not self.stop_event.is_set():
@@ -504,7 +505,8 @@ def main(_):
         reward_fn_config = {
             "vlm_model": config.target_vlm,
             "w_cvar": config.toxicity_reward.w_cvar,
-            "w_quality": config.toxicity_reward.w_quality
+            "w_quality": config.toxicity_reward.w_quality,
+            "vlm_batch_size": config.vlm_batch_size
         }
         
         # Start reward computation workers
