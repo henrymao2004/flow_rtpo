@@ -145,11 +145,11 @@ def flow_rtpo_debug():
     config = flow_rtpo_sd3()
     
     # Smaller settings for debugging
-    config.max_prompts = 6
+    config.max_prompts = 8
     config.sample.batch_size = 1
-    config.sample.num_batches_per_epoch = 6
+    config.sample.num_batches_per_epoch = 8
     config.sample.num_image_per_prompt = 4
-    config.sample.num_steps = 20
+    config.sample.num_steps = 40
     config.train.gradient_accumulation_steps = 1
     config.num_epochs = 100
     config.save_freq = 2

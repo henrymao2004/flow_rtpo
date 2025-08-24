@@ -4,16 +4,19 @@
 set -e
 
 # Configuration
-CONFIG_NAME="flow_rtpo_debug"  # or "flow_rtpo_debug" for testing
+CONFIG_NAME="flow_rtpo_memory_optimized"  # Use memory optimized config
 ACCELERATE_CONFIG="/workspace/flow_rtpo/scripts/accelerate_configs/multi_gpu.yaml"
 
 # Memory optimization: Reduce startup memory pressure
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:64
 export CUDA_LAUNCH_BLOCKING=1
 export CUDA_CACHE_DISABLE=0
 export CUDA_CACHE_MAXSIZE=0
 export CUDA_MODULE_LOADING=LAZY
 export TORCH_USE_CUDA_DSA=1
+# Additional memory optimizations
+export PYTORCH_NO_CUDA_MEMORY_CACHING=1
+export CUDA_MEMORY_FRACTION=0.8
 # Additional CUDA environment variables for stability
 export CUDA_VISIBLE_DEVICES=2,3,4,5,6,7
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
