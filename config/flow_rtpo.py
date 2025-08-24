@@ -1,8 +1,11 @@
 import ml_collections
-import imp
+import importlib.util
 import os
 
-base = imp.load_source("base", os.path.join(os.path.dirname(__file__), "base.py"))
+# Load base configuration using importlib instead of deprecated imp
+base_spec = importlib.util.spec_from_file_location("base", os.path.join(os.path.dirname(__file__), "base.py"))
+base = importlib.util.module_from_spec(base_spec)
+base_spec.loader.exec_module(base)
 
 
 def flow_rtpo_sd3():
