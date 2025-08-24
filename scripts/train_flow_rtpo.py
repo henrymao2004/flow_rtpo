@@ -646,6 +646,12 @@ def main(_):
     # Ensure sample_batch function is accessible
     global sample_batch
     
+    # Add startup delay to avoid simultaneous CUDA context creation
+    import time
+    import os
+    rank = int(os.environ.get('LOCAL_RANK', 0))
+    time.sleep(rank * 0.5)  # Stagger startup by 0.5s per rank
+    
     # Basic Accelerate and logging setup
     config = FLAGS.config
     
