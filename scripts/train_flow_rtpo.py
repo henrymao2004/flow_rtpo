@@ -52,7 +52,7 @@ config_flags.DEFINE_config_file("config", "config/flow_rtpo.py", "Training confi
 logger = get_logger(__name__)
 
 
-def reward_worker_process(worker_id, gpu_id, config, queue, stop_event):
+def reward_worker_process(worker_id, gpu_id, config, input_queue, output_queue, stop_event):
     """Worker process for reward computation with proper GPU isolation."""
     # Set CUDA_VISIBLE_DEVICES BEFORE importing torch/transformers
     import os
@@ -81,14 +81,14 @@ def reward_worker_process(worker_id, gpu_id, config, queue, stop_event):
     
     while not stop_event.is_set():
         try:
-            # Get task from queue with timeout
-            batch_id, batch_images, batch_prompts, batch_metadata = queue.get(timeout=1.0)
+            # Get task from input queue with timeout
+            batch_id, batch_images, batch_prompts, batch_metadata = input_queue.get(timeout=1.0)
             
             # Compute rewards
             batch_rewards, reward_metadata = reward_fn(batch_images, batch_prompts, batch_metadata)
             
-            # Put results back
-            queue.put((batch_id, batch_rewards, reward_metadata))
+            # Put results back to output queue
+            output_queue.put((batch_id, batch_rewards, reward_metadata))
             print(f"Reward worker {worker_id} processed batch {batch_id}")
             
         except queue.Empty:
@@ -97,12 +97,12 @@ def reward_worker_process(worker_id, gpu_id, config, queue, stop_event):
             print(f"Reward worker {worker_id} error: {e}")
             # Put error result with a default batch_id if not available
             error_batch_id = batch_id if 'batch_id' in locals() else f"error_{worker_id}"
-            queue.put((error_batch_id, None, {"error": str(e)}))
+            output_queue.put((error_batch_id, None, {"error": str(e)}))
     
     print(f"Reward worker {worker_id} stopped")
 
 
-def start_reward_workers(num_reward_gpus, reward_fn_config, reward_queue, stop_event):
+def start_reward_workers(num_reward_gpus, reward_fn_config, input_queue, output_queue, stop_event):
     """Start dedicated reward computation workers using multiprocessing for proper queue sharing."""
     from multiprocessing import Process
     
@@ -110,7 +110,7 @@ def start_reward_workers(num_reward_gpus, reward_fn_config, reward_queue, stop_e
     for i in range(num_reward_gpus):
         phys_gpu = 6 + i  # Use GPUs 6, 7 for reward computation
         p = Process(target=reward_worker_process, 
-                   args=(i, phys_gpu, reward_fn_config, reward_queue, stop_event))
+                   args=(i, phys_gpu, reward_fn_config, input_queue, output_queue, stop_event))
         p.start()
         workers.append(p)
     
@@ -185,7 +185,7 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
         return prev_sample, log_prob, prev_sample_mean, std_dev_t
 
 
-def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0, batch_idx=0, reward_variance=None, reward_queue=None):
+def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0, batch_idx=0, reward_variance=None, reward_input_queue=None):
     """Sample a batch of images using hierarchical policies with enhanced features and async reward computation."""
     batch_size = len(prompts)
     k_samples = config.prompt_editor.get('k_samples', 4)  # k samples per prompt for GRPO
@@ -389,10 +389,10 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
         
         all_samples.extend(samples_for_prompt)
     
-    # Submit batch for async reward computation if reward queue is available
-    if reward_queue is not None and accelerator.is_main_process:
+    # Submit batch for async reward computation if reward input queue is available
+    if reward_input_queue is not None and accelerator.is_main_process:
         batch_id = f"epoch_{epoch}_batch_{batch_idx}"
-        reward_queue.put((batch_id, batch_images, batch_prompts, [{}] * len(batch_images)))
+        reward_input_queue.put((batch_id, batch_images, batch_prompts, [{}] * len(batch_images)))
         print(f"[ASYNC REWARD] Submitted batch {batch_id} for reward computation")
     
     return all_samples
@@ -498,7 +498,8 @@ def main(_):
     set_seed(config.seed, device_specific=True)
     
     # Initialize reward computation infrastructure
-    reward_queue = None
+    reward_input_queue = None
+    reward_output_queue = None
     reward_workers = []
     stop_event = Event()
     
@@ -511,9 +512,10 @@ def main(_):
             "vlm_batch_size": config.vlm_batch_size
         }
         
-        # Start reward computation workers
-        reward_queue = Queue()
-        reward_workers = start_reward_workers(num_reward_gpus, reward_fn_config, reward_queue, stop_event)
+        # Start reward computation workers with separate input/output queues
+        reward_input_queue = Queue()
+        reward_output_queue = Queue()
+        reward_workers = start_reward_workers(num_reward_gpus, reward_fn_config, reward_input_queue, reward_output_queue, stop_event)
         logger.info(f"Started {num_reward_gpus} reward computation workers")
     
     # Load SD3 pipeline
@@ -674,7 +676,7 @@ def main(_):
             
             # Sample images using enhanced hierarchical policies with async reward computation
             batch_samples = sample_batch(pipeline, prompt_editor, prompts, config, accelerator, 
-                                       epoch, batch_idx, current_reward_variance, reward_queue)
+                                       epoch, batch_idx, current_reward_variance, reward_input_queue)
             
             # Wait for async reward computation results
             if batch_samples and accelerator.is_main_process:
@@ -683,7 +685,7 @@ def main(_):
                 
                 # Wait for reward results with timeout
                 try:
-                    result_batch_id, batch_rewards, batch_reward_metadata = reward_queue.get(timeout=300)  # 5 minute timeout
+                    result_batch_id, batch_rewards, batch_reward_metadata = reward_output_queue.get(timeout=100)  # 5 minute timeout
                     
                     if result_batch_id == batch_id and batch_rewards is not None:
                         # Assign rewards to samples
