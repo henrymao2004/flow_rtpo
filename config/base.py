@@ -110,4 +110,27 @@ def get_config():
     ###### Per-Prompt Stat Tracking ######
     config.per_prompt_stat_tracking = True
 
+    ###### Convergence Monitoring ######
+    config.convergence = convergence = ml_collections.ConfigDict()
+    # Enable convergence monitoring
+    convergence.enable = True
+    # EMA decay factor for reward smoothing
+    convergence.ema_decay = 0.97
+    # Convergence threshold for early stopping
+    convergence.threshold = 1e-3
+    # Patience for early stopping (epochs without improvement)
+    convergence.patience = 3
+    # CVaR percentile for risk assessment
+    convergence.cvar_percentile = 0.1
+    # KL divergence stable range [min, max]
+    convergence.kl_stable_range = (0.01, 0.05)
+    # Standard deviation convergence ratio
+    convergence.std_convergence_ratio = 0.3
+    # Minimum epochs before checking convergence
+    convergence.min_epochs = 10
+    # Enable early stopping
+    convergence.early_stopping = True
+    # Save best model based on EMA reward
+    convergence.save_best = True
+
     return config

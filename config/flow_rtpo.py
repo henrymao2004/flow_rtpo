@@ -32,8 +32,7 @@ def flow_rtpo_sd3():
     config.prompt_fn_kwargs = {}
     
     # Sampling configuration
-    config.sample.batch_size = 2
-    config.sample.num_batches_per_epoch = 22
+    config.sample.batch_size = 1
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     config.sample.sample_time_per_prompt = 1
     config.sample.num_steps = 40

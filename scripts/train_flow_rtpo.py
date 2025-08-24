@@ -37,6 +37,7 @@ from flow_grpo.prompt_editor import PromptEditorPolicy
 from flow_grpo.toxicity_rewards import toxicity_reward_function
 from flow_grpo.rtp_dataset import create_rtp_dataset_and_loader, RealToxicityPromptsDataset
 from flow_grpo.clip_scorer import ClipScorer
+from flow_grpo.convergence_monitor import ConvergenceMonitor
 from sklearn.model_selection import train_test_split
 import random
 
@@ -744,6 +745,20 @@ def main(_):
         sample_top_p=config.prompt_editor.get('sample_top_p', 0.9)
     )
     
+    # Initialize convergence monitor
+    convergence_monitor = None
+    if config.convergence.enable:
+        convergence_monitor = ConvergenceMonitor(
+            ema_decay=config.convergence.ema_decay,
+            convergence_threshold=config.convergence.threshold,
+            patience=config.convergence.patience,
+            cvar_percentile=config.convergence.cvar_percentile,
+            kl_stable_range=config.convergence.kl_stable_range,
+            std_convergence_ratio=config.convergence.std_convergence_ratio,
+            min_epochs=config.convergence.min_epochs
+        )
+        logger.info("Convergence monitoring enabled")
+    
     # Initialize reward function
     reward_fn = toxicity_reward_function(
         device=accelerator.device,
@@ -1290,6 +1305,19 @@ def main(_):
         gathered_prompt_reg_loss = accelerator.gather(prompt_reg_loss_tensor)
         gathered_total_prompt_loss = accelerator.gather(total_prompt_loss_tensor)
         
+        # Update convergence monitoring
+        convergence_metrics = {}
+        if convergence_monitor is not None:
+            # Extract rewards from samples
+            all_rewards = [sample["reward"] for sample in epoch_samples]
+            kl_div = gathered_kl_loss.float().mean().item() if len(train_info.get("kl_loss", [])) > 0 else None
+            
+            convergence_metrics = convergence_monitor.update(
+                rewards=all_rewards,
+                kl_div=kl_div,
+                epoch=epoch
+            )
+        
         # Log training metrics
         if accelerator.is_main_process:
             log_data = {
@@ -1322,6 +1350,8 @@ def main(_):
                 "reg_mean_semantic_sim": np.mean(train_info.get("reg_mean_semantic_sim", [0])),
                 # Warmup tracking
                 "prompt_warmup_factor": np.mean(train_info.get("prompt_warmup_factor", [1])),
+                # Convergence monitoring metrics
+                **convergence_metrics,
             }
             
             swanlab.log(log_data)
@@ -1361,6 +1391,23 @@ def main(_):
             with open(results_path, 'w') as f:
                 json.dump(epoch_results, f, indent=2)
         
+        # Check for early stopping
+        if (convergence_monitor is not None and 
+            config.convergence.early_stopping and 
+            convergence_monitor.should_early_stop()):
+            logger.info(f"Early stopping triggered at epoch {epoch}")
+            logger.info(f"Convergence summary: {convergence_monitor.get_convergence_summary()}")
+            break
+        
+        # Save best model based on EMA reward
+        if (convergence_monitor is not None and 
+            config.convergence.save_best and 
+            convergence_metrics.get("ema_reward", -1e9) > convergence_monitor.state["best_ema"]):
+            best_ckpt_path = os.path.join(config.save_dir, "best_model")
+            save_ckpt(best_ckpt_path, pipeline.transformer, prompt_editor, global_step, 
+                     accelerator, ema, transformer_trainable_parameters, config)
+            logger.info(f"Best model saved at epoch {epoch} with EMA reward: {convergence_metrics.get('ema_reward', 0):.4f}")
+        
         # Save checkpoint
         if (epoch + 1) % config.save_freq == 0:
             save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 
@@ -1369,6 +1416,11 @@ def main(_):
     # Final save
     save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 
              accelerator, ema, transformer_trainable_parameters, config)
+    
+    # Log final convergence summary
+    if convergence_monitor is not None:
+        final_summary = convergence_monitor.get_convergence_summary()
+        logger.info(f"Final convergence summary: {final_summary}")
     
     logger.info("Training completed!")
 
