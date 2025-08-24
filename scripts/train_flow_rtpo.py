@@ -1230,17 +1230,24 @@ def main(_):
         #################### LOGGING AND SAVING ####################
         epoch_time = time.time() - epoch_start_time
         
-        # Gather metrics from all processes
-        gathered_metrics = accelerator.gather_for_metrics({
-            "num_samples": len(epoch_samples),
-            "reward_mean": np.mean(all_rewards),
-            "reward_std": np.std(all_rewards),
-            "flow_policy_loss": np.mean(train_info["flow_policy_loss"]),
-            "kl_loss": np.mean(train_info["kl_loss"]),
-            "prompt_policy_loss": np.mean(train_info["prompt_policy_loss"]),
-            "prompt_reg_loss": np.mean(train_info["prompt_reg_loss"]),
-            "total_prompt_loss": np.mean(train_info["total_prompt_loss"]),
-        })
+        # Gather metrics from all processes using individual gather calls
+        num_samples_tensor = torch.tensor(len(epoch_samples), device=accelerator.device)
+        reward_mean_tensor = torch.tensor(np.mean(all_rewards), device=accelerator.device)
+        reward_std_tensor = torch.tensor(np.std(all_rewards), device=accelerator.device)
+        flow_policy_loss_tensor = torch.tensor(np.mean(train_info["flow_policy_loss"]), device=accelerator.device)
+        kl_loss_tensor = torch.tensor(np.mean(train_info["kl_loss"]), device=accelerator.device)
+        prompt_policy_loss_tensor = torch.tensor(np.mean(train_info["prompt_policy_loss"]), device=accelerator.device)
+        prompt_reg_loss_tensor = torch.tensor(np.mean(train_info["prompt_reg_loss"]), device=accelerator.device)
+        total_prompt_loss_tensor = torch.tensor(np.mean(train_info["total_prompt_loss"]), device=accelerator.device)
+        
+        gathered_num_samples = accelerator.gather(num_samples_tensor)
+        gathered_reward_mean = accelerator.gather(reward_mean_tensor)
+        gathered_reward_std = accelerator.gather(reward_std_tensor)
+        gathered_flow_policy_loss = accelerator.gather(flow_policy_loss_tensor)
+        gathered_kl_loss = accelerator.gather(kl_loss_tensor)
+        gathered_prompt_policy_loss = accelerator.gather(prompt_policy_loss_tensor)
+        gathered_prompt_reg_loss = accelerator.gather(prompt_reg_loss_tensor)
+        gathered_total_prompt_loss = accelerator.gather(total_prompt_loss_tensor)
         
         # Log training metrics
         if accelerator.is_main_process:
@@ -1248,19 +1255,19 @@ def main(_):
                 "epoch": epoch,
                 "global_step": global_step,
                 "epoch_time": epoch_time,
-                "num_samples": gathered_metrics["num_samples"].mean().item(),
-                "reward_mean": gathered_metrics["reward_mean"].mean().item(),
-                "reward_std": gathered_metrics["reward_std"].mean().item(),
+                "num_samples": gathered_num_samples.mean().item(),
+                "reward_mean": gathered_reward_mean.mean().item(),
+                "reward_std": gathered_reward_std.mean().item(),
                 "toxicity_mean": reward_metadata["statistics"]["mean_toxicity"],
                 "toxicity_max": reward_metadata["statistics"]["max_toxicity"],
                 "cvar_mean": reward_metadata["statistics"]["cvar_mean"],
                 "cvar_threshold": reward_metadata["cvar_threshold"],
                 "quality_mean": reward_metadata["statistics"]["quality_mean"],
-                "flow_policy_loss": gathered_metrics["flow_policy_loss"].mean().item(),
-                "kl_loss": gathered_metrics["kl_loss"].mean().item(),
-                "prompt_policy_loss": gathered_metrics["prompt_policy_loss"].mean().item(),
-                "prompt_reg_loss": gathered_metrics["prompt_reg_loss"].mean().item(),
-                "total_prompt_loss": gathered_metrics["total_prompt_loss"].mean().item(),
+                "flow_policy_loss": gathered_flow_policy_loss.mean().item(),
+                "kl_loss": gathered_kl_loss.mean().item(),
+                "prompt_policy_loss": gathered_prompt_policy_loss.mean().item(),
+                "prompt_reg_loss": gathered_prompt_reg_loss.mean().item(),
+                "total_prompt_loss": gathered_total_prompt_loss.mean().item(),
                 "prompt_mean_advantage": np.mean(train_info.get("prompt_mean_advantage", [0])),
                 "prompt_baseline_value": np.mean(train_info.get("prompt_baseline_value", [0])),
                 # Enhanced adaptive and semantic metrics
