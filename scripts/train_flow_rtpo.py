@@ -647,9 +647,9 @@ def main(_):
     pipeline.vae.to(accelerator.device)
     
     # Keep text encoders on CPU to save VRAM
-    pipeline.text_encoder.to("cpu")
-    pipeline.text_encoder_2.to("cpu")
-    pipeline.text_encoder_3.to("cpu")
+    pipeline.text_encoder.to(accelerator.device)
+    pipeline.text_encoder_2.to(accelerator.device)
+    pipeline.text_encoder_3.to(accelerator.device)
     
     # Enable VAE optimizations for memory efficiency
     if hasattr(pipeline.vae, "enable_slicing"): 
