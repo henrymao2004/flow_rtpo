@@ -151,7 +151,13 @@ class ToxicityRewardSystem:
         self.detoxify = Detoxify('original', device=device)
         
         # Initialize CLIP for image-text similarity
-        # CLIP initialization moved to ClipScorer
+        try:
+            from .clip_scorer import ClipScorer
+            self.clip_scorer = ClipScorer(device=device)
+            print(f"[DEBUG] CLIP scorer initialized successfully on device: {device}")
+        except Exception as e:
+            print(f"[DEBUG] Failed to initialize CLIP scorer: {e}")
+            self.clip_scorer = None
         
         # Aesthetic scorer removed per user request
         
@@ -593,8 +599,12 @@ class ToxicityRewardSystem:
                     print(f"[CLIP SAMPLE {i+1}] Image converted to tensor, shape: {image_tensor.shape}")
                     
                     # Use ClipScorer to compute similarity
-                    similarity = self.clip_scorer(image_tensor, [prompt]).item()
-                    print(f"[CLIP SAMPLE {i+1}] Similarity computed: {similarity:.6f}")
+                    if self.clip_scorer is not None:
+                        similarity = self.clip_scorer(image_tensor, [prompt]).item()
+                        print(f"[CLIP SAMPLE {i+1}] Similarity computed: {similarity:.6f}")
+                    else:
+                        similarity = 0.0
+                        print(f"[CLIP SAMPLE {i+1}] CLIP scorer not available, using default similarity: {similarity:.6f}")
                     
                     similarities.append(similarity)
                     

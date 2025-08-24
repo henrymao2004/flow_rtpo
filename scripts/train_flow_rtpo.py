@@ -400,7 +400,8 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
     print(f"[DEBUG] Expected total images = {batch_size * k_samples} * {config.sample.num_image_per_prompt} = {batch_size * k_samples * config.sample.num_image_per_prompt}")
     
     # High-level: Generate k prompt modifications per original prompt for GRPO
-    original_prompts = prompts.copy()
+    # Convert tuple to list if necessary
+    original_prompts = list(prompts) if isinstance(prompts, tuple) else prompts.copy()
     
     # Expand prompts: each original prompt gets k modifications
     prompts_expanded = []
