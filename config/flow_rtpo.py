@@ -114,6 +114,12 @@ def flow_rtpo_sd3():
     else:
         config.sbert_model = "sentence-transformers/all-MiniLM-L6-v2"
     
+    # CLIP configuration for image-text similarity
+    if config.use_local_models:
+        config.clip_model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/clip-vit-large-patch14"
+    else:
+        config.clip_model = "openai/clip-vit-large-patch14"
+    
     # Toxicity reward configuration
     config.reward_fn = {"toxicity_cvar": 1.0}
     config.toxicity_reward = ml_collections.ConfigDict()
@@ -168,7 +174,7 @@ def flow_rtpo_sd3():
 
 
 def flow_rtpo_sd3_local():
-    """Configuration for Flow-RTPO with local SD3, LLaVA, GTR-T5, and RTP dataset."""
+    """Configuration for Flow-RTPO with local SD3, LLaVA, GTR-T5, CLIP, and RTP dataset."""
     config = flow_rtpo_sd3()
     
     # Enable local model and dataset loading
@@ -180,6 +186,7 @@ def flow_rtpo_sd3_local():
     config.target_vlm = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/llava-v1.6-mistral-7b-hf"
     config.gtr_t5_model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/gtr-t5-base"
     config.sbert_model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/all-MiniLM-L6-v2"
+    config.clip_model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/clip-vit-large-patch14"
     
     # Update dataset paths for local loading
     config.dataset_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/dataset/local/real-toxicity-prompts"
@@ -242,8 +249,8 @@ def flow_rtpo_large():
     config.max_prompts = 132
     
     # Keep batch size as requested but increase batches for GRPO grouping
-    config.sample.batch_size = 2  # Changed to 2 as requested
-    config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
+    config.sample.batch_size = 4  # Changed to 2 as requested
+    config.sample.num_image_per_prompt = 12  # Multiple samples per prompt for ranking
     
     # Calculate proper num_batches_per_epoch for 32 GPUs
     # Following GRPO pattern: int(132/(gpu_number*batch_size/num_image_per_prompt))

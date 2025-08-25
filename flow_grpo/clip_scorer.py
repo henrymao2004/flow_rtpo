@@ -28,11 +28,21 @@ def get_image_transform(processor:AutoImageProcessor):
     return T.Compose([resize, crop, normalise])
 
 class ClipScorer(torch.nn.Module):
-    def __init__(self, device):
+    def __init__(self, device, use_local_models=False, clip_model_path=None):
         super().__init__()
-        self.device=device
-        self.model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14").to(device)
-        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
+        self.device = device
+        
+        # Determine CLIP model path based on loading mode
+        if use_local_models and clip_model_path:
+            clip_model_name = clip_model_path
+            print(f"[INFO] Loading local CLIP model from: {clip_model_name}")
+        else:
+            # Use HuggingFace model
+            clip_model_name = "openai/clip-vit-large-patch14"
+            print(f"[INFO] Loading HuggingFace CLIP model: {clip_model_name}")
+        
+        self.model = CLIPModel.from_pretrained(clip_model_name).to(device)
+        self.processor = CLIPProcessor.from_pretrained(clip_model_name)
         self.tform = get_image_transform(self.processor.image_processor)
         self.eval()
     

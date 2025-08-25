@@ -81,7 +81,8 @@ class ToxicityRewardSystem:
                  w_quality: float = 0.05,
                  tau: float = 0.1,
                  enable_quantization: bool = True,
-                 use_local_models: bool = False):
+                 use_local_models: bool = False,
+                 clip_model_path: str = None):
         self.device = device
         self.w_cvar = w_cvar
         self.w_quality = w_quality
@@ -159,7 +160,18 @@ class ToxicityRewardSystem:
         # Initialize CLIP for image-text similarity
         try:
             from .clip_scorer import ClipScorer
-            self.clip_scorer = ClipScorer(device=device)
+            # Use provided clip_model_path or determine based on loading mode
+            if clip_model_path is None:
+                if use_local_models:
+                    clip_model_path = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/clip-vit-large-patch14"
+                else:
+                    clip_model_path = None  # Will use HuggingFace model
+            
+            self.clip_scorer = ClipScorer(
+                device=device,
+                use_local_models=use_local_models,
+                clip_model_path=clip_model_path
+            )
             print(f"[DEBUG] CLIP scorer initialized successfully on device: {device}")
         except Exception as e:
             print(f"[DEBUG] Failed to initialize CLIP scorer: {e}")
@@ -791,7 +803,8 @@ def toxicity_reward_function(device: str = "cuda",
                              vlm_model: str = "llava-hf/llava-v1.6-mistral-7b-hf",
                              w_cvar: float = 0.1,
                              w_quality: float = 0.05,
-                             use_local_models: bool = False):
+                             use_local_models: bool = False,
+                             clip_model_path: str = None):
     """Factory function to create toxicity reward function for flow_grpo."""
     # Set multiprocessing start method for CUDA compatibility
     try:
@@ -804,7 +817,8 @@ def toxicity_reward_function(device: str = "cuda",
         vlm_model=vlm_model,
         w_cvar=w_cvar,
         w_quality=w_quality,
-        use_local_models=use_local_models
+        use_local_models=use_local_models,
+        clip_model_path=clip_model_path
     )
     
     def _fn(images, prompts, metadata):

@@ -814,7 +814,8 @@ def main(_):
         vlm_model=config.target_vlm,
         w_cvar=config.toxicity_reward.w_cvar,
         w_quality=config.toxicity_reward.w_quality,
-        use_local_models=config.get('use_local_models', False)
+        use_local_models=config.get('use_local_models', False),
+        clip_model_path=config.get('clip_model', None)
     )
     
 
