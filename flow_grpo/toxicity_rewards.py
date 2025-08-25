@@ -147,6 +147,10 @@ class ToxicityRewardSystem:
                 print(f"[MULTI-GPU] Will load VLM models on-demand for each GPU")
                 self.vlm_models = {}  # Dictionary to store models per GPU
                 self.vlm_processors = {}  # Dictionary to store processors per GPU
+                self.use_llava = True  # Set use_llava for multi-GPU path
+                # Set default model and processor for fallback (will be loaded on first use)
+                self.vlm_model = None
+                self.vlm_processor = self.vlm_processor  # Already loaded above
             else:
                 # Single GPU or multi-GPU disabled
                 print(f"[DEBUG] Using stable configuration: single device, SDPA attention, no quantization")
