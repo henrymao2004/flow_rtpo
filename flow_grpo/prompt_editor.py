@@ -76,6 +76,9 @@ class PromptEditorPolicy(nn.Module):
                  # Modification noise parameters for sampling diversity
                  use_modification_noise: bool = True,  # Use random noise during embedding modification
                  modification_noise_std: float = 0.005,  # Standard deviation for modification noise
+                 # Local model paths
+                 gtr_model_path: str = None,  # Local GTR model path
+                 sbert_model_path: str = None,  # Local SBERT model path
                  **kwargs):  # Accept extra kwargs for backward compatibility
         super().__init__()
         self.epsilon_p = epsilon_p
@@ -126,13 +129,18 @@ class PromptEditorPolicy(nn.Module):
         try:
             # Try to import and use SentenceTransformer
             from sentence_transformers import SentenceTransformer as ST
-            self.sbert_model = ST('all-MiniLM-L6-v2').to(device)
-            print("[INFO] SBERT model loaded for semantic regularization")
+            
+            # Use local SBERT model path if provided, otherwise fall back to HuggingFace
+            sbert_model_name = sbert_model_path if sbert_model_path else 'all-MiniLM-L6-v2'
+            print(f"[INFO] Loading SBERT model from: {sbert_model_name}")
+            
+            self.sbert_model = ST(sbert_model_name).to(device)
+            print(f"[INFO] SBERT model loaded for semantic regularization from: {sbert_model_name}")
         except ImportError:
             print("[WARNING] sentence-transformers not available, semantic regularization disabled")
             self.sbert_model = None
         except Exception as e:
-            print(f"[WARNING] Failed to load SBERT model: {e}")
+            print(f"[WARNING] Failed to load SBERT model from {sbert_model_name}: {e}")
             self.sbert_model = None
         
         # Initialize vec2text corrector
@@ -140,21 +148,27 @@ class PromptEditorPolicy(nn.Module):
         
         # Use OFFICIAL vec2text approach for GTR as per documentation
         from transformers import AutoTokenizer, AutoModel
-        self.gtr_tokenizer = AutoTokenizer.from_pretrained('sentence-transformers/gtr-t5-base')
+        
+        # Use local GTR model path if provided, otherwise fall back to HuggingFace
+        gtr_model_name = gtr_model_path if gtr_model_path else 'sentence-transformers/gtr-t5-base'
+        print(f"[INFO] Loading GTR model from: {gtr_model_name}")
+        
+        self.gtr_tokenizer = AutoTokenizer.from_pretrained(gtr_model_name)
         
         # Try loading with different precision/settings to avoid NaN
         try:
             self.gtr_encoder = AutoModel.from_pretrained(
-                'sentence-transformers/gtr-t5-base',
+                gtr_model_name,
                 torch_dtype=torch.float32  # Force float32 to avoid precision issues
             ).encoder.to(device)
             self.use_fallback_encoder = False
         except Exception as e:
-            print(f"[WARNING] Failed to load GTR encoder: {e}")
+            print(f"[WARNING] Failed to load GTR encoder from {gtr_model_name}: {e}")
             # Use a simple fallback encoder
             try:
                 from sentence_transformers import SentenceTransformer
-                self.sentence_transformer_fallback = SentenceTransformer('all-MiniLM-L6-v2').to(device)
+                fallback_model_name = sbert_model_path if sbert_model_path else 'all-MiniLM-L6-v2'
+                self.sentence_transformer_fallback = SentenceTransformer(fallback_model_name).to(device)
             except ImportError:
                 print("[WARNING] sentence-transformers not available for fallback encoder")
                 self.sentence_transformer_fallback = None

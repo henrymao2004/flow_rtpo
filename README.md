@@ -10,31 +10,17 @@ Flow-RTPO: Real-Time Prompt Optimization for Stable Diffusion models using Flow-
 pip install -r requirements.txt
 ```
 
-### Authentication Setup
-
-#### Option 1: Using Environment Variables (Recommended)
-```bash
-# Load environment variables
-source .env
 
 # Login using environment variables, Swanlab api key: YiUzV5i2rB0pybueoH8A8
-huggingface-cli login --token $HUGGINGFACE_TOKEN
 swanlab login --api-key $SWANLAB_API_KEY
-```
 
-#### Option 2: Manual Login
-```bash
-huggingface-cli login
-# Enter your HuggingFace token when prompted
 
-swanlab login
-# Enter your SwanLab API key when prompted
-```
+
 
 ### Multi-Node Training
 
 
-#### 2. Launch Multi-Node Training
+#### 1. Launch Multi-Node Training
 
 **Main Node (rank 0):** 
 ```bash
@@ -50,7 +36,7 @@ cd scripts/multi_node/flow_rtpo
 ./main3.sh  # for rank 3
 ```
 
-#### 3. Monitor Training
+#### 2. Monitor Training
 
 - **SwanLab**: [View experiments](https://swanlab.ai)
 - **HuggingFace**: [Model Hub](https://huggingface.co/models)

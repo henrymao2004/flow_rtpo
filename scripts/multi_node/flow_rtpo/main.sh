@@ -13,4 +13,4 @@ accelerate launch --config_file /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo
     --num_machines 4 --num_processes 32 \
     --machine_rank ${RANK} --main_process_ip ${MASTER_ADDR} --main_process_port ${MASTER_PORT} \
     /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/scripts/train_flow_rtpo.py \
-    --config /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/config/flow_rtpo.py:flow_rtpo_large 
+    --config /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/config/flow_rtpo_local.py:flow_rtpo_large_local 

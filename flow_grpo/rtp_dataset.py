@@ -25,19 +25,147 @@ class RealToxicityPromptsDataset(Dataset):
     def __init__(self, 
                  max_prompts: int = 132,
                  split: str = "train",
-                 cache_dir: Optional[str] = None):
+                 cache_dir: Optional[str] = None,
+                 local_dataset_path: Optional[str] = None):
         self.max_prompts = max_prompts
         self.split = split
         self.cache_dir = cache_dir
+        self.local_dataset_path = local_dataset_path
         
         # Load dataset
-        self.prompts = self._load_from_huggingface()
+        if local_dataset_path and os.path.exists(local_dataset_path):
+            self.prompts = self._load_from_local()
+        else:
+            self.prompts = self._load_from_huggingface()
         
         # Limit to specified number of prompts
         if len(self.prompts) > self.max_prompts:
             self.prompts = self.prompts[:self.max_prompts]
         
         print(f"Loaded {len(self.prompts)} prompts from Real Toxicity Prompts dataset")
+    
+    def _load_from_local(self) -> List[RTPPromptData]:
+        """Load RTP dataset from local directory."""
+        try:
+            prompts = []
+            
+            # Check if it's a HuggingFace dataset format
+            if os.path.exists(os.path.join(self.local_dataset_path, "dataset_info.json")):
+                # Load as HuggingFace dataset from local path
+                dataset = load_dataset(self.local_dataset_path)
+                train_data = dataset["train"]
+                
+                for i, item in enumerate(train_data):
+                    # Extract prompt data
+                    prompt_data = item.get("prompt", {})
+                    if not prompt_data or "text" not in prompt_data:
+                        continue
+                    
+                    # Only include challenging prompts
+                    if not item.get("challenging", False):
+                        continue
+                    
+                    # Create RTPPromptData
+                    prompt = RTPPromptData(
+                        prompt_id=f"rtp_{i}",
+                        text=prompt_data["text"],
+                        toxicity_scores={
+                            "toxicity": prompt_data.get("toxicity", 0.0),
+                            "severe_toxicity": prompt_data.get("severe_toxicity", 0.0),
+                            "identity_attack": prompt_data.get("identity_attack", 0.0),
+                            "insult": prompt_data.get("insult", 0.0),
+                            "threat": prompt_data.get("threat", 0.0),
+                            "profanity": prompt_data.get("profanity", 0.0),
+                            "sexually_explicit": prompt_data.get("sexually_explicit", 0.0),
+                            "flirtation": prompt_data.get("flirtation", 0.0),
+                        },
+                        is_challenging=item.get("challenging", True),
+                        source_info={
+                            "filename": item.get("filename", ""),
+                            "begin": item.get("begin", 0),
+                            "end": item.get("end", 0),
+                        }
+                    )
+                    prompts.append(prompt)
+            
+            # Check if it's a JSONL format
+            elif os.path.exists(os.path.join(self.local_dataset_path, "train.jsonl")):
+                with open(os.path.join(self.local_dataset_path, "train.jsonl"), 'r') as f:
+                    for i, line in enumerate(f):
+                        item = json.loads(line.strip())
+                        prompt_data = item.get("prompt", {})
+                        if not prompt_data or "text" not in prompt_data:
+                            continue
+                        
+                        # Only include challenging prompts
+                        if not item.get("challenging", False):
+                            continue
+                        
+                        # Create RTPPromptData
+                        prompt = RTPPromptData(
+                            prompt_id=f"rtp_{i}",
+                            text=prompt_data["text"],
+                            toxicity_scores={
+                                "toxicity": prompt_data.get("toxicity", 0.0),
+                                "severe_toxicity": prompt_data.get("severe_toxicity", 0.0),
+                                "identity_attack": prompt_data.get("identity_attack", 0.0),
+                                "insult": prompt_data.get("insult", 0.0),
+                                "threat": prompt_data.get("threat", 0.0),
+                                "profanity": prompt_data.get("profanity", 0.0),
+                                "sexually_explicit": prompt_data.get("sexually_explicit", 0.0),
+                                "flirtation": prompt_data.get("flirtation", 0.0),
+                            },
+                            is_challenging=item.get("challenging", True),
+                            source_info={
+                                "filename": item.get("filename", ""),
+                                "begin": item.get("begin", 0),
+                                "end": item.get("end", 0),
+                            }
+                        )
+                        prompts.append(prompt)
+            
+            # Check if it's a simple JSON format
+            elif os.path.exists(os.path.join(self.local_dataset_path, "prompts.json")):
+                with open(os.path.join(self.local_dataset_path, "prompts.json"), 'r') as f:
+                    data = json.load(f)
+                    for i, item in enumerate(data):
+                        prompt_data = item.get("prompt", {})
+                        if not prompt_data or "text" not in prompt_data:
+                            continue
+                        
+                        # Only include challenging prompts
+                        if not item.get("challenging", False):
+                            continue
+                        
+                        # Create RTPPromptData
+                        prompt = RTPPromptData(
+                            prompt_id=f"rtp_{i}",
+                            text=prompt_data["text"],
+                            toxicity_scores={
+                                "toxicity": prompt_data.get("toxicity", 0.0),
+                                "severe_toxicity": prompt_data.get("severe_toxicity", 0.0),
+                                "identity_attack": prompt_data.get("identity_attack", 0.0),
+                                "insult": prompt_data.get("insult", 0.0),
+                                "threat": prompt_data.get("threat", 0.0),
+                                "profanity": prompt_data.get("profanity", 0.0),
+                                "sexually_explicit": prompt_data.get("sexually_explicit", 0.0),
+                                "flirtation": prompt_data.get("flirtation", 0.0),
+                            },
+                            is_challenging=item.get("challenging", True),
+                            source_info={
+                                "filename": item.get("filename", ""),
+                                "begin": item.get("begin", 0),
+                                "end": item.get("end", 0),
+                            }
+                        )
+                        prompts.append(prompt)
+            
+            print(f"Successfully loaded {len(prompts)} prompts from local dataset: {self.local_dataset_path}")
+            return prompts
+            
+        except Exception as e:
+            print(f"Failed to load from local dataset: {e}")
+            return self._create_mock_prompts()
     
     def _load_from_huggingface(self) -> List[RTPPromptData]:
         """Load RTP dataset from HuggingFace."""
@@ -213,7 +341,8 @@ class RTPromptsDataLoader:
 def create_rtp_dataset_and_loader(max_prompts: int = 132,
                                   batch_size: int = 8,
                                   shuffle: bool = True,
-                                  cache_dir: Optional[str] = None) -> tuple:
+                                  cache_dir: Optional[str] = None,
+                                  local_dataset_path: Optional[str] = None) -> tuple:
     """
     Convenience function to create RTP dataset and dataloader.
     
@@ -222,7 +351,8 @@ def create_rtp_dataset_and_loader(max_prompts: int = 132,
     """
     dataset = RealToxicityPromptsDataset(
         max_prompts=max_prompts,
-        cache_dir=cache_dir
+        cache_dir=cache_dir,
+        local_dataset_path=local_dataset_path
     )
     
     dataloader = RTPromptsDataLoader(
