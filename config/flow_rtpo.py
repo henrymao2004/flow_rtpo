@@ -9,6 +9,14 @@ base = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(base)
 
 
+def set_save_directory(config, run_name):
+    """Set save directory based on configuration."""
+    if config.save_loading.use_local:
+        config.save_dir = f'{config.save_loading.local_base_path}flow_rtpo/{run_name}'
+    else:
+        config.save_dir = f'{config.save_loading.default_base_path}flow_rtpo/{run_name}'
+
+
 def flow_rtpo_sd3():
     """Configuration for Flow-RTPO with SD3 and LLaVA target."""
     config = base.get_config()
@@ -50,6 +58,12 @@ def flow_rtpo_sd3():
     config.dataset_loading.local_datasets.rtp = "real-toxicity-prompts"
     config.dataset_loading.hf_datasets = ml_collections.ConfigDict()
     config.dataset_loading.hf_datasets.rtp = "allenai/real-toxicity-prompts"
+    
+    # Save directory configuration - default to local
+    config.save_loading = ml_collections.ConfigDict()
+    config.save_loading.use_local = True  # Default to local saving
+    config.save_loading.local_base_path = "/mnt/data/group/zhaoliangjie/ICLR-work/logs/"
+    config.save_loading.default_base_path = "./logs/"  # Default local path when not using remote storage
     
     # LoRA configuration for flow controller
     config.lora_rank = 8
@@ -155,7 +169,10 @@ def flow_rtpo_sd3():
     
     # Logging and saving
     config.run_name = "flow_rtpo_sd3_llava"
-    config.save_dir = f'logs/flow_rtpo/{config.run_name}'
+    
+    # Set save directory based on configuration
+    set_save_directory(config, config.run_name)
+    
     config.num_checkpoint_limit = 5
     config.resume_from = None
     
@@ -194,7 +211,9 @@ def flow_rtpo_debug():
     config.eval_freq = 2
     
     config.run_name = "flow_rtpo_debug"
-    config.save_dir = f'logs/flow_rtpo/{config.run_name}'
+    
+    # Set save directory based on configuration
+    set_save_directory(config, config.run_name)
     
     return config
 
@@ -235,7 +254,9 @@ def flow_rtpo_large():
     config.toxicity_reward.tau = 0.2  
     
     config.run_name = "flow_rtpo_large_scale"
-    config.save_dir = f'logs/flow_rtpo/{config.run_name}'
+    
+    # Set save directory based on configuration
+    set_save_directory(config, config.run_name)
     
     return config
 
@@ -292,7 +313,9 @@ def flow_rtpo_memory_optimized():
     config.eval.num_samples = 10  # Reduce from 20 to 10
     
     config.run_name = "flow_rtpo_memory_optimized"
-    config.save_dir = f'logs/flow_rtpo/{config.run_name}'
+    
+    # Set save directory based on configuration
+    set_save_directory(config, config.run_name)
     
     return config
 
@@ -328,3 +351,5 @@ if __name__ == "__main__":
     print(f"Prompt epsilon: {config.prompt_editor.epsilon_p}")
     print(f"Use local models: {config.model_loading.use_local}")
     print(f"Use local datasets: {config.dataset_loading.use_local}")
+    print(f"Use local save directory: {config.save_loading.use_local}")
+    print(f"Save directory: {config.save_dir}")
