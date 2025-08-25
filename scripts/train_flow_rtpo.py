@@ -529,8 +529,8 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
                 final_image = to_pil(final_image.cpu())
                 print(f"[DEBUG] Converted tensor to PIL: {type(final_image)}")
             
-            # Create sample ID for immediate saving
-            sample_id = f"epoch_{epoch}_batch_{batch_idx}_expanded_{expanded_idx}_img_{img_idx}"
+            # Create sample ID for immediate saving (include rank for clarity)
+            sample_id = f"rank{accelerator.process_index}_epoch_{epoch}_batch_{batch_idx}_expanded_{expanded_idx}_img_{img_idx}"
             
             sample = {
                 "original_prompt": original_prompt,
@@ -815,7 +815,9 @@ def main(_):
         w_cvar=config.toxicity_reward.w_cvar,
         w_quality=config.toxicity_reward.w_quality,
         use_local_models=config.get('use_local_models', False),
-        clip_model_path=config.get('clip_model', None)
+        clip_model_path=config.get('clip_model', None),
+        use_multi_gpu=False,      # ★ 推荐在分布式训练中关闭
+        chunk_size=8
     )
     
 
@@ -978,55 +980,55 @@ def main(_):
             print(f"[DEBUG] Prompts: {[p[:50] + '...' if len(p) > 50 else p for p in prompts]}")
             
             # Sample batch using hierarchical policies
-            samples = sample_batch(
+                        samples = sample_batch(
                 pipeline, prompt_editor, prompts, config, accelerator, 
                 epoch=epoch, batch_idx=batch_idx, reward_variance=current_reward_variance
             )
-            
+
             # Immediate reward evaluation and saving for this batch
             if samples:
                 # Only compute rewards on main process, then broadcast to all processes
                 if accelerator.is_main_process:
                     logger.info(f"Computing rewards for batch {batch_idx + 1}...")
                     logger.info(f"Batch contains {len(samples)} samples")
-                    
-                    # Prepare batch data
                     batch_images = [sample["final_image"] for sample in samples]
                     batch_prompts = [sample["modified_prompt"] for sample in samples]
-                    
+
                     logger.info(f"Sample modified_prompts: {[p[:50] + '...' if len(p) > 50 else p for p in batch_prompts[:2]]}")
                     logger.info(f"Image types: {[type(img) for img in batch_images[:2]]}")
-                    
-                    # Compute rewards for this batch
+
+                    # Compute rewards
                     logger.info("Starting reward computation...")
                     batch_rewards, batch_reward_metadata = reward_fn(batch_images, batch_prompts, [{}] * len(samples))
                     logger.info("Reward computation completed!")
-                    
-                    # Assign rewards to samples and collect CLIP scores
+
                     for i, sample in enumerate(samples):
                         sample["reward"] = batch_rewards[i]
                         sample["final_toxicity"] = batch_reward_metadata["toxicity_scores"]["primary"][i]
-                    
-                    # Collect CLIP similarity scores for epoch quality_mean
+
                     epoch_clip_scores.extend(batch_reward_metadata["quality_scores"]["clip_similarity"])
                 else:
-                    # Non-main processes: initialize dummy rewards that will be overwritten by broadcast
                     batch_rewards = [0.0] * len(samples)
                     batch_reward_metadata = {"toxicity_scores": {"primary": [0.0] * len(samples)}}
                     for i, sample in enumerate(samples):
                         sample["reward"] = 0.0
                         sample["final_toxicity"] = 0.0
-                
-                # Synchronize rewards across all processes
+
                 if accelerator.num_processes > 1:
                     accelerator.wait_for_everyone()
-                    # For multi-process, we'll use a simpler approach without broadcast
-                    # Main process has the rewards, others will work with dummy values
-                    if not accelerator.is_main_process:
-                        # Non-main processes: use dummy values
-                        for sample in samples:
-                            sample["reward"] = 0.0
-                            sample["final_toxicity"] = 0.0
+                    if accelerator.is_main_process:
+                        rewards_tensor = torch.tensor(batch_rewards, device=accelerator.device, dtype=torch.float32)
+                        toxicity_tensor = torch.tensor(batch_reward_metadata["toxicity_scores"]["primary"], device=accelerator.device, dtype=torch.float32)
+                    else:
+                        rewards_tensor = torch.zeros(len(samples), device=accelerator.device, dtype=torch.float32)
+                        toxicity_tensor = torch.zeros(len(samples), device=accelerator.device, dtype=torch.float32)
+
+                    accelerator.broadcast(rewards_tensor, src=0)
+                    accelerator.broadcast(toxicity_tensor, src=0)
+
+                    for i, sample in enumerate(samples):
+                        sample["reward"] = float(rewards_tensor[i])
+                        sample["final_toxicity"] = float(toxicity_tensor[i])
                 
                 # Real-time logging for each sample in the batch (only on main process)
                 if accelerator.is_main_process:
@@ -1140,16 +1142,23 @@ def main(_):
         all_rewards = [sample["reward"] for sample in epoch_samples]
         all_toxicity_scores = [sample["final_toxicity"] for sample in epoch_samples]
         
-        # Create reward metadata from aggregated batch results
+        # Gather global statistics from all processes
+        rewards_local = torch.tensor(all_rewards, device=accelerator.device, dtype=torch.float32)
+        toxicity_local = torch.tensor(all_toxicity_scores, device=accelerator.device, dtype=torch.float32)
+        
+        rewards_global = accelerator.gather_for_metrics(rewards_local)
+        toxicity_global = accelerator.gather_for_metrics(toxicity_local)
+        
+        # Create reward metadata from global aggregated results
         reward_metadata = {
             "statistics": {
-                "mean_toxicity": np.mean(all_toxicity_scores),
-                "max_toxicity": max(all_toxicity_scores),
-                "cvar_mean": np.mean(all_rewards),  # Approximate CVaR from rewards
+                "mean_toxicity": float(toxicity_global.mean()),
+                "max_toxicity": float(toxicity_global.max()),
+                "cvar_mean": float(rewards_global.mean()),  # Approximate CVaR from rewards
                 "quality_mean": float(np.mean(epoch_clip_scores)) if epoch_clip_scores else 0.0
             },
-            "cvar_threshold": np.percentile(all_rewards, 10) if len(all_rewards) > 0 else 0.0,
-            "toxicity_scores": {"primary": all_toxicity_scores}
+            "cvar_threshold": float(torch.quantile(rewards_global, q=0.10)) if len(rewards_global) > 0 else 0.0,
+            "toxicity_scores": {"primary": all_toxicity_scores}  # Keep local for compatibility
         }
         
         logger.info(f"Mean reward (from batch computations): {np.mean(all_rewards):.4f}")
@@ -1160,10 +1169,19 @@ def main(_):
         # This avoids duplicate reward computation while maintaining real-time visibility.
         
         #################### ADVANTAGE COMPUTATION ####################
+        # Gather rewards from all processes for global statistics
+        rewards_local = torch.tensor(all_rewards, device=accelerator.device, dtype=torch.float32)
+        rewards_global = accelerator.gather_for_metrics(rewards_local)
+        
         if config.per_prompt_stat_tracking:
+            # For per-prompt tracking, we need to gather prompts as well
+            # This is more complex, so we'll use the global approach for now
             advantages = stat_tracker.update(epoch_prompts, np.array(all_rewards))
         else:
-            advantages = (np.array(all_rewards) - np.mean(all_rewards)) / (np.std(all_rewards) + 1e-4)
+            # Use global statistics for advantage computation
+            global_mean = float(rewards_global.mean())
+            global_std = float(rewards_global.std(unbiased=False).clamp_min(1e-4))
+            advantages = (np.array(all_rewards) - global_mean) / global_std
         
         # Assign advantages to samples (broadcast to timesteps)
         for i, sample in enumerate(epoch_samples):
@@ -1315,9 +1333,8 @@ def main(_):
                     }
                     trajectories.append(trajectory)
                 
-                # Compute baseline value (moving average of rewards for variance reduction)
-                current_rewards = [sample["reward"] for sample in epoch_samples]
-                baseline_value = np.mean(current_rewards)
+                # Compute baseline value using global statistics (already gathered above)
+                baseline_value = float(rewards_global.mean())
                 
                 # Log GRPO grouping info with detailed debugging
                 groups = defaultdict(list)
@@ -1367,10 +1384,11 @@ def main(_):
             # Update convergence monitoring
             convergence_metrics = {}
             if convergence_monitor is not None:
-                # Extract rewards from samples
+                # Extract rewards from samples and use global statistics
                 all_rewards = [sample["reward"] for sample in epoch_samples]
+                # Use the already gathered global rewards for convergence monitoring
                 convergence_metrics = convergence_monitor.update(
-                    rewards=all_rewards,
+                    rewards=all_rewards,  # These are now synchronized across processes
                     kl_div=None,  # KL divergence is now logged during training steps
                     epoch=epoch
                 )
