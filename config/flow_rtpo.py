@@ -134,9 +134,9 @@ def flow_rtpo_sd3():
     config.log_freq = 1    # Log every epoch
     
     # Resolution
-    config.resolution = 1024
-    config.height = 1024
-    config.width = 1024
+    config.resolution = 512
+    config.height = 512
+    config.width = 512
     
     # Per-prompt stat tracking for GRPO
     config.per_prompt_stat_tracking = True
