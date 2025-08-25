@@ -52,8 +52,8 @@ def flow_rtpo_sd3():
     config.dataset_loading.hf_datasets.rtp = "allenai/real-toxicity-prompts"
     
     # LoRA configuration for flow controller
-    config.lora_rank = 16
-    config.lora_alpha = 32
+    config.lora_rank = 8
+    config.lora_alpha = 16
     config.lora_dropout = 0.1
     
     # Dataset configuration - Real Toxicity Prompts
