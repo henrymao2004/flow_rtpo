@@ -13,6 +13,9 @@ import warnings
 import multiprocessing as mp
 import pickle
 import signal
+import concurrent.futures
+import threading
+from functools import partial
 warnings.filterwarnings("ignore")
 
 
@@ -84,6 +87,188 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, enab
     except Exception as e:
         print(f"[SUBPROCESS ERROR] {str(e)}", flush=True)
         error_queue.put(str(e))
+
+
+def _parallel_chunk_worker(gpu_id: int, chunk_data: Dict, model_path: str, enable_quantization: bool = True) -> Tuple[int, List[str]]:
+    """Worker function for parallel chunk processing on a specific GPU."""
+    try:
+        import torch
+        from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
+        
+        # Set device context
+        torch.cuda.set_device(gpu_id)
+        print(f"[PARALLEL WORKER] Starting chunk processing on GPU {gpu_id}")
+        
+        # Load model and processor for this GPU
+        processor = LlavaNextProcessor.from_pretrained(model_path)
+        
+        if enable_quantization:
+            from transformers import BitsAndBytesConfig
+            quantization_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                llm_int8_threshold=6.0,
+                llm_int8_has_fp16_weight=False,
+            )
+        else:
+            quantization_config = None
+        
+        model = LlavaNextForConditionalGeneration.from_pretrained(
+            model_path,
+            torch_dtype=torch.float16,
+            device_map=gpu_id,
+            low_cpu_mem_usage=True,
+            attn_implementation="sdpa",
+            quantization_config=quantization_config,
+        )
+        
+        # Ensure model is on the correct device
+        if next(model.parameters()).device.index != gpu_id:
+            model = model.to(f"cuda:{gpu_id}")
+        
+        model.eval()
+        
+        # Extract chunk data
+        chunk_images = chunk_data['images']
+        chunk_prompts = chunk_data['prompts']
+        chunk_start_idx = chunk_data['start_idx']
+        
+        print(f"[PARALLEL WORKER GPU {gpu_id}] Processing {len(chunk_images)} images")
+        
+        # Prepare conversations for this chunk
+        chunk_conversations = []
+        chunk_continuation_prompts = []
+        
+        for i, (prompt, image) in enumerate(zip(chunk_prompts, chunk_images)):
+            continuation_prompt = f"Please extend the following sentence: {prompt}"
+            chunk_continuation_prompts.append(continuation_prompt)
+            
+            conversation = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": continuation_prompt},
+                        {"type": "image", "image": image},
+                    ],
+                },
+            ]
+            chunk_conversations.append(conversation)
+        
+        # Apply chat template to chunk conversations
+        chunk_prompt_texts = []
+        for conversation in chunk_conversations:
+            prompt_text = processor.apply_chat_template(
+                conversation, add_generation_prompt=True
+            )
+            chunk_prompt_texts.append(prompt_text)
+        
+        # Process chunk inputs
+        chunk_inputs = processor(
+            text=chunk_prompt_texts,
+            images=chunk_images,
+            return_tensors="pt",
+            padding=True
+        )
+        
+        # Move inputs to the correct GPU
+        for key in chunk_inputs:
+            if torch.is_tensor(chunk_inputs[key]):
+                chunk_inputs[key] = chunk_inputs[key].to(f"cuda:{gpu_id}")
+        
+        print(f"[PARALLEL WORKER GPU {gpu_id}] Starting generation...")
+        
+        # Generate responses
+        with torch.no_grad():
+            outputs = model.generate(
+                **chunk_inputs,
+                max_new_tokens=30,
+                do_sample=True,
+                temperature=0.8,
+                top_p=0.95,
+                repetition_penalty=1.1,
+                pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id),
+                use_cache=False
+            )
+        
+        # Decode responses
+        chunk_responses = processor.batch_decode(outputs, skip_special_tokens=True)
+        
+        # Clean responses
+        chunk_responses_cleaned = []
+        for i, (full_response, prompt, continuation_prompt) in enumerate(zip(chunk_responses, chunk_prompts, chunk_continuation_prompts)):
+            response = full_response
+            
+            # Extract continuation - try multiple approaches
+            markers = ["[/INST]", "ASSISTANT:", "Assistant:", "</s>"]
+            for marker in markers:
+                if marker in response:
+                    response = response.split(marker)[-1].strip()
+                    break
+            
+            # Clean up any remaining markers
+            if "[/INST]" in response:
+                response = response.replace("[/INST]", "").strip()
+            
+            # Remove the instruction part if it's still there
+            continuation_marker = f"Please continue this text naturally: {prompt}"
+            if continuation_marker in response:
+                response = response.split(continuation_marker)[-1].strip()
+            
+            # More lenient cleaning - only fallback for clearly problematic responses
+            should_fallback = False
+            fallback_reason = ""
+            
+            # Check for empty responses
+            if len(response.strip()) == 0:
+                should_fallback = True
+                fallback_reason = "empty response"
+            
+            # Check for obvious template artifacts
+            elif (response.startswith("[INST]") or 
+                  response.startswith("Complete this sentence") or
+                  response.startswith("Continue this exact text")):
+                should_fallback = True
+                fallback_reason = "template artifacts"
+            
+            # Check for obvious image descriptions (but be more lenient)
+            elif (response.startswith("Based on what you see") or
+                  response.startswith("The image shows") or
+                  response.startswith("The image depicts") or
+                  response.startswith("In the image") or
+                  response.startswith("This image")):
+                # Only fallback if the response is very short (likely just image description)
+                if len(response.strip()) < 20:
+                    should_fallback = True
+                    fallback_reason = "short image description"
+                else:
+                    # Try to extract the continuation part after the image description
+                    for prefix in ["Based on what you see, ", "The image shows ", "The image depicts ", "In the image, ", "This image "]:
+                        if response.startswith(prefix):
+                            response = response[len(prefix):].strip()
+                            break
+            
+            # Handle refusals
+            elif response.lower().startswith(("i cannot", "i can't", "i'm not able", "i won't", "i don't")):
+                should_fallback = True
+                fallback_reason = "refusal"
+            
+            # Apply fallback if needed
+            if should_fallback:
+                response = prompt  # Just use the original prompt
+            
+            chunk_responses_cleaned.append(response)
+        
+        # Clean up GPU memory
+        torch.cuda.empty_cache()
+        
+        print(f"[PARALLEL WORKER GPU {gpu_id}] Completed processing {len(chunk_responses_cleaned)} responses")
+        
+        return chunk_start_idx, chunk_responses_cleaned
+        
+    except Exception as e:
+        print(f"[PARALLEL WORKER GPU {gpu_id} ERROR] {str(e)}")
+        # Return fallback responses
+        chunk_prompts = chunk_data['prompts']
+        return chunk_data['start_idx'], chunk_prompts
 
 
 class ToxicityRewardSystem:
@@ -408,216 +593,146 @@ class ToxicityRewardSystem:
         
         try:
             if self.use_llava:
-                # MULTI-GPU CHUNKED PROCESSING FOR LLAVA
+                # PARALLEL MULTI-GPU CHUNKED PROCESSING FOR LLAVA
                 
-                # Process images in chunks, distributing across available GPUs
+                # Prepare all chunks for parallel processing
+                chunks_data = []
                 for chunk_start in range(0, len(valid_images), chunk_size):
                     chunk_end = min(chunk_start + chunk_size, len(valid_images))
                     chunk_images = valid_images[chunk_start:chunk_end]
                     chunk_prompts = valid_prompts[chunk_start:chunk_end]
                     
-                    print(f"[VLM CHUNK] Processing chunk {chunk_start//chunk_size + 1}/{(len(valid_images) + chunk_size - 1)//chunk_size}: images {chunk_start}-{chunk_end-1}")
+                    # Prepare chunk data for parallel processing
+                    chunk_data = {
+                        'images': chunk_images,
+                        'prompts': chunk_prompts,
+                        'start_idx': chunk_start
+                    }
+                    chunks_data.append(chunk_data)
+                
+                print(f"[PARALLEL PROCESSING] Prepared {len(chunks_data)} chunks for parallel processing")
+                
+                # Process chunks in parallel using ThreadPoolExecutor
+                if self.use_multi_gpu and self.num_gpus > 1:
+                    print(f"[PARALLEL PROCESSING] Using parallel processing with {self.num_gpus} GPUs")
                     
-                    # Initialize chunk_responses fresh for each chunk
-                    chunk_responses_cleaned = []
+                    # Create worker function with fixed parameters
+                    worker_func = partial(_parallel_chunk_worker, 
+                                        model_path=self.vlm_model_path, 
+                                        enable_quantization=self.enable_quantization)
                     
-                    # Prepare conversations for this chunk
-                    chunk_conversations = []
-                    chunk_continuation_prompts = []
-                    
-                    for i, prompt in enumerate(chunk_prompts):
-                        continuation_prompt = f"Please extend the following sentence: {prompt}"
-                        chunk_continuation_prompts.append(continuation_prompt)
+                    # Process chunks in parallel
+                    chunk_results = []
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_gpus) as executor:
+                        # Submit all chunks for parallel processing
+                        future_to_chunk = {}
+                        for i, chunk_data in enumerate(chunks_data):
+                            gpu_id = i % self.num_gpus
+                            future = executor.submit(worker_func, gpu_id, chunk_data)
+                            future_to_chunk[future] = (i, gpu_id)
                         
-                        conversation = [
-                            {
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": continuation_prompt},
-                                    {"type": "image", "image": None},
-                                ],
-                            },
-                        ]
-                        chunk_conversations.append(conversation)
+                        # Collect results as they complete
+                        for future in concurrent.futures.as_completed(future_to_chunk):
+                            chunk_idx, gpu_id = future_to_chunk[future]
+                            try:
+                                start_idx, chunk_responses = future.result()
+                                chunk_results.append((start_idx, chunk_responses))
+                                print(f"[PARALLEL PROCESSING] Completed chunk {chunk_idx + 1} on GPU {gpu_id}")
+                            except Exception as e:
+                                print(f"[PARALLEL PROCESSING ERROR] Chunk {chunk_idx + 1} failed on GPU {gpu_id}: {e}")
+                                # Use fallback responses
+                                chunk_data = chunks_data[chunk_idx]
+                                chunk_results.append((chunk_data['start_idx'], chunk_data['prompts']))
                     
-                    # Multi-GPU processing: assign chunk to specific GPU
-                    chunk_idx = chunk_start // chunk_size
-                    gpu_id = chunk_idx % self.num_gpus
-                    print(f"[MULTI-GPU] Processing chunk {chunk_idx + 1} on GPU {gpu_id}")
+                    # Sort results by start_idx to maintain order
+                    chunk_results.sort(key=lambda x: x[0])
                     
-                    # Load VLM model for this GPU if needed
-                    if self.use_multi_gpu and self.num_gpus > 1:
-                        vlm_model, vlm_processor = self._load_vlm_model_for_gpu(gpu_id)
-                    else:
-                        vlm_model = self.vlm_model
-                        vlm_processor = self.vlm_processor
-                    
-                    # Apply chat template to chunk conversations
-                    chunk_prompt_texts = []
-                    for conversation in chunk_conversations:
-                        prompt_text = vlm_processor.apply_chat_template(
-                            conversation, add_generation_prompt=True
+                    # Assign responses to correct indices
+                    for start_idx, chunk_responses in chunk_results:
+                        for i, response in enumerate(chunk_responses):
+                            global_idx = valid_indices[start_idx + i]
+                            responses[global_idx] = response
+                
+                else:
+                    # Fallback to sequential processing for single GPU
+                    print(f"[PARALLEL PROCESSING] Using sequential processing for single GPU")
+                    for chunk_data in chunks_data:
+                        chunk_start = chunk_data['start_idx']
+                        chunk_images = chunk_data['images']
+                        chunk_prompts = chunk_data['prompts']
+                        
+                        # Use existing sequential processing logic
+                        chunk_responses_cleaned = []
+                        
+                        # Prepare conversations for this chunk
+                        chunk_conversations = []
+                        chunk_continuation_prompts = []
+                        
+                        for i, (prompt, image) in enumerate(zip(chunk_prompts, chunk_images)):
+                            continuation_prompt = f"Please extend the following sentence: {prompt}"
+                            chunk_continuation_prompts.append(continuation_prompt)
+                            
+                            conversation = [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": continuation_prompt},
+                                        {"type": "image", "image": image},
+                                    ],
+                                },
+                            ]
+                            chunk_conversations.append(conversation)
+                        
+                        # Apply chat template to chunk conversations
+                        chunk_prompt_texts = []
+                        for conversation in chunk_conversations:
+                            prompt_text = self.vlm_processor.apply_chat_template(
+                                conversation, add_generation_prompt=True
+                            )
+                            chunk_prompt_texts.append(prompt_text)
+                        
+                        # Process chunk inputs
+                        chunk_inputs = self.vlm_processor(
+                            text=chunk_prompt_texts,
+                            images=chunk_images,
+                            return_tensors="pt",
+                            padding=True
                         )
-                        chunk_prompt_texts.append(prompt_text)
-                    
-                    # Process chunk inputs
-                    chunk_inputs = vlm_processor(
-                        text=chunk_prompt_texts,
-                        images=chunk_images,
-                        return_tensors="pt",
-                        padding=True
-                    )
-                    
-                    # Move inputs to the correct GPU
-                    if self.use_multi_gpu and self.num_gpus > 1:
-                        for key in chunk_inputs:
-                            if torch.is_tensor(chunk_inputs[key]):
-                                chunk_inputs[key] = chunk_inputs[key].to(f"cuda:{gpu_id}")
-                    
-                    print(f"[MULTI-GPU] Using GPU {gpu_id} for chunk processing")
-                    print(f"[VLM CHUNK] Chunk input shapes:")
-                    print(f"  - input_ids: {chunk_inputs['input_ids'].shape if 'input_ids' in chunk_inputs else 'None'}")
-                    print(f"  - attention_mask: {chunk_inputs['attention_mask'].shape if 'attention_mask' in chunk_inputs else 'None'}")
-                    print(f"  - pixel_values: {chunk_inputs['pixel_values'].shape if 'pixel_values' in chunk_inputs else 'None'}")
-                    
-                    # Chunk generation with memory optimization
-                    print(f"[VLM CHUNK] Starting chunk generation for {len(chunk_images)} images on GPU {gpu_id}...")
-                    
-                    # Check GPU memory status for the specific GPU
-                    if torch.cuda.is_available():
-                        torch.cuda.set_device(gpu_id)
-                        allocated = torch.cuda.memory_allocated(gpu_id) / 1e9
-                        cached = torch.cuda.memory_reserved(gpu_id) / 1e9
-                        print(f"[GPU {gpu_id} MEMORY] Before chunk generation: allocated={allocated:.2f}GB, cached={cached:.2f}GB")
-                    
-                    start_generation_time = time.time()
-                    
-                    # Multi-GPU generation (direct model call instead of subprocess for better GPU control)
-                    try:
-                        print(f"[VLM GEN] Starting multi-GPU generation on GPU {gpu_id}", flush=True)
                         
+                        # Generate responses using existing model
                         with torch.no_grad():
-                            outputs = vlm_model.generate(
+                            outputs = self.vlm_model.generate(
                                 **chunk_inputs,
                                 max_new_tokens=30,
                                 do_sample=True,
                                 temperature=0.8,
                                 top_p=0.95,
                                 repetition_penalty=1.1,
-                                pad_token_id=getattr(vlm_processor, 'eos_token_id', getattr(vlm_processor, 'tokenizer', vlm_processor).eos_token_id),
+                                pad_token_id=getattr(self.vlm_processor, 'eos_token_id', getattr(self.vlm_processor, 'tokenizer', self.vlm_processor).eos_token_id),
                                 use_cache=False
                             )
                         
-                        # Decode responses
-                        chunk_responses = vlm_processor.batch_decode(outputs, skip_special_tokens=True)
+                        # Decode and clean responses
+                        chunk_responses = self.vlm_processor.batch_decode(outputs, skip_special_tokens=True)
                         
-                        generation_time = time.time() - start_generation_time
-                        print(f"[VLM CHUNK] Chunk generation completed in {generation_time:.3f}s!", flush=True)
-                        print(f"[VLM CHUNK] Got {len(chunk_responses)} responses", flush=True)
-                        
-                        # Process chunk responses
-                        for i, (full_response, prompt, continuation_prompt) in enumerate(zip(chunk_responses, chunk_prompts, chunk_continuation_prompts)):
-                            print(f"[VLM RESPONSE {i+1}] Raw response: \"{full_response[:150]}{'...' if len(full_response) > 150 else ''}\"")
-                            
+                        # Clean responses (simplified version)
+                        for full_response in chunk_responses:
                             response = full_response
-                            
-                            # Extract continuation - try multiple approaches
-                            response = full_response
-                            
-                            # First, try to find chat template markers and extract the actual response
                             markers = ["[/INST]", "ASSISTANT:", "Assistant:", "</s>"]
                             for marker in markers:
                                 if marker in response:
                                     response = response.split(marker)[-1].strip()
-                                    print(f"[VLM RESPONSE {i+1}] After {marker} marker extraction: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
                                     break
                             
-                            # Clean up any remaining markers
-                            if "[/INST]" in response:
-                                response = response.replace("[/INST]", "").strip()
-                                print(f"[VLM RESPONSE {i+1}] After [/INST] cleanup: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                            
-                            # Remove the instruction part if it's still there
-                            continuation_marker = f"Please continue this text naturally: {prompt}"
-                            if continuation_marker in response:
-                                response = response.split(continuation_marker)[-1].strip()
-                                print(f"[VLM RESPONSE {i+1}] After continuation marker removal: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                            
-                            # More lenient cleaning - only fallback for clearly problematic responses
-                            should_fallback = False
-                            fallback_reason = ""
-                            
-                            # Check for empty responses
                             if len(response.strip()) == 0:
-                                should_fallback = True
-                                fallback_reason = "empty response"
+                                response = chunk_prompts[len(chunk_responses_cleaned)]
                             
-                            # Check for obvious template artifacts
-                            elif (response.startswith("[INST]") or 
-                                  response.startswith("Complete this sentence") or
-                                  response.startswith("Continue this exact text")):
-                                should_fallback = True
-                                fallback_reason = "template artifacts"
-                            
-                            # Check for obvious image descriptions (but be more lenient)
-                            elif (response.startswith("Based on what you see") or
-                                  response.startswith("The image shows") or
-                                  response.startswith("The image depicts") or
-                                  response.startswith("In the image") or
-                                  response.startswith("This image")):
-                                # Only fallback if the response is very short (likely just image description)
-                                if len(response.strip()) < 20:
-                                    should_fallback = True
-                                    fallback_reason = "short image description"
-                                else:
-                                    # Try to extract the continuation part after the image description
-                                    for prefix in ["Based on what you see, ", "The image shows ", "The image depicts ", "In the image, ", "This image "]:
-                                        if response.startswith(prefix):
-                                            response = response[len(prefix):].strip()
-                                            print(f"[VLM RESPONSE {i+1}] Extracted continuation after image description: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                                            break
-                            
-                            # Handle refusals
-                            elif response.lower().startswith(("i cannot", "i can't", "i'm not able", "i won't", "i don't")):
-                                should_fallback = True
-                                fallback_reason = "refusal"
-                            
-                            # Apply fallback if needed
-                            if should_fallback:
-                                old_response = response
-                                response = prompt  # Just use the original prompt
-                                print(f"[VLM RESPONSE {i+1}] {fallback_reason} detected, using original prompt: \"{response}\"")
-                            else:
-                                print(f"[VLM RESPONSE {i+1}] Using cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                            
-                            
-                            print(f"[VLM RESPONSE {i+1}] Final cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                            
-                            # Add to chunk_responses_cleaned list
                             chunk_responses_cleaned.append(response)
                         
-                    except (TimeoutError, Exception) as e:
-                        print(f"[VLM ERROR] Chunk generation failed: {e}", flush=True)
-                        print(f"[VLM FALLBACK] Using prompts as fallback for this chunk", flush=True)
-                        
-                        # Fallback: use original prompts for this chunk
-                        for prompt in chunk_prompts:
-                            chunk_responses_cleaned.append(prompt)
-                    
-                    # Clear GPU memory after each chunk (multi-GPU aware)
-                    if torch.cuda.is_available():
-                        if self.use_multi_gpu and self.num_gpus > 1:
-                            torch.cuda.set_device(gpu_id)
-                            torch.cuda.empty_cache()
-                            print(f"[VLM CHUNK] GPU {gpu_id} memory cleared after chunk")
-                        else:
-                            torch.cuda.empty_cache()
-                            print(f"[VLM CHUNK] GPU memory cleared after chunk")
-                    
-                    # Assign responses to correct indices for this chunk
-                    for i, response in enumerate(chunk_responses_cleaned):
-                        global_idx = valid_indices[chunk_start + i]  # account for offset
-                        responses[global_idx] = response
+                        # Assign responses to correct indices
+                        for i, response in enumerate(chunk_responses_cleaned):
+                            global_idx = valid_indices[chunk_start + i]
+                            responses[global_idx] = response
                     
             else:
                 # Fallback to generic pipeline or prompts
