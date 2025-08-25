@@ -122,8 +122,8 @@ def _parallel_chunk_worker(gpu_id: int, chunk_data: Dict, model_path: str, enabl
                 attn_implementation="sdpa",
                 quantization_config=quantization_config,
             )
-                    else:
-                # For non-quantized models, load normally and move
+        else:
+            # For non-quantized models, load normally and move
                 model = LlavaNextForConditionalGeneration.from_pretrained(
                     model_path,
                     torch_dtype=torch.float16,
