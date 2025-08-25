@@ -8,8 +8,8 @@ export NCCL_IB_GID_INDEX=3
 MASTER_PORT=19001
 RANK=0
 MASTER_ADDR=10.82.139.22
-# Launch command (parameters automatically read from accelerate_multi_node.yaml)
-accelerate launch --config_file scripts/accelerate_configs/flow_rtpo_multi_node.yaml \
+# Launch command with DeepSpeed support
+accelerate launch --config_file scripts/accelerate_configs/deepspeed_zero2_multi_node.yaml \
     --num_machines 4 --num_processes 32 \
     --machine_rank ${RANK} --main_process_ip ${MASTER_ADDR} --main_process_port ${MASTER_PORT} \
     scripts/train_flow_rtpo.py \
