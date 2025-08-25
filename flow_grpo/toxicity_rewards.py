@@ -16,7 +16,7 @@ import signal
 warnings.filterwarnings("ignore")
 
 
-def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue):
+def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, enable_quantization=True):
     """Worker function for subprocess VLM generation."""
     try:
         import torch
@@ -25,12 +25,24 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue):
         
         print(f"[SUBPROCESS] Loading model: {model_path}", flush=True)
         processor = LlavaNextProcessor.from_pretrained(model_path)
+        
+        if enable_quantization:
+            from transformers import BitsAndBytesConfig
+            quantization_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                llm_int8_threshold=6.0,
+                llm_int8_has_fp16_weight=False,
+            )
+        else:
+            quantization_config = None
+        
         model = LlavaNextForConditionalGeneration.from_pretrained(
             model_path,
             torch_dtype=torch.float16,
             device_map=0,
             low_cpu_mem_usage=True,
             attn_implementation="sdpa",
+            quantization_config=quantization_config,
         )
         model.eval()
         print(f"[SUBPROCESS] Model loaded successfully", flush=True)
@@ -116,6 +128,16 @@ class ToxicityRewardSystem:
             print(f"[DEBUG] Using stable configuration: single device, SDPA attention, no quantization")
             
             # Load model with memory-optimized configuration
+            if enable_quantization:
+                from transformers import BitsAndBytesConfig
+                quantization_config = BitsAndBytesConfig(
+                    load_in_8bit=True,
+                    llm_int8_threshold=6.0,
+                    llm_int8_has_fp16_weight=False,
+                )
+            else:
+                quantization_config = None
+            
             self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
                 vlm_model_path,
                 torch_dtype=torch.float16 if device == "cuda" else torch.float32,
@@ -124,8 +146,7 @@ class ToxicityRewardSystem:
                 attn_implementation="sdpa",
                 max_memory={0: "40GB"},  # Reduce from 70GB to 40GB
                 offload_folder="offload",
-                # Enable 8-bit quantization for memory savings
-                load_in_8bit=True if enable_quantization else False,
+                quantization_config=quantization_config,
             )
             
             # Explicitly move to device if device_map didn't work as expected
@@ -205,7 +226,7 @@ class ToxicityRewardSystem:
             # Start subprocess
             process = mp.Process(
                 target=_vlm_generate_worker,
-                args=(self.vlm_model_path, inputs_pkl, result_queue, error_queue)
+                args=(self.vlm_model_path, inputs_pkl, result_queue, error_queue, self.enable_quantization)
             )
             process.start()
             
@@ -287,6 +308,7 @@ class ToxicityRewardSystem:
                     chunk_end = min(chunk_start + chunk_size, len(valid_images))
                     chunk_images = valid_images[chunk_start:chunk_end]
                     chunk_prompts = valid_prompts[chunk_start:chunk_end]
+                    chunk_indices = valid_indices[chunk_start:chunk_end]
                     
                     print(f"[VLM CHUNK] Processing chunk {chunk_start//chunk_size + 1}/{(len(valid_images) + chunk_size - 1)//chunk_size}: images {chunk_start}-{chunk_end-1}")
                     
@@ -442,14 +464,30 @@ class ToxicityRewardSystem:
                     for prompt in chunk_prompts:
                         all_responses.append(prompt)
                 
+                # Move to next chunk
+                print(f"[VLM CHUNK] Completed chunk {chunk_start//chunk_size + 1}, total responses so far: {len(all_responses)}")
+                
                 # Clear GPU memory after each chunk
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     print(f"[VLM CHUNK] GPU memory cleared after chunk")
                 
                 # Assign responses to correct indices
+                print(f"[DEBUG] Assigning {len(all_responses)} responses to {len(valid_indices)} valid indices")
                 for i, response in enumerate(all_responses):
-                    responses[valid_indices[i]] = response
+                    if i < len(valid_indices):
+                        responses[valid_indices[i]] = response
+                        print(f"[DEBUG] Assigned response {i} to index {valid_indices[i]}: {response[:50]}...")
+                    else:
+                        print(f"[WARNING] Response index {i} out of bounds for valid_indices (len={len(valid_indices)})")
+                
+                # Fill remaining responses with original prompts if needed
+                for i, idx in enumerate(valid_indices):
+                    if i >= len(all_responses):
+                        print(f"[FALLBACK] Using original prompt for index {idx}")
+                        responses[idx] = valid_prompts[i]
+                
+                print(f"[DEBUG] Final response assignment complete. Total responses: {len([r for r in responses if r])}")
                     
             else:
                 # Fallback to generic pipeline or prompts
