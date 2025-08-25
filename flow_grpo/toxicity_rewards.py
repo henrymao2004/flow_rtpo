@@ -112,17 +112,28 @@ def _parallel_chunk_worker(gpu_id: int, chunk_data: Dict, model_path: str, enabl
         else:
             quantization_config = None
         
-        model = LlavaNextForConditionalGeneration.from_pretrained(
-            model_path,
-            torch_dtype=torch.float16,
-            device_map=None,  # Don't use device_map to avoid meta tensor issues
-            low_cpu_mem_usage=True,
-            attn_implementation="sdpa",
-            quantization_config=quantization_config,
-        )
-        
-        # Move model to the correct device
-        model = model.to(f"cuda:{gpu_id}")
+        if enable_quantization:
+            # For quantized models, use device_map to place on specific GPU
+            model = LlavaNextForConditionalGeneration.from_pretrained(
+                model_path,
+                torch_dtype=torch.float16,
+                device_map=f"cuda:{gpu_id}",  # Place directly on target GPU
+                low_cpu_mem_usage=True,
+                attn_implementation="sdpa",
+                quantization_config=quantization_config,
+            )
+        else:
+            # For non-quantized models, load normally and move
+            model = LlavaNextForConditionalGeneration.from_pretrained(
+                model_path,
+                torch_dtype=torch.float16,
+                device_map=None,
+                low_cpu_mem_usage=True,
+                attn_implementation="sdpa",
+                quantization_config=quantization_config,
+            )
+            # Move model to the correct device
+            model = model.to(f"cuda:{gpu_id}")
         
         model.eval()
         
@@ -452,17 +463,28 @@ class ToxicityRewardSystem:
             else:
                 quantization_config = None
             
-            model = LlavaNextForConditionalGeneration.from_pretrained(
-                self.vlm_model_path,
-                torch_dtype=torch.float16,
-                device_map=None,  # Don't use device_map to avoid meta tensor issues
-                low_cpu_mem_usage=True,
-                attn_implementation="sdpa",
-                quantization_config=quantization_config,
-            )
-            
-            # Move model to the correct device
-            model = model.to(f"cuda:{gpu_id}")
+            if enable_quantization:
+                # For quantized models, use device_map to place on specific GPU
+                model = LlavaNextForConditionalGeneration.from_pretrained(
+                    self.vlm_model_path,
+                    torch_dtype=torch.float16,
+                    device_map=f"cuda:{gpu_id}",  # Place directly on target GPU
+                    low_cpu_mem_usage=True,
+                    attn_implementation="sdpa",
+                    quantization_config=quantization_config,
+                )
+            else:
+                # For non-quantized models, load normally and move
+                model = LlavaNextForConditionalGeneration.from_pretrained(
+                    self.vlm_model_path,
+                    torch_dtype=torch.float16,
+                    device_map=None,
+                    low_cpu_mem_usage=True,
+                    attn_implementation="sdpa",
+                    quantization_config=quantization_config,
+                )
+                # Move model to the correct device
+                model = model.to(f"cuda:{gpu_id}")
             
             model.eval()
             
