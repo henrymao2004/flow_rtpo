@@ -1265,6 +1265,27 @@ def main(_):
                 
                 if config.train.ema:
                     ema.step(transformer_trainable_parameters, global_step)
+                
+                # Increment global_step after flow controller optimization
+                global_step += 1
+                
+                # Log flow controller metrics after each optimizer step
+                if accelerator.is_main_process:
+                    flow_log_data = {
+                        "epoch": epoch,
+                        "global_step": global_step,
+                        "optimizer_type": "flow_controller",
+                        "flow_policy_loss": np.mean(train_info.get("flow_policy_loss", [0])),
+                        "kl_loss": np.mean(train_info.get("kl_loss", [0])),
+                        "batch_idx": i,
+                        "inner_epoch": inner_epoch,
+                    }
+                    swanlab.log(flow_log_data)
+                    logger.info(f"Flow Controller Step {global_step}: {flow_log_data}")
+                
+                # Reset flow controller metrics for next batch
+                train_info["flow_policy_loss"] = []
+                train_info["kl_loss"] = []
             
             # Training for Prompt Editor 
             if len(epoch_samples) > 0:
@@ -1340,8 +1361,50 @@ def main(_):
                 if len(epoch_samples) > 0 and 'policy_info' in epoch_samples[0]:
                     sample_policy_info = epoch_samples[0]['policy_info']
                     train_info["prompt_warmup_factor"].append(sample_policy_info.get('warmup_factor', 1.0))
-        
-        global_step += 1
+                
+                # Increment global_step after prompt editor optimization
+                global_step += 1
+                
+                # Log prompt editor metrics after each optimizer step
+                if accelerator.is_main_process:
+                    prompt_log_data = {
+                        "epoch": epoch,
+                        "global_step": global_step,
+                        "optimizer_type": "prompt_editor",
+                        "prompt_policy_loss": np.mean(train_info.get("prompt_policy_loss", [0])),
+                        "prompt_reg_loss": np.mean(train_info.get("prompt_reg_loss", [0])),
+                        "total_prompt_loss": np.mean(train_info.get("total_prompt_loss", [0])),
+                        "prompt_mean_advantage": np.mean(train_info.get("prompt_mean_advantage", [0])),
+                        "prompt_baseline_value": np.mean(train_info.get("prompt_baseline_value", [0])),
+                        "reward_variance": np.mean(train_info.get("reward_variance", [0])),
+                        "epsilon_adaptive": np.mean(train_info.get("epsilon_adaptive", [0])),
+                        "num_groups": np.mean(train_info.get("num_groups", [0])),
+                        "reg_proximity_reg": np.mean(train_info.get("reg_proximity_reg", [0])),
+                        "reg_semantic_reg": np.mean(train_info.get("reg_semantic_reg", [0])),
+                        "reg_reconstruction": np.mean(train_info.get("reg_reconstruction", [0])),
+                        "reg_epsilon_current": np.mean(train_info.get("reg_epsilon_current", [0])),
+                        "reg_mean_semantic_sim": np.mean(train_info.get("reg_mean_semantic_sim", [0])),
+                        "prompt_warmup_factor": np.mean(train_info.get("prompt_warmup_factor", [1])),
+                        "inner_epoch": inner_epoch,
+                    }
+                    swanlab.log(prompt_log_data)
+                    logger.info(f"Prompt Editor Step {global_step}: {prompt_log_data}")
+                
+                # Reset prompt editor metrics for next inner epoch
+                train_info["prompt_policy_loss"] = []
+                train_info["prompt_reg_loss"] = []
+                train_info["total_prompt_loss"] = []
+                train_info["prompt_mean_advantage"] = []
+                train_info["prompt_baseline_value"] = []
+                train_info["reward_variance"] = []
+                train_info["epsilon_adaptive"] = []
+                train_info["num_groups"] = []
+                train_info["reg_proximity_reg"] = []
+                train_info["reg_semantic_reg"] = []
+                train_info["reg_reconstruction"] = []
+                train_info["reg_epsilon_current"] = []
+                train_info["reg_mean_semantic_sim"] = []
+                train_info["prompt_warmup_factor"] = []
         
         #################### LOGGING AND SAVING ####################
         epoch_time = time.time() - epoch_start_time
@@ -1378,9 +1441,9 @@ def main(_):
                 epoch=epoch
             )
         
-        # Log training metrics
+        # Log epoch summary metrics (step-level metrics are already logged)
         if accelerator.is_main_process:
-            log_data = {
+            epoch_summary_data = {
                 "epoch": epoch,
                 "global_step": global_step,
                 "epoch_time": epoch_time,
@@ -1392,30 +1455,13 @@ def main(_):
                 "cvar_mean": reward_metadata["statistics"]["cvar_mean"],
                 "cvar_threshold": reward_metadata["cvar_threshold"],
                 "quality_mean": reward_metadata["statistics"]["quality_mean"],
-                "flow_policy_loss": gathered_flow_policy_loss.float().mean().item(),
-                "kl_loss": gathered_kl_loss.float().mean().item(),
-                "prompt_policy_loss": gathered_prompt_policy_loss.float().mean().item(),
-                "prompt_reg_loss": gathered_prompt_reg_loss.float().mean().item(),
-                "total_prompt_loss": gathered_total_prompt_loss.float().mean().item(),
-                "prompt_mean_advantage": np.mean(train_info.get("prompt_mean_advantage", [0])),
-                "prompt_baseline_value": np.mean(train_info.get("prompt_baseline_value", [0])),
-                # Enhanced adaptive and semantic metrics
-                "reward_variance": np.mean(train_info.get("reward_variance", [0])),
-                "epsilon_adaptive": np.mean(train_info.get("epsilon_adaptive", [0])),
-                "num_groups": np.mean(train_info.get("num_groups", [0])),
-                "reg_proximity_reg": np.mean(train_info.get("reg_proximity_reg", [0])),
-                "reg_semantic_reg": np.mean(train_info.get("reg_semantic_reg", [0])),
-                "reg_reconstruction": np.mean(train_info.get("reg_reconstruction", [0])),
-                "reg_epsilon_current": np.mean(train_info.get("reg_epsilon_current", [0])),
-                "reg_mean_semantic_sim": np.mean(train_info.get("reg_mean_semantic_sim", [0])),
-                # Warmup tracking
-                "prompt_warmup_factor": np.mean(train_info.get("prompt_warmup_factor", [1])),
+                "log_type": "epoch_summary",
                 # Convergence monitoring metrics
                 **convergence_metrics,
             }
             
-            swanlab.log(log_data)
-            logger.info(f"Epoch {epoch}: {log_data}")
+            swanlab.log(epoch_summary_data)
+            logger.info(f"Epoch {epoch} Summary: {epoch_summary_data}")
         
         # Save results for each processed prompt
         if accelerator.is_main_process:

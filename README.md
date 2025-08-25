@@ -21,6 +21,8 @@ The script configures NCCL for optimal InfiniBand performance:
 /scripts/multi_node/main.sh
 ```
 
+swanlab api key: YiUzV5i2rB0pybueoH8A8
+
 ## Prerequisites
 - Must be run on the master node (IP: 10.82.139.22)
 - All worker nodes must be running their respective scripts (main1.sh, main2.sh, main3.sh)
