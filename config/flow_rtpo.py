@@ -25,8 +25,8 @@ def flow_rtpo_sd3():
     config.use_lora = True
     
     # LoRA configuration for flow controller
-    config.lora_rank = 8
-    config.lora_alpha = 16
+    config.lora_rank = 16
+    config.lora_alpha = 32
     config.lora_dropout = 0.1
     
     # Dataset configuration - Real Toxicity Prompts
@@ -51,7 +51,7 @@ def flow_rtpo_sd3():
     config.sample.num_steps = 20
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale = 4.5
-    config.sample.test_batch_size = 4
+    config.sample.test_batch_size = 2
     config.sample.train_batch_size = config.sample.batch_size
     
     # Test split configuration
@@ -286,8 +286,8 @@ def flow_rtpo_large_local():
     config.max_prompts = 132
     
     # Keep batch size as requested but increase batches for GRPO grouping
-    config.sample.batch_size = 2  # Changed to 2 as requested
-    config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
+    config.sample.batch_size = 4 # Changed to 2 as requested
+    config.sample.num_image_per_prompt = 12  # Multiple samples per prompt for ranking
     
     # Calculate proper num_batches_per_epoch for 32 GPUs
     # Following GRPO pattern: int(132/(gpu_number*batch_size/num_image_per_prompt))

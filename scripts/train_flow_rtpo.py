@@ -1256,7 +1256,20 @@ def main(_):
                             # Checks if the accelerator has performed an optimization step behind the scenes
                             if accelerator.sync_gradients:
                                 # log training-related stuff
-                                info = {k: torch.mean(torch.stack(v)) for k, v in train_info.items()}
+                                info = {}
+                                for k, v in train_info.items():
+                                    if v:  # Only process non-empty lists
+                                        # Convert all values to tensors before stacking
+                                        tensor_values = []
+                                        for val in v:
+                                            if isinstance(val, torch.Tensor):
+                                                tensor_values.append(val)
+                                            else:
+                                                tensor_values.append(torch.tensor(val, device=accelerator.device))
+                                        info[k] = torch.mean(torch.stack(tensor_values))
+                                    else:
+                                        info[k] = torch.tensor(0.0, device=accelerator.device)
+                                
                                 info = accelerator.reduce(info, reduction="mean")
                                 info.update({"epoch": epoch, "inner_epoch": inner_epoch})
                                 if accelerator.is_main_process:
