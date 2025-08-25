@@ -215,7 +215,7 @@ class ToxicityRewardSystem:
         
     # Aesthetic scorer initialization removed per user request
     
-    def safe_generate(self, inputs: Dict, timeout: int = 60) -> List[str]:
+    def safe_generate(self, inputs: Dict, timeout: int = 300) -> List[str]:
         """Safe VLM generation with subprocess timeout."""
         try:
             # Serialize inputs
@@ -372,7 +372,7 @@ class ToxicityRewardSystem:
                     # Try safe chunk generation with subprocess timeout
                     try:
                         print(f"[VLM GEN] Starting safe chunk generation with 60s timeout", flush=True)
-                        chunk_responses = self.safe_generate(chunk_inputs, timeout=60)
+                        chunk_responses = self.safe_generate(chunk_inputs, timeout=300)
                         
                         generation_time = time.time() - start_generation_time
                         print(f"[VLM CHUNK] Chunk generation completed in {generation_time:.3f}s!", flush=True)
