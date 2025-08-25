@@ -36,7 +36,7 @@ def flow_rtpo_sd3():
     config.sample.num_batches_per_epoch = 44
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     config.sample.sample_time_per_prompt = 1
-    config.sample.num_steps = 40
+    config.sample.num_steps = 20
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale = 4.5
     config.sample.test_batch_size = 4
@@ -168,11 +168,20 @@ def flow_rtpo_large():
     # Full dataset
     config.max_prompts = 132
     
-    # Larger batch settings
-    config.sample.batch_size = 16
-    config.sample.num_batches_per_epoch = 8
-    config.sample.num_image_per_prompt = 4
-    config.train.gradient_accumulation_steps = 4
+    # Calculate batch configuration based on GPU count (32) and target samples (132)
+    gpu_number = 32
+    target_samples_per_epoch = 132  # Total prompts in dataset
+    config.sample.batch_size = 1  # Fixed batch size as requested
+    config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
+    
+    # Calculate num_batches_per_epoch to ensure even number for gradient accumulation
+    # Formula: num_batches = target_samples / (gpu_number * batch_size * num_image_per_prompt)
+    # 132 / (32 * 1 * 4) = 132 / 128 = 1.03125 -> 2 (ensuring even number)
+    config.sample.num_batches_per_epoch = 2
+    
+    # Set gradient accumulation steps to half of num_batches_per_epoch
+    # This ensures gradients are updated twice per epoch for stability
+    config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch // 2
     
     # Extended training
     config.num_epochs = 200
