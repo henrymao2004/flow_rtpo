@@ -54,10 +54,11 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue):
         with torch.no_grad():
             outputs = model.generate(
                 **model_inputs,
-                max_new_tokens=50,
+                max_new_tokens=30,  # Reduce from 50 to 30
                 do_sample=False,
                 repetition_penalty=1.1,
-                pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
+                pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id),
+                use_cache=False  # Disable KV cache to save memory
             )
         print(f"[SUBPROCESS] Generation completed", flush=True)
         
@@ -114,16 +115,17 @@ class ToxicityRewardSystem:
             # Disable quantization and FlashAttention for stability
             print(f"[DEBUG] Using stable configuration: single device, SDPA attention, no quantization")
             
-            # Load model with simple, stable configuration
+            # Load model with memory-optimized configuration
             self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
                 vlm_model_path,
                 torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                device_map="auto" if device == "cuda" else None,   # Use "auto" for better device mapping
+                device_map="auto" if device == "cuda" else None,
                 low_cpu_mem_usage=True,
-                attn_implementation="sdpa",                   # 改成 sdpa 更稳
-                # quantization_config=None                    # 暂时禁用 8bit
-                max_memory={0: "70GB"},  # Limit GPU memory usage to 70GB
-                offload_folder="offload",  # Enable disk offloading for large models
+                attn_implementation="sdpa",
+                max_memory={0: "40GB"},  # Reduce from 70GB to 40GB
+                offload_folder="offload",
+                # Enable 8-bit quantization for memory savings
+                load_in_8bit=True if enable_quantization else False,
             )
             
             # Explicitly move to device if device_map didn't work as expected
@@ -146,13 +148,19 @@ class ToxicityRewardSystem:
             self.use_llava = True
         except Exception as e:
             print(f"Failed to load LLaVA model, using generic pipeline: {e}")
-            self.vlm = pipeline(
-                "image-to-text",
-                model=vlm_model,
-                device=0 if device == "cuda" else -1,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32
-            )
-            self.use_llava = False
+            try:
+                self.vlm = pipeline(
+                    "image-to-text",
+                    model=vlm_model,
+                    device=0 if device == "cuda" else -1,
+                    torch_dtype=torch.float16 if device == "cuda" else torch.float32
+                )
+                self.use_llava = False
+            except Exception as e2:
+                print(f"Failed to load generic pipeline too: {e2}")
+                print("VLM functionality will be disabled - using prompts as fallback")
+                self.vlm = None
+                self.use_llava = False
         
         # Initialize toxicity detector (Detoxify)
         self.detoxify = Detoxify('original', device=device)
@@ -231,7 +239,7 @@ class ToxicityRewardSystem:
             raise e
     
     def evaluate_vlm_response(self, images: List[Image.Image], prompts: List[str]) -> List[str]:
-        """Get VLM responses for image-prompt pairs with batch processing optimization."""
+        """Get VLM responses for image-prompt pairs with memory-optimized batch processing."""
         num_samples = len(images)
         responses = [""] * num_samples
         
@@ -263,97 +271,90 @@ class ToxicityRewardSystem:
             print("[DEBUG] No valid images found, returning empty responses")
             return responses
         
-        print(f"[DEBUG] Processing {len(valid_images)} valid images in batch...")
+        print(f"[DEBUG] Processing {len(valid_images)} valid images with memory optimization...")
         
-        # Process all images in one batch with subprocess timeout protection
-        print(f"[DEBUG] Processing {len(valid_images)} valid images in single batch with subprocess protection...")
+        # Process images in smaller chunks to prevent OOM
+        chunk_size = 2  # Process only 2 images at a time
+        print(f"[DEBUG] Processing {len(valid_images)} valid images in chunks of {chunk_size} with subprocess protection...")
         
         try:
             if self.use_llava:
-                # BATCH PROCESSING FOR LLAVA
-                batch_conversations = []
-                batch_continuation_prompts = []
+                # CHUNKED PROCESSING FOR LLAVA TO PREVENT OOM
+                all_responses = []
                 
-                # Prepare all conversations
-                print(f"[VLM STEP] Preparing conversations for {len(valid_prompts)} prompts...")
-                for i, prompt in enumerate(valid_prompts):
-                    # Use a more natural prompt that encourages continuation without template artifacts
-                    continuation_prompt = f"Please extend the following sentence: {prompt}"
-                    batch_continuation_prompts.append(continuation_prompt)
-                    print(f"[VLM STEP] Conversation {i+1}: \"{continuation_prompt[:80]}{'...' if len(continuation_prompt) > 80 else ''}\"")
+                # Process images in chunks
+                for chunk_start in range(0, len(valid_images), chunk_size):
+                    chunk_end = min(chunk_start + chunk_size, len(valid_images))
+                    chunk_images = valid_images[chunk_start:chunk_end]
+                    chunk_prompts = valid_prompts[chunk_start:chunk_end]
                     
-                    conversation = [
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": continuation_prompt},
-                                {"type": "image", "image": None},  # Will be set per image
-                            ],
-                        },
-                    ]
-                    batch_conversations.append(conversation)
-                
-                # Apply chat template to all conversations
-                print(f"[VLM STEP] Applying chat templates for batch of {len(batch_conversations)} conversations...")
-                batch_prompt_texts = []
-                for i, conversation in enumerate(batch_conversations):
-                    print(f"[VLM STEP] Applying template {i+1}/{len(batch_conversations)}")
-                    prompt_text = self.vlm_processor.apply_chat_template(
-                        conversation, add_generation_prompt=True
+                    print(f"[VLM CHUNK] Processing chunk {chunk_start//chunk_size + 1}/{(len(valid_images) + chunk_size - 1)//chunk_size}: images {chunk_start}-{chunk_end-1}")
+                    
+                    # Prepare conversations for this chunk
+                    chunk_conversations = []
+                    chunk_continuation_prompts = []
+                    
+                    for i, prompt in enumerate(chunk_prompts):
+                        continuation_prompt = f"Please extend the following sentence: {prompt}"
+                        chunk_continuation_prompts.append(continuation_prompt)
+                        
+                        conversation = [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": continuation_prompt},
+                                    {"type": "image", "image": None},
+                                ],
+                            },
+                        ]
+                        chunk_conversations.append(conversation)
+                    
+                    # Apply chat template to chunk conversations
+                    chunk_prompt_texts = []
+                    for conversation in chunk_conversations:
+                        prompt_text = self.vlm_processor.apply_chat_template(
+                            conversation, add_generation_prompt=True
+                        )
+                        chunk_prompt_texts.append(prompt_text)
+                    
+                    # Process chunk inputs
+                    chunk_inputs = self.vlm_processor(
+                        text=chunk_prompt_texts,
+                        images=chunk_images,
+                        return_tensors="pt",
+                        padding=True
                     )
-                    batch_prompt_texts.append(prompt_text)
-                    print(f"[VLM STEP] Template {i+1} applied, length: {len(prompt_text)} chars")
                 
-                # Process all inputs at once
-                print(f"[VLM STEP] Processing batch inputs: {len(batch_prompt_texts)} texts + {len(valid_images)} images...")
-                batch_inputs = self.vlm_processor(
-                    text=batch_prompt_texts,
-                    images=valid_images,
-                    return_tensors="pt",
-                    padding=True
-                )
+                # Use HF device_map auto placement
+                print(f"[VLM CHUNK] Using HF device_map auto placement")
                 
-                # 让HF按照device_map自动调度，不手动迁移输入，避免权重与输入device不一致
-                print(f"[VLM STEP] Using HF device_map auto placement; not moving inputs manually")
+                print(f"[VLM CHUNK] Chunk input shapes:")
+                print(f"  - input_ids: {chunk_inputs['input_ids'].shape if 'input_ids' in chunk_inputs else 'None'}")
+                print(f"  - attention_mask: {chunk_inputs['attention_mask'].shape if 'attention_mask' in chunk_inputs else 'None'}")
+                print(f"  - pixel_values: {chunk_inputs['pixel_values'].shape if 'pixel_values' in chunk_inputs else 'None'}")
                 
-                print(f"[VLM STEP] Batch input shapes and devices:")
-                print(f"  - input_ids: {batch_inputs['input_ids'].shape if 'input_ids' in batch_inputs else 'None'}")
-                print(f"  - attention_mask: {batch_inputs['attention_mask'].shape if 'attention_mask' in batch_inputs else 'None'}")
-                print(f"  - pixel_values: {batch_inputs['pixel_values'].shape if 'pixel_values' in batch_inputs else 'None'}")
+                # Chunk generation with memory optimization
+                print(f"[VLM CHUNK] Starting chunk generation for {len(chunk_images)} images...")
                 
-                # Batch generation with timeout handling
-                print(f"[VLM STEP] Starting batch generation for {len(valid_images)} images...")
-                print(f"[VLM STEP] Generation parameters: max_new_tokens=100, do_sample=True, temperature=0.8, top_p=0.95, repetition_penalty=1.1")
-                
-                # 检查GPU内存状态
+                # Check GPU memory status
                 if torch.cuda.is_available():
                     allocated = torch.cuda.memory_allocated() / 1e9
                     cached = torch.cuda.memory_reserved() / 1e9
-                    print(f"[GPU MEMORY] Before generation: allocated={allocated:.2f}GB, cached={cached:.2f}GB")
+                    print(f"[GPU MEMORY] Before chunk generation: allocated={allocated:.2f}GB, cached={cached:.2f}GB")
                 
                 start_generation_time = time.time()
                 
-                # Try safe batch generation with subprocess timeout
+                # Try safe chunk generation with subprocess timeout
                 try:
-                    print(f"[VLM GEN] Starting safe generation with 60s timeout", flush=True)
-                    batch_responses = self.safe_generate(batch_inputs, timeout=60)
+                    print(f"[VLM GEN] Starting safe chunk generation with 60s timeout", flush=True)
+                    chunk_responses = self.safe_generate(chunk_inputs, timeout=60)
                     
                     generation_time = time.time() - start_generation_time
-                    print(f"[VLM STEP] Batch generation completed in {generation_time:.3f}s!", flush=True)
-                    print(f"[VLM STEP] Got {len(batch_responses)} responses", flush=True)
+                    print(f"[VLM CHUNK] Chunk generation completed in {generation_time:.3f}s!", flush=True)
+                    print(f"[VLM CHUNK] Got {len(chunk_responses)} responses", flush=True)
                     
-                except (TimeoutError, Exception) as e:
-                    print(f"[VLM ERROR] Batch generation failed: {e}", flush=True)
-                    print(f"[VLM FALLBACK] Using prompts as fallback", flush=True)
-                    
-                    # Fallback: use original prompts
-                    for i, idx in enumerate(valid_indices):
-                        responses[idx] = valid_prompts[i]
-                    return responses
-                
-                # Process each response
-                print(f"[VLM STEP] Processing and cleaning {len(batch_responses)} raw responses...")
-                for i, (full_response, prompt, continuation_prompt) in enumerate(zip(batch_responses, valid_prompts, batch_continuation_prompts)):
+                    # Process chunk responses
+                    for i, (full_response, prompt, continuation_prompt) in enumerate(zip(chunk_responses, chunk_prompts, chunk_continuation_prompts)):
                     print(f"[VLM RESPONSE {i+1}] Raw response: \"{full_response[:150]}{'...' if len(full_response) > 150 else ''}\"")
                     
                     response = full_response
@@ -430,33 +431,55 @@ class ToxicityRewardSystem:
                     
                     print(f"[VLM RESPONSE {i+1}] Final cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
                     
-                    # Assign to correct index
+                    # Add to all_responses list
+                    all_responses.append(response)
+                    
+                except (TimeoutError, Exception) as e:
+                    print(f"[VLM ERROR] Chunk generation failed: {e}", flush=True)
+                    print(f"[VLM FALLBACK] Using prompts as fallback for this chunk", flush=True)
+                    
+                    # Fallback: use original prompts for this chunk
+                    for prompt in chunk_prompts:
+                        all_responses.append(prompt)
+                
+                # Clear GPU memory after each chunk
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    print(f"[VLM CHUNK] GPU memory cleared after chunk")
+                
+                # Assign responses to correct indices
+                for i, response in enumerate(all_responses):
                     responses[valid_indices[i]] = response
                     
             else:
-                # Fallback to generic pipeline (should not happen with LLaVA)
-                print("[DEBUG] Using generic pipeline fallback...")
-                for i, (image, prompt, idx) in enumerate(zip(valid_images, valid_prompts, valid_indices)):
-                    try:
-                        inputs = {
-                            "image": image,
-                            "text": f"USER: {prompt}\nASSISTANT:"
-                        }
-                        
-                        result = self.vlm(inputs)
-                        if isinstance(result, list) and len(result) > 0:
-                            response = result[0].get('generated_text', '')
-                        else:
-                            response = str(result)
-                        
-                        # Extract assistant response
-                        if "ASSISTANT:" in response:
-                            response = response.split("ASSISTANT:")[-1].strip()
-                        
-                        responses[idx] = response
-                    except Exception as e:
-                        print(f"[VLM ERROR] Generic pipeline failed for image {i}: {e}")
-                        responses[idx] = prompt  # Fallback to prompt
+                # Fallback to generic pipeline or prompts
+                if self.vlm is not None:
+                    print("[DEBUG] Using generic pipeline fallback...")
+                    for i, (image, prompt, idx) in enumerate(zip(valid_images, valid_prompts, valid_indices)):
+                        try:
+                            inputs = {
+                                "image": image,
+                                "text": f"USER: {prompt}\nASSISTANT:"
+                            }
+                            
+                            result = self.vlm(inputs)
+                            if isinstance(result, list) and len(result) > 0:
+                                response = result[0].get('generated_text', '')
+                            else:
+                                response = str(result)
+                            
+                            # Extract assistant response
+                            if "ASSISTANT:" in response:
+                                response = response.split("ASSISTANT:")[-1].strip()
+                            
+                            responses[idx] = response
+                        except Exception as e:
+                            print(f"[VLM ERROR] Generic pipeline failed for image {i}: {e}")
+                            responses[idx] = prompt  # Fallback to prompt
+                else:
+                    print("[DEBUG] VLM not available, using prompts as fallback...")
+                    for i, (prompt, idx) in enumerate(zip(valid_prompts, valid_indices)):
+                        responses[idx] = prompt
                     
         except Exception as e:
             print(f"[ERROR] VLM evaluation failed: {e}, using prompts as fallback", flush=True)
@@ -470,7 +493,7 @@ class ToxicityRewardSystem:
         if hasattr(torch.cuda, 'reset_peak_memory_stats'):
             torch.cuda.reset_peak_memory_stats()
         
-        print(f"[DEBUG] Batch VLM evaluation completed successfully!")
+        print(f"[DEBUG] Chunked VLM evaluation completed successfully!")
         return responses
     
     # Chunk processing removed - using subprocess timeout instead
