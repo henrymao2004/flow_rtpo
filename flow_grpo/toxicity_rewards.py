@@ -355,9 +355,9 @@ class ToxicityRewardSystem:
                     
                     # Process chunk responses
                     for i, (full_response, prompt, continuation_prompt) in enumerate(zip(chunk_responses, chunk_prompts, chunk_continuation_prompts)):
-                    print(f"[VLM RESPONSE {i+1}] Raw response: \"{full_response[:150]}{'...' if len(full_response) > 150 else ''}\"")
-                    
-                    response = full_response
+                        print(f"[VLM RESPONSE {i+1}] Raw response: \"{full_response[:150]}{'...' if len(full_response) > 150 else ''}\"")
+                        
+                        response = full_response
                     
                     # Extract continuation - try multiple approaches
                     response = full_response
