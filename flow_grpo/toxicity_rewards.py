@@ -16,6 +16,7 @@ import signal
 import concurrent.futures
 import threading
 from functools import partial
+import multiprocessing as mp
 warnings.filterwarnings("ignore")
 
 
@@ -39,14 +40,28 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, enab
         else:
             quantization_config = None
         
-        model = LlavaNextForConditionalGeneration.from_pretrained(
-            model_path,
-            torch_dtype=torch.float16,
-            device_map="cuda:0",
-            low_cpu_mem_usage=True,
-            attn_implementation="sdpa",
-            quantization_config=quantization_config,
-        )
+        if enable_quantization:
+            # Pattern A: device_map + low_cpu_mem_usage=True; never call .to()
+            model = LlavaNextForConditionalGeneration.from_pretrained(
+                model_path,
+                torch_dtype=torch.float16,
+                device_map="cuda:0",
+                low_cpu_mem_usage=True,
+                attn_implementation="sdpa",
+                quantization_config=quantization_config,
+            )
+        else:
+            # Pattern B: CPU load, low_cpu_mem_usage=False, then .to()
+            model = LlavaNextForConditionalGeneration.from_pretrained(
+                model_path,
+                torch_dtype=torch.float16,
+                device_map=None,
+                low_cpu_mem_usage=False,
+                attn_implementation="sdpa",
+                quantization_config=None,
+            )
+            model = model.to("cuda:0")
+        
         model.eval()
         print(f"[SUBPROCESS] Model loaded successfully", flush=True)
         
@@ -113,22 +128,23 @@ def _parallel_chunk_worker(gpu_id: int, chunk_data: Dict, model_path: str, enabl
             quantization_config = None
         
         if enable_quantization:
-            # For quantized models, use device_map to place on specific GPU
+            # Quantized branch: use device_map, no .to() calls
             model = LlavaNextForConditionalGeneration.from_pretrained(
                 model_path,
                 torch_dtype=torch.float16,
-                device_map=f"cuda:{gpu_id}",
+                device_map={"": f"cuda:{gpu_id}"},  # Dispatch to specific GPU
                 low_cpu_mem_usage=True,
                 attn_implementation="sdpa",
                 quantization_config=quantization_config,
             )
+            # Don't call model.to(...) for quantized models
         else:
-            # --- Non-quantized: CPU -> move to target GPU (robust) ---
+            # Non-quantized branch: CPU load, then move to GPU
             model = LlavaNextForConditionalGeneration.from_pretrained(
                 model_path,
                 torch_dtype=torch.float16,
-                device_map=None,                   # <-- CPU load
-                low_cpu_mem_usage=False,           # <-- real tensors, not meta
+                device_map=None,                   # CPU load
+                low_cpu_mem_usage=False,           # Real tensors, not meta
                 attn_implementation="sdpa",
                 quantization_config=None,
             )
@@ -470,22 +486,23 @@ class ToxicityRewardSystem:
                 quantization_config = None
             
             if self.enable_quantization:
-                # For quantized models, use device_map to place on specific GPU
+                # Quantized branch: use device_map, no .to() calls
                 model = LlavaNextForConditionalGeneration.from_pretrained(
                     self.vlm_model_path,
                     torch_dtype=torch.float16,
-                    device_map=f"cuda:{gpu_id}",
+                    device_map={"": f"cuda:{gpu_id}"},  # Dispatch to specific GPU
                     low_cpu_mem_usage=True,
                     attn_implementation="sdpa",
                     quantization_config=quantization_config,
                 )
+                # Don't call model.to(...) for quantized models
             else:
-                # --- Non-quantized: CPU -> move to target GPU (robust) ---
+                # Non-quantized branch: CPU load, then move to GPU
                 model = LlavaNextForConditionalGeneration.from_pretrained(
                     self.vlm_model_path,
                     torch_dtype=torch.float16,
-                    device_map=None,                   # <-- CPU load
-                    low_cpu_mem_usage=False,           # <-- real tensors, not meta
+                    device_map=None,                   # CPU load
+                    low_cpu_mem_usage=False,           # Real tensors, not meta
                     attn_implementation="sdpa",
                     quantization_config=None,
                 )
@@ -646,18 +663,18 @@ class ToxicityRewardSystem:
                 
                 print(f"[PARALLEL PROCESSING] Prepared {len(chunks_data)} chunks for parallel processing")
                 
-                # Process chunks in parallel using ThreadPoolExecutor
+                # Process chunks in parallel using multiprocessing (not threads)
                 if self.use_multi_gpu and self.num_gpus > 1:
-                    print(f"[PARALLEL PROCESSING] Using parallel processing with {self.num_gpus} GPUs")
+                    print(f"[PARALLEL PROCESSING] Using multiprocessing with {self.num_gpus} GPUs")
                     
                     # Create worker function with fixed parameters
                     worker_func = partial(_parallel_chunk_worker, 
                                         model_path=self.vlm_model_path, 
                                         enable_quantization=self.enable_quantization)
                     
-                    # Process chunks in parallel
+                    # Process chunks in parallel using multiprocessing
                     chunk_results = []
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_gpus) as executor:
+                    with concurrent.futures.ProcessPoolExecutor(max_workers=self.num_gpus) as executor:
                         # Submit all chunks for parallel processing
                         future_to_chunk = {}
                         for i, chunk_data in enumerate(chunks_data):
