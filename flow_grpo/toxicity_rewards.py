@@ -293,206 +293,222 @@ class ToxicityRewardSystem:
             print("[DEBUG] No valid images found, returning empty responses")
             return responses
         
-        print(f"[DEBUG] Processing {len(valid_images)} valid images in batch...")
+        print(f"[DEBUG] Processing {len(valid_images)} valid images in batches of 8...")
         
-        # Process all images in one batch with subprocess timeout protection
-        print(f"[DEBUG] Processing {len(valid_images)} valid images in single batch with subprocess protection...")
+        # Process images in batches of 8
+        batch_size = 8
+        all_batch_responses = []
         
-        try:
-            if self.use_llava:
-                # BATCH PROCESSING FOR LLAVA
-                batch_conversations = []
-                batch_continuation_prompts = []
-                
-                # Prepare all conversations
-                print(f"[VLM STEP] Preparing conversations for {len(valid_prompts)} prompts...")
-                for i, prompt in enumerate(valid_prompts):
-                    # Use a more natural prompt that encourages continuation without template artifacts
-                    continuation_prompt = f"Please extend the following sentence: {prompt}"
-                    batch_continuation_prompts.append(continuation_prompt)
-                    print(f"[VLM STEP] Conversation {i+1}: \"{continuation_prompt[:80]}{'...' if len(continuation_prompt) > 80 else ''}\"")
+        for batch_start in range(0, len(valid_images), batch_size):
+            batch_end = min(batch_start + batch_size, len(valid_images))
+            batch_images = valid_images[batch_start:batch_end]
+            batch_prompts = valid_prompts[batch_start:batch_end]
+            batch_indices = valid_indices[batch_start:batch_end]
+            
+            print(f"[BATCH] Processing batch {batch_start//batch_size + 1}/{(len(valid_images) + batch_size - 1)//batch_size}: images {batch_start+1}-{batch_end}")
+            
+            try:
+                if self.use_llava:
+                    # BATCH PROCESSING FOR LLAVA
+                    batch_conversations = []
+                    batch_continuation_prompts = []
                     
-                    conversation = [
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": continuation_prompt},
-                                {"type": "image", "image": None},  # Will be set per image
-                            ],
-                        },
-                    ]
-                    batch_conversations.append(conversation)
-                
-                # Apply chat template to all conversations
-                print(f"[VLM STEP] Applying chat templates for batch of {len(batch_conversations)} conversations...")
-                batch_prompt_texts = []
-                for i, conversation in enumerate(batch_conversations):
-                    print(f"[VLM STEP] Applying template {i+1}/{len(batch_conversations)}")
-                    prompt_text = self.vlm_processor.apply_chat_template(
-                        conversation, add_generation_prompt=True
+                    # Prepare conversations for this batch
+                    print(f"[VLM STEP] Preparing conversations for batch of {len(batch_prompts)} prompts...")
+                    for i, (prompt, image) in enumerate(zip(batch_prompts, batch_images)):
+                        # Use a more natural prompt that encourages continuation without template artifacts
+                        continuation_prompt = f"Please extend the following sentence: {prompt}"
+                        batch_continuation_prompts.append(continuation_prompt)
+                        print(f"[VLM STEP] Conversation {i+1}: \"{continuation_prompt[:80]}{'...' if len(continuation_prompt) > 80 else ''}\"")
+                        
+                        # Set the actual image in the conversation
+                        conversation = [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": continuation_prompt},
+                                    {"type": "image", "image": image},  # Set the actual image
+                                ],
+                            },
+                        ]
+                        batch_conversations.append(conversation)
+                    
+                    # Apply chat template to all conversations in this batch
+                    print(f"[VLM STEP] Applying chat templates for batch of {len(batch_conversations)} conversations...")
+                    batch_prompt_texts = []
+                    for i, conversation in enumerate(batch_conversations):
+                        print(f"[VLM STEP] Applying template {i+1}/{len(batch_conversations)}")
+                        prompt_text = self.vlm_processor.apply_chat_template(
+                            conversation, add_generation_prompt=True
+                        )
+                        batch_prompt_texts.append(prompt_text)
+                        print(f"[VLM STEP] Template {i+1} applied, length: {len(prompt_text)} chars")
+                    
+                    # Process batch inputs
+                    print(f"[VLM STEP] Processing batch inputs: {len(batch_prompt_texts)} texts + {len(batch_images)} images...")
+                    batch_inputs = self.vlm_processor(
+                        text=batch_prompt_texts,
+                        images=batch_images,
+                        return_tensors="pt",
+                        padding=True
                     )
-                    batch_prompt_texts.append(prompt_text)
-                    print(f"[VLM STEP] Template {i+1} applied, length: {len(prompt_text)} chars")
-                
-                # Process all inputs at once
-                print(f"[VLM STEP] Processing batch inputs: {len(batch_prompt_texts)} texts + {len(valid_images)} images...")
-                batch_inputs = self.vlm_processor(
-                    text=batch_prompt_texts,
-                    images=valid_images,
-                    return_tensors="pt",
-                    padding=True
-                )
-                
-                # 让HF按照device_map自动调度，不手动迁移输入，避免权重与输入device不一致
-                print(f"[VLM STEP] Using HF device_map auto placement; not moving inputs manually")
-                
-                print(f"[VLM STEP] Batch input shapes and devices:")
-                print(f"  - input_ids: {batch_inputs['input_ids'].shape if 'input_ids' in batch_inputs else 'None'}")
-                print(f"  - attention_mask: {batch_inputs['attention_mask'].shape if 'attention_mask' in batch_inputs else 'None'}")
-                print(f"  - pixel_values: {batch_inputs['pixel_values'].shape if 'pixel_values' in batch_inputs else 'None'}")
-                
-                # Batch generation with timeout handling
-                print(f"[VLM STEP] Starting batch generation for {len(valid_images)} images...")
-                print(f"[VLM STEP] Generation parameters: max_new_tokens=100, do_sample=True, temperature=0.8, top_p=0.95, repetition_penalty=1.1")
-                
-                # 检查GPU内存状态
-                if torch.cuda.is_available():
-                    allocated = torch.cuda.memory_allocated() / 1e9
-                    cached = torch.cuda.memory_reserved() / 1e9
-                    print(f"[GPU MEMORY] Before generation: allocated={allocated:.2f}GB, cached={cached:.2f}GB")
-                
-                start_generation_time = time.time()
-                
-                # Try safe batch generation with subprocess timeout
-                try:
-                    print(f"[VLM GEN] Starting safe generation with 60s timeout", flush=True)
-                    batch_responses = self.safe_generate(batch_inputs, timeout=60)
                     
-                    generation_time = time.time() - start_generation_time
-                    print(f"[VLM STEP] Batch generation completed in {generation_time:.3f}s!", flush=True)
-                    print(f"[VLM STEP] Got {len(batch_responses)} responses", flush=True)
+                    # Let HF handle device mapping automatically
+                    print(f"[VLM STEP] Using HF device_map auto placement; not moving inputs manually")
                     
-                except (TimeoutError, Exception) as e:
-                    print(f"[VLM ERROR] Batch generation failed: {e}", flush=True)
-                    print(f"[VLM FALLBACK] Using prompts as fallback", flush=True)
+                    print(f"[VLM STEP] Batch input shapes and devices:")
+                    print(f"  - input_ids: {batch_inputs['input_ids'].shape if 'input_ids' in batch_inputs else 'None'}")
+                    print(f"  - attention_mask: {batch_inputs['attention_mask'].shape if 'attention_mask' in batch_inputs else 'None'}")
+                    print(f"  - pixel_values: {batch_inputs['pixel_values'].shape if 'pixel_values' in batch_inputs else 'None'}")
                     
-                    # Fallback: use original prompts
-                    for i, idx in enumerate(valid_indices):
-                        responses[idx] = valid_prompts[i]
-                    return responses
-                
-                # Process each response
-                print(f"[VLM STEP] Processing and cleaning {len(batch_responses)} raw responses...")
-                for i, (full_response, prompt, continuation_prompt) in enumerate(zip(batch_responses, valid_prompts, batch_continuation_prompts)):
-                    print(f"[VLM RESPONSE {i+1}] Raw response: \"{full_response[:150]}{'...' if len(full_response) > 150 else ''}\"")
+                    # Batch generation with timeout handling
+                    print(f"[VLM STEP] Starting batch generation for {len(batch_images)} images...")
+                    print(f"[VLM STEP] Generation parameters: max_new_tokens=100, do_sample=True, temperature=0.8, top_p=0.95, repetition_penalty=1.1")
                     
-                    response = full_response
+                    # Check GPU memory status
+                    if torch.cuda.is_available():
+                        allocated = torch.cuda.memory_allocated() / 1e9
+                        cached = torch.cuda.memory_reserved() / 1e9
+                        print(f"[GPU MEMORY] Before generation: allocated={allocated:.2f}GB, cached={cached:.2f}GB")
                     
-                    # Extract continuation - try multiple approaches
-                    response = full_response
+                    start_generation_time = time.time()
                     
-                    # First, try to find chat template markers and extract the actual response
-                    markers = ["[/INST]", "ASSISTANT:", "Assistant:", "</s>"]
-                    for marker in markers:
-                        if marker in response:
-                            response = response.split(marker)[-1].strip()
-                            print(f"[VLM RESPONSE {i+1}] After {marker} marker extraction: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                            break
-                    
-                    # Clean up any remaining markers
-                    if "[/INST]" in response:
-                        response = response.replace("[/INST]", "").strip()
-                        print(f"[VLM RESPONSE {i+1}] After [/INST] cleanup: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                    
-                    # Remove the instruction part if it's still there
-                    continuation_marker = f"Please continue this text naturally: {prompt}"
-                    if continuation_marker in response:
-                        response = response.split(continuation_marker)[-1].strip()
-                        print(f"[VLM RESPONSE {i+1}] After continuation marker removal: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                    
-                    # More lenient cleaning - only fallback for clearly problematic responses
-                    should_fallback = False
-                    fallback_reason = ""
-                    
-                    # Check for empty responses
-                    if len(response.strip()) == 0:
-                        should_fallback = True
-                        fallback_reason = "empty response"
-                    
-                    # Check for obvious template artifacts
-                    elif (response.startswith("[INST]") or 
-                          response.startswith("Complete this sentence") or
-                          response.startswith("Continue this exact text")):
-                        should_fallback = True
-                        fallback_reason = "template artifacts"
-                    
-                    # Check for obvious image descriptions (but be more lenient)
-                    elif (response.startswith("Based on what you see") or
-                          response.startswith("The image shows") or
-                          response.startswith("The image depicts") or
-                          response.startswith("In the image") or
-                          response.startswith("This image")):
-                        # Only fallback if the response is very short (likely just image description)
-                        if len(response.strip()) < 20:
-                            should_fallback = True
-                            fallback_reason = "short image description"
-                        else:
-                            # Try to extract the continuation part after the image description
-                            for prefix in ["Based on what you see, ", "The image shows ", "The image depicts ", "In the image, ", "This image "]:
-                                if response.startswith(prefix):
-                                    response = response[len(prefix):].strip()
-                                    print(f"[VLM RESPONSE {i+1}] Extracted continuation after image description: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                                    break
-                    
-                    # Handle refusals
-                    elif response.lower().startswith(("i cannot", "i can't", "i'm not able", "i won't", "i don't")):
-                        should_fallback = True
-                        fallback_reason = "refusal"
-                    
-                    # Apply fallback if needed
-                    if should_fallback:
-                        old_response = response
-                        response = prompt  # Just use the original prompt
-                        print(f"[VLM RESPONSE {i+1}] {fallback_reason} detected, using original prompt: \"{response}\"")
-                    else:
-                        print(f"[VLM RESPONSE {i+1}] Using cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                    
-                    
-                    print(f"[VLM RESPONSE {i+1}] Final cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                    
-                    # Assign to correct index
-                    responses[valid_indices[i]] = response
-                    
-            else:
-                # Fallback to generic pipeline (should not happen with LLaVA)
-                print("[DEBUG] Using generic pipeline fallback...")
-                for i, (image, prompt, idx) in enumerate(zip(valid_images, valid_prompts, valid_indices)):
+                    # Try safe batch generation with subprocess timeout
                     try:
-                        inputs = {
-                            "image": image,
-                            "text": f"USER: {prompt}\nASSISTANT:"
-                        }
+                        print(f"[VLM GEN] Starting safe generation with 60s timeout", flush=True)
+                        batch_responses = self.safe_generate(batch_inputs, timeout=60)
                         
-                        result = self.vlm(inputs)
-                        if isinstance(result, list) and len(result) > 0:
-                            response = result[0].get('generated_text', '')
-                        else:
-                            response = str(result)
+                        generation_time = time.time() - start_generation_time
+                        print(f"[VLM STEP] Batch generation completed in {generation_time:.3f}s!", flush=True)
+                        print(f"[VLM STEP] Got {len(batch_responses)} responses", flush=True)
                         
-                        # Extract assistant response
-                        if "ASSISTANT:" in response:
-                            response = response.split("ASSISTANT:")[-1].strip()
+                    except (TimeoutError, Exception) as e:
+                        print(f"[VLM ERROR] Batch generation failed: {e}", flush=True)
+                        print(f"[VLM FALLBACK] Using prompts as fallback", flush=True)
                         
-                        responses[idx] = response
-                    except Exception as e:
-                        print(f"[VLM ERROR] Generic pipeline failed for image {i}: {e}")
-                        responses[idx] = prompt  # Fallback to prompt
+                        # Fallback: use original prompts for this batch
+                        batch_responses = batch_prompts.copy()
                     
-        except Exception as e:
-            print(f"[ERROR] VLM evaluation failed: {e}, using prompts as fallback", flush=True)
-            # Fallback to prompts
-            for i, idx in enumerate(valid_indices):
-                responses[idx] = valid_prompts[i]
+                    # Process each response in this batch
+                    print(f"[VLM STEP] Processing and cleaning {len(batch_responses)} raw responses...")
+                    batch_cleaned_responses = []
+                    for i, (full_response, prompt, continuation_prompt) in enumerate(zip(batch_responses, batch_prompts, batch_continuation_prompts)):
+                        print(f"[VLM RESPONSE {i+1}] Raw response: \"{full_response[:150]}{'...' if len(full_response) > 150 else ''}\"")
+                        
+                        response = full_response
+                        
+                        # Extract continuation - try multiple approaches
+                        response = full_response
+                        
+                        # First, try to find chat template markers and extract the actual response
+                        markers = ["[/INST]", "ASSISTANT:", "Assistant:", "</s>"]
+                        for marker in markers:
+                            if marker in response:
+                                response = response.split(marker)[-1].strip()
+                                print(f"[VLM RESPONSE {i+1}] After {marker} marker extraction: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                                break
+                        
+                        # Clean up any remaining markers
+                        if "[/INST]" in response:
+                            response = response.replace("[/INST]", "").strip()
+                            print(f"[VLM RESPONSE {i+1}] After [/INST] cleanup: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                        
+                        # Remove the instruction part if it's still there
+                        continuation_marker = f"Please continue this text naturally: {prompt}"
+                        if continuation_marker in response:
+                            response = response.split(continuation_marker)[-1].strip()
+                            print(f"[VLM RESPONSE {i+1}] After continuation marker removal: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                        
+                        # More lenient cleaning - only fallback for clearly problematic responses
+                        should_fallback = False
+                        fallback_reason = ""
+                        
+                        # Check for empty responses
+                        if len(response.strip()) == 0:
+                            should_fallback = True
+                            fallback_reason = "empty response"
+                        
+                        # Check for obvious template artifacts
+                        elif (response.startswith("[INST]") or 
+                              response.startswith("Complete this sentence") or
+                              response.startswith("Continue this exact text")):
+                            should_fallback = True
+                            fallback_reason = "template artifacts"
+                        
+                        # Check for obvious image descriptions (but be more lenient)
+                        elif (response.startswith("Based on what you see") or
+                              response.startswith("The image shows") or
+                              response.startswith("The image depicts") or
+                              response.startswith("In the image") or
+                              response.startswith("This image")):
+                            # Only fallback if the response is very short (likely just image description)
+                            if len(response.strip()) < 20:
+                                should_fallback = True
+                                fallback_reason = "short image description"
+                            else:
+                                # Try to extract the continuation part after the image description
+                                for prefix in ["Based on what you see, ", "The image shows ", "The image depicts ", "In the image, ", "This image "]:
+                                    if response.startswith(prefix):
+                                        response = response[len(prefix):].strip()
+                                        print(f"[VLM RESPONSE {i+1}] Extracted continuation after image description: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                                        break
+                        
+                        # Handle refusals
+                        elif response.lower().startswith(("i cannot", "i can't", "i'm not able", "i won't", "i don't")):
+                            should_fallback = True
+                            fallback_reason = "refusal"
+                        
+                        # Apply fallback if needed
+                        if should_fallback:
+                            old_response = response
+                            response = prompt  # Just use the original prompt
+                            print(f"[VLM RESPONSE {i+1}] {fallback_reason} detected, using original prompt: \"{response}\"")
+                        else:
+                            print(f"[VLM RESPONSE {i+1}] Using cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                        
+                        print(f"[VLM RESPONSE {i+1}] Final cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                        
+                        batch_cleaned_responses.append(response)
+                    
+                    # Store batch responses
+                    all_batch_responses.extend(batch_cleaned_responses)
+                    
+                else:
+                    # Fallback to generic pipeline (should not happen with LLaVA)
+                    print("[DEBUG] Using generic pipeline fallback...")
+                    batch_responses = []
+                    for i, (image, prompt) in enumerate(zip(batch_images, batch_prompts)):
+                        try:
+                            inputs = {
+                                "image": image,
+                                "text": f"USER: {prompt}\nASSISTANT:"
+                            }
+                            
+                            result = self.vlm(inputs)
+                            if isinstance(result, list) and len(result) > 0:
+                                response = result[0].get('generated_text', '')
+                            else:
+                                response = str(result)
+                            
+                            # Extract assistant response
+                            if "ASSISTANT:" in response:
+                                response = response.split("ASSISTANT:")[-1].strip()
+                            
+                            batch_responses.append(response)
+                        except Exception as e:
+                            print(f"[VLM ERROR] Generic pipeline failed for image {i}: {e}")
+                            batch_responses.append(prompt)  # Fallback to prompt
+                    
+                    all_batch_responses.extend(batch_responses)
+                    
+            except Exception as e:
+                print(f"[ERROR] VLM evaluation failed for batch: {e}, using prompts as fallback", flush=True)
+                # Fallback to prompts for this batch
+                all_batch_responses.extend(batch_prompts)
+        
+        # Assign all batch responses to correct indices
+        for i, (response, idx) in enumerate(zip(all_batch_responses, valid_indices)):
+            responses[idx] = response
         
         # Memory cleanup after VLM generation
         if hasattr(torch.cuda, 'empty_cache'):
