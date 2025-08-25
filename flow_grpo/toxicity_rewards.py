@@ -102,7 +102,7 @@ def _parallel_chunk_worker(gpu_id: int, chunk_data: Dict, model_path: str, enabl
         # Load model and processor for this GPU
         processor = LlavaNextProcessor.from_pretrained(model_path)
         
-        if enable_quantization:
+        if self.enable_quantization:
             from transformers import BitsAndBytesConfig
             quantization_config = BitsAndBytesConfig(
                 load_in_8bit=True,
@@ -112,7 +112,7 @@ def _parallel_chunk_worker(gpu_id: int, chunk_data: Dict, model_path: str, enabl
         else:
             quantization_config = None
         
-        if enable_quantization:
+        if self.enable_quantization:
             # For quantized models, use device_map to place on specific GPU
             model = LlavaNextForConditionalGeneration.from_pretrained(
                 model_path,
@@ -122,7 +122,7 @@ def _parallel_chunk_worker(gpu_id: int, chunk_data: Dict, model_path: str, enabl
                 attn_implementation="sdpa",
                 quantization_config=quantization_config,
             )
-                else:
+        else:
             # For non-quantized models, load normally and move
             model = LlavaNextForConditionalGeneration.from_pretrained(
                 model_path,
