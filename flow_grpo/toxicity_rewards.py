@@ -67,7 +67,9 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, enab
             outputs = model.generate(
                 **model_inputs,
                 max_new_tokens=30,  # Reduce from 50 to 30
-                do_sample=False,
+                do_sample=True,
+                temperature=0.8,
+                top_p=0.95,
                 repetition_penalty=1.1,
                 pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id),
                 use_cache=False  # Disable KV cache to save memory
@@ -301,16 +303,17 @@ class ToxicityRewardSystem:
         try:
             if self.use_llava:
                 # CHUNKED PROCESSING FOR LLAVA TO PREVENT OOM
-                all_responses = []
                 
                 # Process images in chunks
                 for chunk_start in range(0, len(valid_images), chunk_size):
                     chunk_end = min(chunk_start + chunk_size, len(valid_images))
                     chunk_images = valid_images[chunk_start:chunk_end]
                     chunk_prompts = valid_prompts[chunk_start:chunk_end]
-                    chunk_indices = valid_indices[chunk_start:chunk_end]
                     
                     print(f"[VLM CHUNK] Processing chunk {chunk_start//chunk_size + 1}/{(len(valid_images) + chunk_size - 1)//chunk_size}: images {chunk_start}-{chunk_end-1}")
+                    
+                    # Initialize chunk_responses fresh for each chunk
+                    chunk_responses_cleaned = []
                     
                     # Prepare conversations for this chunk
                     chunk_conversations = []
@@ -347,147 +350,132 @@ class ToxicityRewardSystem:
                         padding=True
                     )
                 
-                # Use HF device_map auto placement
-                print(f"[VLM CHUNK] Using HF device_map auto placement")
-                
-                print(f"[VLM CHUNK] Chunk input shapes:")
-                print(f"  - input_ids: {chunk_inputs['input_ids'].shape if 'input_ids' in chunk_inputs else 'None'}")
-                print(f"  - attention_mask: {chunk_inputs['attention_mask'].shape if 'attention_mask' in chunk_inputs else 'None'}")
-                print(f"  - pixel_values: {chunk_inputs['pixel_values'].shape if 'pixel_values' in chunk_inputs else 'None'}")
-                
-                # Chunk generation with memory optimization
-                print(f"[VLM CHUNK] Starting chunk generation for {len(chunk_images)} images...")
-                
-                # Check GPU memory status
-                if torch.cuda.is_available():
-                    allocated = torch.cuda.memory_allocated() / 1e9
-                    cached = torch.cuda.memory_reserved() / 1e9
-                    print(f"[GPU MEMORY] Before chunk generation: allocated={allocated:.2f}GB, cached={cached:.2f}GB")
-                
-                start_generation_time = time.time()
-                
-                # Try safe chunk generation with subprocess timeout
-                try:
-                    print(f"[VLM GEN] Starting safe chunk generation with 60s timeout", flush=True)
-                    chunk_responses = self.safe_generate(chunk_inputs, timeout=60)
+                    # Use HF device_map auto placement
+                    print(f"[VLM CHUNK] Using HF device_map auto placement")
                     
-                    generation_time = time.time() - start_generation_time
-                    print(f"[VLM CHUNK] Chunk generation completed in {generation_time:.3f}s!", flush=True)
-                    print(f"[VLM CHUNK] Got {len(chunk_responses)} responses", flush=True)
+                    print(f"[VLM CHUNK] Chunk input shapes:")
+                    print(f"  - input_ids: {chunk_inputs['input_ids'].shape if 'input_ids' in chunk_inputs else 'None'}")
+                    print(f"  - attention_mask: {chunk_inputs['attention_mask'].shape if 'attention_mask' in chunk_inputs else 'None'}")
+                    print(f"  - pixel_values: {chunk_inputs['pixel_values'].shape if 'pixel_values' in chunk_inputs else 'None'}")
                     
-                    # Process chunk responses
-                    for i, (full_response, prompt, continuation_prompt) in enumerate(zip(chunk_responses, chunk_prompts, chunk_continuation_prompts)):
-                        print(f"[VLM RESPONSE {i+1}] Raw response: \"{full_response[:150]}{'...' if len(full_response) > 150 else ''}\"")
+                    # Chunk generation with memory optimization
+                    print(f"[VLM CHUNK] Starting chunk generation for {len(chunk_images)} images...")
+                    
+                    # Check GPU memory status
+                    if torch.cuda.is_available():
+                        allocated = torch.cuda.memory_allocated() / 1e9
+                        cached = torch.cuda.memory_reserved() / 1e9
+                        print(f"[GPU MEMORY] Before chunk generation: allocated={allocated:.2f}GB, cached={cached:.2f}GB")
+                    
+                    start_generation_time = time.time()
+                    
+                    # Try safe chunk generation with subprocess timeout
+                    try:
+                        print(f"[VLM GEN] Starting safe chunk generation with 60s timeout", flush=True)
+                        chunk_responses = self.safe_generate(chunk_inputs, timeout=60)
                         
-                        response = full_response
+                        generation_time = time.time() - start_generation_time
+                        print(f"[VLM CHUNK] Chunk generation completed in {generation_time:.3f}s!", flush=True)
+                        print(f"[VLM CHUNK] Got {len(chunk_responses)} responses", flush=True)
                         
-                        # Extract continuation - try multiple approaches
-                        response = full_response
-                        
-                        # First, try to find chat template markers and extract the actual response
-                        markers = ["[/INST]", "ASSISTANT:", "Assistant:", "</s>"]
-                        for marker in markers:
-                            if marker in response:
-                                response = response.split(marker)[-1].strip()
-                                print(f"[VLM RESPONSE {i+1}] After {marker} marker extraction: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                                break
-                        
-                        # Clean up any remaining markers
-                        if "[/INST]" in response:
-                            response = response.replace("[/INST]", "").strip()
-                            print(f"[VLM RESPONSE {i+1}] After [/INST] cleanup: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                        
-                        # Remove the instruction part if it's still there
-                        continuation_marker = f"Please continue this text naturally: {prompt}"
-                        if continuation_marker in response:
-                            response = response.split(continuation_marker)[-1].strip()
-                            print(f"[VLM RESPONSE {i+1}] After continuation marker removal: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                        
-                        # More lenient cleaning - only fallback for clearly problematic responses
-                        should_fallback = False
-                        fallback_reason = ""
-                        
-                        # Check for empty responses
-                        if len(response.strip()) == 0:
-                            should_fallback = True
-                            fallback_reason = "empty response"
-                        
-                        # Check for obvious template artifacts
-                        elif (response.startswith("[INST]") or 
-                              response.startswith("Complete this sentence") or
-                              response.startswith("Continue this exact text")):
-                            should_fallback = True
-                            fallback_reason = "template artifacts"
-                        
-                        # Check for obvious image descriptions (but be more lenient)
-                        elif (response.startswith("Based on what you see") or
-                              response.startswith("The image shows") or
-                              response.startswith("The image depicts") or
-                              response.startswith("In the image") or
-                              response.startswith("This image")):
-                            # Only fallback if the response is very short (likely just image description)
-                            if len(response.strip()) < 20:
+                        # Process chunk responses
+                        for i, (full_response, prompt, continuation_prompt) in enumerate(zip(chunk_responses, chunk_prompts, chunk_continuation_prompts)):
+                            print(f"[VLM RESPONSE {i+1}] Raw response: \"{full_response[:150]}{'...' if len(full_response) > 150 else ''}\"")
+                            
+                            response = full_response
+                            
+                            # Extract continuation - try multiple approaches
+                            response = full_response
+                            
+                            # First, try to find chat template markers and extract the actual response
+                            markers = ["[/INST]", "ASSISTANT:", "Assistant:", "</s>"]
+                            for marker in markers:
+                                if marker in response:
+                                    response = response.split(marker)[-1].strip()
+                                    print(f"[VLM RESPONSE {i+1}] After {marker} marker extraction: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                                    break
+                            
+                            # Clean up any remaining markers
+                            if "[/INST]" in response:
+                                response = response.replace("[/INST]", "").strip()
+                                print(f"[VLM RESPONSE {i+1}] After [/INST] cleanup: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                            
+                            # Remove the instruction part if it's still there
+                            continuation_marker = f"Please continue this text naturally: {prompt}"
+                            if continuation_marker in response:
+                                response = response.split(continuation_marker)[-1].strip()
+                                print(f"[VLM RESPONSE {i+1}] After continuation marker removal: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                            
+                            # More lenient cleaning - only fallback for clearly problematic responses
+                            should_fallback = False
+                            fallback_reason = ""
+                            
+                            # Check for empty responses
+                            if len(response.strip()) == 0:
                                 should_fallback = True
-                                fallback_reason = "short image description"
+                                fallback_reason = "empty response"
+                            
+                            # Check for obvious template artifacts
+                            elif (response.startswith("[INST]") or 
+                                  response.startswith("Complete this sentence") or
+                                  response.startswith("Continue this exact text")):
+                                should_fallback = True
+                                fallback_reason = "template artifacts"
+                            
+                            # Check for obvious image descriptions (but be more lenient)
+                            elif (response.startswith("Based on what you see") or
+                                  response.startswith("The image shows") or
+                                  response.startswith("The image depicts") or
+                                  response.startswith("In the image") or
+                                  response.startswith("This image")):
+                                # Only fallback if the response is very short (likely just image description)
+                                if len(response.strip()) < 20:
+                                    should_fallback = True
+                                    fallback_reason = "short image description"
+                                else:
+                                    # Try to extract the continuation part after the image description
+                                    for prefix in ["Based on what you see, ", "The image shows ", "The image depicts ", "In the image, ", "This image "]:
+                                        if response.startswith(prefix):
+                                            response = response[len(prefix):].strip()
+                                            print(f"[VLM RESPONSE {i+1}] Extracted continuation after image description: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                                            break
+                            
+                            # Handle refusals
+                            elif response.lower().startswith(("i cannot", "i can't", "i'm not able", "i won't", "i don't")):
+                                should_fallback = True
+                                fallback_reason = "refusal"
+                            
+                            # Apply fallback if needed
+                            if should_fallback:
+                                old_response = response
+                                response = prompt  # Just use the original prompt
+                                print(f"[VLM RESPONSE {i+1}] {fallback_reason} detected, using original prompt: \"{response}\"")
                             else:
-                                # Try to extract the continuation part after the image description
-                                for prefix in ["Based on what you see, ", "The image shows ", "The image depicts ", "In the image, ", "This image "]:
-                                    if response.startswith(prefix):
-                                        response = response[len(prefix):].strip()
-                                        print(f"[VLM RESPONSE {i+1}] Extracted continuation after image description: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                                        break
+                                print(f"[VLM RESPONSE {i+1}] Using cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                            
+                            
+                            print(f"[VLM RESPONSE {i+1}] Final cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                            
+                            # Add to chunk_responses_cleaned list
+                            chunk_responses_cleaned.append(response)
                         
-                        # Handle refusals
-                        elif response.lower().startswith(("i cannot", "i can't", "i'm not able", "i won't", "i don't")):
-                            should_fallback = True
-                            fallback_reason = "refusal"
+                    except (TimeoutError, Exception) as e:
+                        print(f"[VLM ERROR] Chunk generation failed: {e}", flush=True)
+                        print(f"[VLM FALLBACK] Using prompts as fallback for this chunk", flush=True)
                         
-                        # Apply fallback if needed
-                        if should_fallback:
-                            old_response = response
-                            response = prompt  # Just use the original prompt
-                            print(f"[VLM RESPONSE {i+1}] {fallback_reason} detected, using original prompt: \"{response}\"")
-                        else:
-                            print(f"[VLM RESPONSE {i+1}] Using cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                        
-                        
-                        print(f"[VLM RESPONSE {i+1}] Final cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                        
-                        # Add to all_responses list
-                        all_responses.append(response)
+                        # Fallback: use original prompts for this chunk
+                        for prompt in chunk_prompts:
+                            chunk_responses_cleaned.append(prompt)
                     
-                except (TimeoutError, Exception) as e:
-                    print(f"[VLM ERROR] Chunk generation failed: {e}", flush=True)
-                    print(f"[VLM FALLBACK] Using prompts as fallback for this chunk", flush=True)
+                    # Clear GPU memory after each chunk
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        print(f"[VLM CHUNK] GPU memory cleared after chunk")
                     
-                    # Fallback: use original prompts for this chunk
-                    for prompt in chunk_prompts:
-                        all_responses.append(prompt)
-                
-                # Move to next chunk
-                print(f"[VLM CHUNK] Completed chunk {chunk_start//chunk_size + 1}, total responses so far: {len(all_responses)}")
-                
-                # Clear GPU memory after each chunk
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    print(f"[VLM CHUNK] GPU memory cleared after chunk")
-                
-                # Assign responses to correct indices
-                print(f"[DEBUG] Assigning {len(all_responses)} responses to {len(valid_indices)} valid indices")
-                for i, response in enumerate(all_responses):
-                    if i < len(valid_indices):
-                        responses[valid_indices[i]] = response
-                        print(f"[DEBUG] Assigned response {i} to index {valid_indices[i]}: {response[:50]}...")
-                    else:
-                        print(f"[WARNING] Response index {i} out of bounds for valid_indices (len={len(valid_indices)})")
-                
-                # Fill remaining responses with original prompts if needed
-                for i, idx in enumerate(valid_indices):
-                    if i >= len(all_responses):
-                        print(f"[FALLBACK] Using original prompt for index {idx}")
-                        responses[idx] = valid_prompts[i]
-                
-                print(f"[DEBUG] Final response assignment complete. Total responses: {len([r for r in responses if r])}")
+                    # Assign responses to correct indices for this chunk
+                    for i, response in enumerate(chunk_responses_cleaned):
+                        global_idx = valid_indices[chunk_start + i]  # account for offset
+                        responses[global_idx] = response
                     
             else:
                 # Fallback to generic pipeline or prompts
