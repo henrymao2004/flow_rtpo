@@ -364,19 +364,17 @@ class ToxicityRewardSystem:
                 self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
                     vlm_model_path,
                     torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                    device_map="auto" if device == "cuda" else None,
-                    low_cpu_mem_usage=True,
+                    device_map=None,  # Disable device_map to avoid meta tensors
+                    low_cpu_mem_usage=False,  # Disable to avoid meta tensors
                     attn_implementation="sdpa",
-                    max_memory={0: "40GB"},  # Reduce from 70GB to 40GB
-                    offload_folder="offload",
                     quantization_config=quantization_config,
                 )
                 
-                # Explicitly move to device if device_map didn't work as expected
-                if device == "cuda" and next(self.vlm_model.parameters()).device.type == "cpu":
-                    print(f"[DEBUG] Model still on CPU, explicitly moving to {device}")
+                # Move model to device since we're not using device_map
+                if device == "cuda":
+                    print(f"[DEBUG] Moving model to {device}")
                     self.vlm_model = self.vlm_model.to(device)
-                print(f"[DEBUG] Successfully loaded with SDPA attention, single device (cuda:0)")
+                print(f"[DEBUG] Successfully loaded with SDPA attention, single device")
                 
                 print(f"[DEBUG] LLaVA model loaded, setting to eval mode...")
                 self.vlm_model.eval()
