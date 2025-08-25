@@ -13,6 +13,7 @@ import warnings
 import multiprocessing as mp
 import pickle
 import signal
+import os
 warnings.filterwarnings("ignore")
 
 
@@ -82,22 +83,52 @@ class ToxicityRewardSystem:
                  w_cvar: float = 0.1,
                  w_quality: float = 0.05,
                  tau: float = 0.1,
-                 enable_quantization: bool = True):
+                 enable_quantization: bool = True,
+                 use_local: bool = False,
+                 local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
+                 local_models: Dict[str, str] = None,
+                 hf_models: Dict[str, str] = None):
         self.device = device
         self.w_cvar = w_cvar
         self.w_quality = w_quality
         self.tau = tau  # CVaR threshold (top 10%)
         self.enable_quantization = enable_quantization
+        self.use_local = use_local
+        self.local_base_path = local_base_path
+        self.local_models = local_models or {}
+        self.hf_models = hf_models or {}
+        
         # Track last CVaR threshold for logging/fallbacks
         self.last_cvar_threshold = None
         
         # Initialize VLM for image-text evaluation
+        self._init_vlm_model()
+        
+        # Initialize toxicity detector (Detoxify)
+        self._init_detoxify_model()
+        
+        # Initialize CLIP for image-text similarity
+        self._init_clip_model()
+        
+        # Store model path for subprocess use
+        self.vlm_model_path = self._get_model_path("llava", vlm_model)
+    
+    def _get_model_path(self, model_type: str, default_path: str) -> str:
+        """Get model path based on loading mode."""
+        if self.use_local:
+            local_name = self.local_models.get(model_type, default_path.split('/')[-1])
+            return os.path.join(self.local_base_path, local_name)
+        else:
+            return self.hf_models.get(model_type, default_path)
+    
+    def _init_vlm_model(self):
+        """Initialize VLM model (LLaVA) from either local or HuggingFace."""
         try:
-            print(f"[DEBUG] Loading LLaVA model: {vlm_model}")
+            print(f"[DEBUG] Loading LLaVA model: {self._get_model_path('llava', 'llava-hf/llava-v1.6-mistral-7b-hf')}")
             from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
             
             print(f"[DEBUG] Loading LLaVA processor...")
-            self.vlm_processor = LlavaNextProcessor.from_pretrained(vlm_model)
+            self.vlm_processor = LlavaNextProcessor.from_pretrained(self._get_model_path('llava', 'llava-hf/llava-v1.6-mistral-7b-hf'))
             print(f"[DEBUG] LLaVA processor loaded successfully")
             
             print(f"[DEBUG] Loading LLaVA model with stable configuration...")
@@ -109,9 +140,9 @@ class ToxicityRewardSystem:
             
             # Load model with simple, stable configuration
             self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
-                vlm_model,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                device_map="auto" if device == "cuda" else None,   # Use "auto" for better device mapping
+                self._get_model_path('llava', 'llava-hf/llava-v1.6-mistral-7b-hf'),
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                device_map="auto" if self.device == "cuda" else None,   # Use "auto" for better device mapping
                 low_cpu_mem_usage=True,
                 attn_implementation="sdpa",                   # 改成 sdpa 更稳
                 # quantization_config=None                    # 暂时禁用 8bit
@@ -120,9 +151,9 @@ class ToxicityRewardSystem:
             )
             
             # Explicitly move to device if device_map didn't work as expected
-            if device == "cuda" and next(self.vlm_model.parameters()).device.type == "cpu":
-                print(f"[DEBUG] Model still on CPU, explicitly moving to {device}")
-                self.vlm_model = self.vlm_model.to(device)
+            if self.device == "cuda" and next(self.vlm_model.parameters()).device.type == "cpu":
+                print(f"[DEBUG] Model still on CPU, explicitly moving to {self.device}")
+                self.vlm_model = self.vlm_model.to(self.device)
             print(f"[DEBUG] Successfully loaded with SDPA attention, single device (cuda:0)")
             
             print(f"[DEBUG] LLaVA model loaded, setting to eval mode...")
@@ -141,28 +172,45 @@ class ToxicityRewardSystem:
             print(f"Failed to load LLaVA model, using generic pipeline: {e}")
             self.vlm = pipeline(
                 "image-to-text",
-                model=vlm_model,
-                device=0 if device == "cuda" else -1,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32
+                model=self._get_model_path('llava', 'llava-hf/llava-v1.6-mistral-7b-hf'),
+                device=0 if self.device == "cuda" else -1,
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
             )
             self.use_llava = False
-        
-        # Initialize toxicity detector (Detoxify)
-        self.detoxify = Detoxify('original', device=device)
-        
-        # Initialize CLIP for image-text similarity
+    
+    def _init_detoxify_model(self):
+        """Initialize Detoxify model from either local or HuggingFace."""
+        try:
+            detoxify_model = self._get_model_path('detoxify', 'original')
+            print(f"[DETOXIFY] Loading Detoxify model: {detoxify_model}")
+            self.detoxify = Detoxify(detoxify_model, device=self.device)
+            print(f"[DETOXIFY] Successfully loaded Detoxify model")
+        except Exception as e:
+            print(f"[DETOXIFY] Failed to load Detoxify model: {e}")
+            # Fallback to default
+            self.detoxify = Detoxify('original', device=self.device)
+    
+    def _init_clip_model(self):
+        """Initialize CLIP model from either local or HuggingFace."""
         try:
             from .clip_scorer import ClipScorer
-            self.clip_scorer = ClipScorer(device=device)
-            print(f"[DEBUG] CLIP scorer initialized successfully on device: {device}")
+            clip_model_name = self._get_model_path('clip', 'openai/clip-vit-large-patch14')
+            local_clip_name = self.local_models.get('clip', 'clip-vit-large-patch14') if self.use_local else None
+            hf_clip_name = self.hf_models.get('clip', 'openai/clip-vit-large-patch14') if not self.use_local else None
+            
+            self.clip_scorer = ClipScorer(
+                device=self.device,
+                use_local=self.use_local,
+                local_base_path=self.local_base_path,
+                local_model_name=local_clip_name,
+                hf_model_name=hf_clip_name
+            )
+            print(f"[DEBUG] CLIP scorer initialized successfully on device: {self.device}")
         except Exception as e:
             print(f"[DEBUG] Failed to initialize CLIP scorer: {e}")
             self.clip_scorer = None
         
         # Aesthetic scorer removed per user request
-        
-        # Store model path for subprocess use
-        self.vlm_model_path = vlm_model
         
     # Aesthetic scorer initialization removed per user request
     
@@ -784,7 +832,11 @@ class ToxicityRewardSystem:
 def toxicity_reward_function(device: str = "cuda", 
                              vlm_model: str = "llava-hf/llava-v1.6-mistral-7b-hf",
                              w_cvar: float = 0.1,
-                             w_quality: float = 0.05):
+                             w_quality: float = 0.05,
+                             use_local: bool = False,
+                             local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
+                             local_models: Dict[str, str] = None,
+                             hf_models: Dict[str, str] = None):
     """Factory function to create toxicity reward function for flow_grpo."""
     # Set multiprocessing start method for CUDA compatibility
     try:
@@ -796,7 +848,11 @@ def toxicity_reward_function(device: str = "cuda",
         device=device,
         vlm_model=vlm_model,
         w_cvar=w_cvar,
-        w_quality=w_quality
+        w_quality=w_quality,
+        use_local=use_local,
+        local_base_path=local_base_path,
+        local_models=local_models,
+        hf_models=hf_models
     )
     
     def _fn(images, prompts, metadata):

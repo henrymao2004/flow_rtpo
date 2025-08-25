@@ -8,6 +8,7 @@ import torchvision.transforms as T
 from transformers import AutoImageProcessor,CLIPProcessor, CLIPModel
 import numpy as np
 from PIL import Image
+import os
 
 def get_size(size):
     if isinstance(size, int):
@@ -28,13 +29,61 @@ def get_image_transform(processor:AutoImageProcessor):
     return T.Compose([resize, crop, normalise])
 
 class ClipScorer(torch.nn.Module):
-    def __init__(self, device):
+    def __init__(self, device, use_local=False, local_base_path="/mnt/data/group/zhaoliangjie/ICLR-work/", 
+                 local_model_name="clip-vit-large-patch14", hf_model_name="openai/clip-vit-large-patch14"):
         super().__init__()
-        self.device=device
-        self.model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14").to(device)
-        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
+        self.device = device
+        self.use_local = use_local
+        self.local_base_path = local_base_path
+        self.local_model_name = local_model_name
+        self.hf_model_name = hf_model_name
+        
+        # Load CLIP model and processor
+        self.model, self.processor = self._load_clip_model()
         self.tform = get_image_transform(self.processor.image_processor)
         self.eval()
+    
+    def _load_clip_model(self):
+        """Load CLIP model from either local path or HuggingFace."""
+        if self.use_local:
+            return self._load_clip_from_local()
+        else:
+            return self._load_clip_from_huggingface()
+    
+    def _load_clip_from_local(self):
+        """Load CLIP model from local path."""
+        try:
+            local_model_path = os.path.join(self.local_base_path, self.local_model_name)
+            print(f"[CLIP LOCAL] Loading CLIP model from: {local_model_path}")
+            
+            if not os.path.exists(local_model_path):
+                print(f"[CLIP LOCAL] Local model path does not exist: {local_model_path}")
+                print("[CLIP LOCAL] Falling back to HuggingFace loading...")
+                return self._load_clip_from_huggingface()
+            
+            # Load model and processor from local path
+            model = CLIPModel.from_pretrained(local_model_path).to(self.device)
+            processor = CLIPProcessor.from_pretrained(local_model_path)
+            
+            print(f"[CLIP LOCAL] Successfully loaded CLIP model from local path")
+            return model, processor
+            
+        except Exception as e:
+            print(f"[CLIP LOCAL] Failed to load from local path: {e}")
+            print("[CLIP LOCAL] Falling back to HuggingFace loading...")
+            return self._load_clip_from_huggingface()
+    
+    def _load_clip_from_huggingface(self):
+        """Load CLIP model from HuggingFace."""
+        try:
+            print(f"[CLIP HF] Loading CLIP model from HuggingFace: {self.hf_model_name}")
+            model = CLIPModel.from_pretrained(self.hf_model_name).to(self.device)
+            processor = CLIPProcessor.from_pretrained(self.hf_model_name)
+            print(f"[CLIP HF] Successfully loaded CLIP model from HuggingFace")
+            return model, processor
+        except Exception as e:
+            print(f"[CLIP HF] Failed to load from HuggingFace: {e}")
+            raise e
     
     def _process(self, pixels):
         dtype = pixels.dtype

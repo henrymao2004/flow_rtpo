@@ -25,24 +25,111 @@ class RealToxicityPromptsDataset(Dataset):
     def __init__(self, 
                  max_prompts: int = 132,
                  split: str = "train",
-                 cache_dir: Optional[str] = None):
+                 cache_dir: Optional[str] = None,
+                 use_local: bool = False,
+                 local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
+                 local_dataset_name: str = "real-toxicity-prompts",
+                 hf_dataset_name: str = "allenai/real-toxicity-prompts"):
         self.max_prompts = max_prompts
         self.split = split
         self.cache_dir = cache_dir
+        self.use_local = use_local
+        self.local_base_path = local_base_path
+        self.local_dataset_name = local_dataset_name
+        self.hf_dataset_name = hf_dataset_name
         
         # Load dataset
-        self.prompts = self._load_from_huggingface()
+        self.prompts = self._load_dataset()
         
         # Limit to specified number of prompts
         if len(self.prompts) > self.max_prompts:
             self.prompts = self.prompts[:self.max_prompts]
         
         print(f"Loaded {len(self.prompts)} prompts from Real Toxicity Prompts dataset")
+        print(f"Loading mode: {'Local' if self.use_local else 'HuggingFace'}")
+    
+    def _load_dataset(self) -> List[RTPPromptData]:
+        """Load RTP dataset from either local path or HuggingFace."""
+        if self.use_local:
+            return self._load_from_local()
+        else:
+            return self._load_from_huggingface()
+    
+    def _load_from_local(self) -> List[RTPPromptData]:
+        """Load RTP dataset from local path."""
+        try:
+            local_dataset_path = os.path.join(self.local_base_path, self.local_dataset_name)
+            print(f"[LOCAL] Loading dataset from: {local_dataset_path}")
+            
+            if not os.path.exists(local_dataset_path):
+                print(f"[LOCAL] Local dataset path does not exist: {local_dataset_path}")
+                print("[LOCAL] Falling back to HuggingFace loading...")
+                return self._load_from_huggingface()
+            
+            # Try to load from local HuggingFace cache format
+            try:
+                dataset = load_dataset(local_dataset_path, cache_dir=self.cache_dir)
+                train_data = dataset["train"]
+                print(f"[LOCAL] Successfully loaded local dataset with {len(train_data)} samples")
+            except Exception as e:
+                print(f"[LOCAL] Failed to load as HuggingFace format: {e}")
+                # Try to load from JSON file
+                json_path = os.path.join(local_dataset_path, "data.json")
+                if os.path.exists(json_path):
+                    print(f"[LOCAL] Loading from JSON file: {json_path}")
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        train_data = json.load(f)
+                else:
+                    print(f"[LOCAL] No JSON file found at: {json_path}")
+                    print("[LOCAL] Falling back to HuggingFace loading...")
+                    return self._load_from_huggingface()
+            
+            prompts = []
+            for i, item in enumerate(train_data):
+                # Extract prompt data
+                prompt_data = item.get("prompt", {})
+                if not prompt_data or "text" not in prompt_data:
+                    continue
+                
+                # Only include challenging prompts
+                if not item.get("challenging", False):
+                    continue
+                
+                # Create RTPPromptData
+                prompt = RTPPromptData(
+                    prompt_id=f"rtp_{i}",
+                    text=prompt_data["text"],
+                    toxicity_scores={
+                        "toxicity": prompt_data.get("toxicity", 0.0),
+                        "severe_toxicity": prompt_data.get("severe_toxicity", 0.0),
+                        "identity_attack": prompt_data.get("identity_attack", 0.0),
+                        "insult": prompt_data.get("insult", 0.0),
+                        "threat": prompt_data.get("threat", 0.0),
+                        "profanity": prompt_data.get("profanity", 0.0),
+                        "sexually_explicit": prompt_data.get("sexually_explicit", 0.0),
+                        "flirtation": prompt_data.get("flirtation", 0.0),
+                    },
+                    is_challenging=item.get("challenging", True),
+                    source_info={
+                        "filename": item.get("filename", ""),
+                        "begin": item.get("begin", 0),
+                        "end": item.get("end", 0),
+                    }
+                )
+                prompts.append(prompt)
+                
+            return prompts
+            
+        except Exception as e:
+            print(f"[LOCAL] Failed to load from local path: {e}")
+            print("[LOCAL] Falling back to HuggingFace loading...")
+            return self._load_from_huggingface()
     
     def _load_from_huggingface(self) -> List[RTPPromptData]:
         """Load RTP dataset from HuggingFace."""
         try:
-            dataset = load_dataset("allenai/real-toxicity-prompts", cache_dir=self.cache_dir)
+            print(f"[HF] Loading dataset from HuggingFace: {self.hf_dataset_name}")
+            dataset = load_dataset(self.hf_dataset_name, cache_dir=self.cache_dir)
             train_data = dataset["train"]
             
             prompts = []
@@ -82,11 +169,11 @@ class RealToxicityPromptsDataset(Dataset):
             return prompts
             
         except Exception as e:
-            print(f"Failed to load from HuggingFace: {e}")
+            print(f"[HF] Failed to load from HuggingFace: {e}")
             return self._create_mock_prompts()
     
     def _create_mock_prompts(self) -> List[RTPPromptData]:
-        """Create mock prompts for testing if HuggingFace loading fails."""
+        """Create mock prompts for testing if loading fails."""
         mock_prompts = [
             "Write a story about",
             "The weather today is",
@@ -213,7 +300,11 @@ class RTPromptsDataLoader:
 def create_rtp_dataset_and_loader(max_prompts: int = 132,
                                   batch_size: int = 8,
                                   shuffle: bool = True,
-                                  cache_dir: Optional[str] = None) -> tuple:
+                                  cache_dir: Optional[str] = None,
+                                  use_local: bool = False,
+                                  local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
+                                  local_dataset_name: str = "real-toxicity-prompts",
+                                  hf_dataset_name: str = "allenai/real-toxicity-prompts") -> tuple:
     """
     Convenience function to create RTP dataset and dataloader.
     
@@ -222,7 +313,11 @@ def create_rtp_dataset_and_loader(max_prompts: int = 132,
     """
     dataset = RealToxicityPromptsDataset(
         max_prompts=max_prompts,
-        cache_dir=cache_dir
+        cache_dir=cache_dir,
+        use_local=use_local,
+        local_base_path=local_base_path,
+        local_dataset_name=local_dataset_name,
+        hf_dataset_name=hf_dataset_name
     )
     
     dataloader = RTPromptsDataLoader(

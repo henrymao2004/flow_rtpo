@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import math
 from collections import defaultdict
 import random
+import os
 
 
 class PositionalEncoding(nn.Module):
@@ -76,6 +77,11 @@ class PromptEditorPolicy(nn.Module):
                  # Modification noise parameters for sampling diversity
                  use_modification_noise: bool = True,  # Use random noise during embedding modification
                  modification_noise_std: float = 0.005,  # Standard deviation for modification noise
+                 # Model loading parameters
+                 use_local: bool = False,
+                 local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
+                 local_models: Dict[str, str] = None,
+                 hf_models: Dict[str, str] = None,
                  **kwargs):  # Accept extra kwargs for backward compatibility
         super().__init__()
         self.epsilon_p = epsilon_p
@@ -121,13 +127,20 @@ class PromptEditorPolicy(nn.Module):
         self.reward_variance_tracker = defaultdict(list)
         self.group_reward_stats = {}
         
+        # Model loading configuration
+        self.use_local = use_local
+        self.local_base_path = local_base_path
+        self.local_models = local_models or {}
+        self.hf_models = hf_models or {}
+        
         # Initialize SBERT model for semantic similarity
         self.sbert_model = None
         try:
             # Try to import and use SentenceTransformer
             from sentence_transformers import SentenceTransformer as ST
-            self.sbert_model = ST('all-MiniLM-L6-v2').to(device)
-            print("[INFO] SBERT model loaded for semantic regularization")
+            sbert_model_name = self._get_model_path('sbert', 'all-MiniLM-L6-v2')
+            self.sbert_model = ST(sbert_model_name).to(device)
+            print(f"[INFO] SBERT model loaded for semantic regularization: {sbert_model_name}")
         except ImportError:
             print("[WARNING] sentence-transformers not available, semantic regularization disabled")
             self.sbert_model = None
@@ -136,16 +149,18 @@ class PromptEditorPolicy(nn.Module):
             self.sbert_model = None
         
         # Initialize vec2text corrector
-        self.vec2text_corrector = vec2text.load_pretrained_corrector("gtr-base")
+        vec2text_model_name = self._get_model_path('vec2text', 'gtr-base')
+        self.vec2text_corrector = vec2text.load_pretrained_corrector(vec2text_model_name)
         
         # Use OFFICIAL vec2text approach for GTR as per documentation
         from transformers import AutoTokenizer, AutoModel
-        self.gtr_tokenizer = AutoTokenizer.from_pretrained('sentence-transformers/gtr-t5-base')
+        gtr_model_name = self._get_model_path('gtr', 'sentence-transformers/gtr-t5-base')
+        self.gtr_tokenizer = AutoTokenizer.from_pretrained(gtr_model_name)
         
         # Try loading with different precision/settings to avoid NaN
         try:
             self.gtr_encoder = AutoModel.from_pretrained(
-                'sentence-transformers/gtr-t5-base',
+                gtr_model_name,
                 torch_dtype=torch.float32  # Force float32 to avoid precision issues
             ).encoder.to(device)
             self.use_fallback_encoder = False
@@ -154,7 +169,8 @@ class PromptEditorPolicy(nn.Module):
             # Use a simple fallback encoder
             try:
                 from sentence_transformers import SentenceTransformer
-                self.sentence_transformer_fallback = SentenceTransformer('all-MiniLM-L6-v2').to(device)
+                fallback_model_name = self._get_model_path('sbert', 'all-MiniLM-L6-v2')
+                self.sentence_transformer_fallback = SentenceTransformer(fallback_model_name).to(device)
             except ImportError:
                 print("[WARNING] sentence-transformers not available for fallback encoder")
                 self.sentence_transformer_fallback = None
@@ -219,6 +235,14 @@ class PromptEditorPolicy(nn.Module):
         self.transformer_decoder.to(device)
         self.output_projection.to(device)
         self.pos_encoding.to(device)
+    
+    def _get_model_path(self, model_type: str, default_path: str) -> str:
+        """Get model path based on loading mode."""
+        if self.use_local:
+            local_name = self.local_models.get(model_type, default_path.split('/')[-1])
+            return os.path.join(self.local_base_path, local_name)
+        else:
+            return self.hf_models.get(model_type, default_path)
     
     def nucleus_sampling(self, logits: torch.Tensor, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """Apply temperature scaling + nucleus (top-p) sampling for diverse text generation."""

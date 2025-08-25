@@ -49,10 +49,19 @@ config_flags.DEFINE_config_file("config", "config/flow_rtpo.py", "Training confi
 logger = get_logger(__name__)
 
 
-def create_train_test_datasets(max_prompts=132, test_ratio=0.2, seed=42):
+def create_train_test_datasets(max_prompts=132, test_ratio=0.2, seed=42, config=None):
     """Create train and test datasets from the RTP dataset."""
-    # Load full dataset
-    full_dataset = RealToxicityPromptsDataset(max_prompts=max_prompts)
+    # Load full dataset with loading configuration
+    if config is not None:
+        full_dataset = RealToxicityPromptsDataset(
+            max_prompts=max_prompts,
+            use_local=config.dataset_loading.use_local,
+            local_base_path=config.dataset_loading.local_base_path,
+            local_dataset_name=config.dataset_loading.local_datasets.rtp,
+            hf_dataset_name=config.dataset_loading.hf_datasets.rtp
+        )
+    else:
+        full_dataset = RealToxicityPromptsDataset(max_prompts=max_prompts)
     
     # Get all prompts
     all_prompts = [prompt.text for prompt in full_dataset.prompts]
@@ -80,15 +89,25 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
     print(f"[TEST EVAL] Starting test evaluation for epoch {epoch}")
     print(f"[TEST EVAL] Test set size: {len(test_prompts)}")
     
-    # Initialize CLIP scorer
-    clip_scorer = ClipScorer(device=accelerator.device)
+    # Initialize CLIP scorer with loading configuration
+    clip_scorer = ClipScorer(
+        device=accelerator.device,
+        use_local=config.model_loading.use_local,
+        local_base_path=config.model_loading.local_base_path,
+        local_model_name=config.model_loading.local_models.clip,
+        hf_model_name=config.model_loading.hf_models.clip
+    )
     
     # Initialize toxicity reward function for evaluation
     eval_reward_fn = toxicity_reward_function(
         device=accelerator.device,
         vlm_model=config.target_vlm,
         w_cvar=config.toxicity_reward.w_cvar,
-        w_quality=config.toxicity_reward.w_quality
+        w_quality=config.toxicity_reward.w_quality,
+        use_local=config.model_loading.use_local,
+        local_base_path=config.model_loading.local_base_path,
+        local_models=config.model_loading.local_models.to_dict(),
+        hf_models=config.model_loading.hf_models.to_dict()
     )
     
     # Set models to eval mode
@@ -725,8 +744,15 @@ def main(_):
     # Set seed (device_specific is very important to get different prompts on different devices)
     set_seed(config.seed, device_specific=True)
     
-    # Load SD3 pipeline
-    pipeline = StableDiffusion3Pipeline.from_pretrained(config.pretrained.model)
+    # Load SD3 pipeline with loading configuration
+    if config.model_loading.use_local:
+        sd3_model_path = os.path.join(config.model_loading.local_base_path, config.model_loading.local_models.sd3)
+        print(f"[MODEL LOADING] Loading SD3 from local path: {sd3_model_path}")
+        pipeline = StableDiffusion3Pipeline.from_pretrained(sd3_model_path)
+    else:
+        sd3_model_path = config.model_loading.hf_models.sd3
+        print(f"[MODEL LOADING] Loading SD3 from HuggingFace: {sd3_model_path}")
+        pipeline = StableDiffusion3Pipeline.from_pretrained(sd3_model_path)
     
     # Memory management: Clear cache after loading large models
     if torch.cuda.is_available():
@@ -780,7 +806,12 @@ def main(_):
         # Manual sampling for diversity
         use_manual_sampling=config.prompt_editor.get('use_manual_sampling', False),
         sample_temperature=config.prompt_editor.get('sample_temperature', 0.6),
-        sample_top_p=config.prompt_editor.get('sample_top_p', 0.9)
+        sample_top_p=config.prompt_editor.get('sample_top_p', 0.9),
+        # Model loading parameters
+        use_local=config.model_loading.use_local,
+        local_base_path=config.model_loading.local_base_path,
+        local_models=config.model_loading.local_models.to_dict(),
+        hf_models=config.model_loading.hf_models.to_dict()
     )
     
     # Initialize convergence monitor
@@ -802,7 +833,11 @@ def main(_):
         device=accelerator.device,
         vlm_model=config.target_vlm,
         w_cvar=config.toxicity_reward.w_cvar,
-        w_quality=config.toxicity_reward.w_quality
+        w_quality=config.toxicity_reward.w_quality,
+        use_local=config.model_loading.use_local,
+        local_base_path=config.model_loading.local_base_path,
+        local_models=config.model_loading.local_models.to_dict(),
+        hf_models=config.model_loading.hf_models.to_dict()
     )
     
 
@@ -841,7 +876,8 @@ def main(_):
     train_prompts, test_prompts, train_metadata, test_metadata = create_train_test_datasets(
         max_prompts=config.max_prompts,
         test_ratio=config.get('test_ratio', 0.2),
-        seed=config.seed
+        seed=config.seed,
+        config=config
     )
     
     if accelerator.is_main_process:

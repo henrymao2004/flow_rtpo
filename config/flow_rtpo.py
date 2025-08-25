@@ -17,9 +17,43 @@ def flow_rtpo_sd3():
     config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
     config.use_lora = True
     
+    # Model loading configuration - default to HuggingFace
+    config.model_loading = ml_collections.ConfigDict()
+    config.model_loading.use_local = False  # Default to HuggingFace
+    config.model_loading.local_base_path = "/mnt/data/group/zhaoliangjie/ICLR-work/"
+    
+    # Local model paths (when use_local=True)
+    config.model_loading.local_models = ml_collections.ConfigDict()
+    config.model_loading.local_models.sd3 = "stable-diffusion-3.5-medium"
+    config.model_loading.local_models.llava = "llava-v1.6-mistral-7b-hf"
+    config.model_loading.local_models.clip = "clip-vit-large-patch14"
+    config.model_loading.local_models.sbert = "all-MiniLM-L6-v2"
+    config.model_loading.local_models.gtr = "gtr-t5-base"
+    config.model_loading.local_models.vec2text = "gtr-base"
+    config.model_loading.local_models.detoxify = "original"
+    
+    # HuggingFace model names (when use_local=False)
+    config.model_loading.hf_models = ml_collections.ConfigDict()
+    config.model_loading.hf_models.sd3 = "stabilityai/stable-diffusion-3.5-medium"
+    config.model_loading.hf_models.llava = "llava-hf/llava-v1.6-mistral-7b-hf"
+    config.model_loading.hf_models.clip = "openai/clip-vit-large-patch14"
+    config.model_loading.hf_models.sbert = "sentence-transformers/all-MiniLM-L6-v2"
+    config.model_loading.hf_models.gtr = "sentence-transformers/gtr-t5-base"
+    config.model_loading.hf_models.vec2text = "gtr-base"
+    config.model_loading.hf_models.detoxify = "original"
+    
+    # Dataset loading configuration
+    config.dataset_loading = ml_collections.ConfigDict()
+    config.dataset_loading.use_local = False  # Default to HuggingFace
+    config.dataset_loading.local_base_path = "/mnt/data/group/zhaoliangjie/ICLR-work/"
+    config.dataset_loading.local_datasets = ml_collections.ConfigDict()
+    config.dataset_loading.local_datasets.rtp = "real-toxicity-prompts"
+    config.dataset_loading.hf_datasets = ml_collections.ConfigDict()
+    config.dataset_loading.hf_datasets.rtp = "allenai/real-toxicity-prompts"
+    
     # LoRA configuration for flow controller
-    config.lora_rank = 8
-    config.lora_alpha = 16
+    config.lora_rank = 16
+    config.lora_alpha = 32
     config.lora_dropout = 0.1
     
     # Dataset configuration - Real Toxicity Prompts
@@ -144,12 +178,16 @@ def flow_rtpo_debug():
     """Debug configuration with smaller settings for faster iteration."""
     config = flow_rtpo_sd3()
     
+    # Debug mode: Use HuggingFace loading for faster iteration
+    config.model_loading.use_local = False
+    config.dataset_loading.use_local = False
+    
     # Smaller settings for debugging
     config.max_prompts = 8
-    config.sample.batch_size = 2  # Changed to 2 as requested
-    config.sample.num_batches_per_epoch = 2  # For 8 GPUs: 8 prompts / (8 GPUs * 2 batch_size / 4 images_per_prompt) = 8 / 4 = 2
+    config.sample.batch_size = 4  # Changed to 2 as requested
+    config.sample.num_batches_per_epoch = 1  # For 8 GPUs: 8 prompts / (8 GPUs * 2 batch_size / 4 images_per_prompt) = 8 / 4 = 2
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
-    config.sample.num_steps = 40
+    config.sample.num_steps = 20
     config.train.gradient_accumulation_steps = 1  # 2 // 2 = 1 for gradient updates
     config.num_epochs = 100
     config.save_freq = 2
@@ -165,12 +203,16 @@ def flow_rtpo_large():
     """Large-scale configuration for full training."""
     config = flow_rtpo_sd3()
     
+    # Large mode: Use local loading for better performance
+    config.model_loading.use_local = True
+    config.dataset_loading.use_local = True
+    
     # Full dataset
     config.max_prompts = 132
     
     # Keep batch size as requested but increase batches for GRPO grouping
-    config.sample.batch_size = 2  # Changed to 2 as requested
-    config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
+    config.sample.batch_size = 4  # Changed to 2 as requested
+    config.sample.num_image_per_prompt = 12 # Multiple samples per prompt for ranking
     
     # Calculate proper num_batches_per_epoch for 32 GPUs
     # Following GRPO pattern: int(132/(gpu_number*batch_size/num_image_per_prompt))
@@ -201,6 +243,10 @@ def flow_rtpo_large():
 def flow_rtpo_memory_optimized():
     """Memory-optimized configuration to prevent CUDA OOM errors."""
     config = flow_rtpo_sd3()
+    
+    # Memory optimized mode: Use HuggingFace loading for flexibility
+    config.model_loading.use_local = False
+    config.dataset_loading.use_local = False
     
     # Reduce batch sizes to minimize memory usage
     config.sample.batch_size = 1  # Reduce from 2 to 1
@@ -280,3 +326,5 @@ if __name__ == "__main__":
     print(f"CVaR weight: {config.toxicity_reward.w_cvar}")
     print(f"Quality weight: {config.toxicity_reward.w_quality}")
     print(f"Prompt epsilon: {config.prompt_editor.epsilon_p}")
+    print(f"Use local models: {config.model_loading.use_local}")
+    print(f"Use local datasets: {config.dataset_loading.use_local}")
