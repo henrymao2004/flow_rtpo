@@ -97,14 +97,29 @@ class ToxicityRewardSystem:
                  tau: float = 0.1,
                  enable_quantization: bool = True,
                  use_local_models: bool = False,
-                 clip_model_path: str = None):
+                 clip_model_path: str = None,
+                 chunk_size: int = 8,
+                 use_multi_gpu: bool = True):
         self.device = device
         self.w_cvar = w_cvar
         self.w_quality = w_quality
         self.tau = tau  # CVaR threshold (top 10%)
         self.enable_quantization = enable_quantization
+        self.chunk_size = chunk_size  # Number of prompts per chunk (default: 8)
+        self.use_multi_gpu = use_multi_gpu
         # Track last CVaR threshold for logging/fallbacks
         self.last_cvar_threshold = None
+        
+        # Multi-GPU setup
+        if self.use_multi_gpu and torch.cuda.is_available():
+            self.num_gpus = torch.cuda.device_count()
+            self.available_gpus = list(range(self.num_gpus))
+            print(f"[MULTI-GPU] Detected {self.num_gpus} GPUs: {self.available_gpus}")
+            print(f"[MULTI-GPU] Chunk size: {self.chunk_size} prompts per chunk")
+        else:
+            self.num_gpus = 1
+            self.available_gpus = [0]
+            print(f"[SINGLE-GPU] Using single GPU with chunk size: {self.chunk_size}")
         
         # Initialize VLM for image-text evaluation
         try:
@@ -126,49 +141,56 @@ class ToxicityRewardSystem:
             print(f"[DEBUG] Available GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
             print(f"[DEBUG] Used GPU memory before loading: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
             
-            # Disable quantization and FlashAttention for stability
-            print(f"[DEBUG] Using stable configuration: single device, SDPA attention, no quantization")
-            
-            # Load model with memory-optimized configuration
-            if enable_quantization:
-                from transformers import BitsAndBytesConfig
-                quantization_config = BitsAndBytesConfig(
-                    load_in_8bit=True,
-                    llm_int8_threshold=6.0,
-                    llm_int8_has_fp16_weight=False,
+            # Multi-GPU configuration
+            if self.use_multi_gpu and self.num_gpus > 1:
+                # For multi-GPU, we'll load models on-demand per chunk
+                print(f"[MULTI-GPU] Will load VLM models on-demand for each GPU")
+                self.vlm_models = {}  # Dictionary to store models per GPU
+                self.vlm_processors = {}  # Dictionary to store processors per GPU
+            else:
+                # Single GPU or multi-GPU disabled
+                print(f"[DEBUG] Using stable configuration: single device, SDPA attention, no quantization")
+                
+                # Load model with memory-optimized configuration
+                if enable_quantization:
+                    from transformers import BitsAndBytesConfig
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_8bit=True,
+                        llm_int8_threshold=6.0,
+                        llm_int8_has_fp16_weight=False,
+                    )
+                else:
+                    quantization_config = None
+                
+                self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
+                    vlm_model_path,
+                    torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                    device_map="auto" if device == "cuda" else None,
+                    low_cpu_mem_usage=True,
+                    attn_implementation="sdpa",
+                    max_memory={0: "40GB"},  # Reduce from 70GB to 40GB
+                    offload_folder="offload",
+                    quantization_config=quantization_config,
                 )
-            else:
-                quantization_config = None
-            
-            self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
-                vlm_model_path,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                device_map="auto" if device == "cuda" else None,
-                low_cpu_mem_usage=True,
-                attn_implementation="sdpa",
-                max_memory={0: "40GB"},  # Reduce from 70GB to 40GB
-                offload_folder="offload",
-                quantization_config=quantization_config,
-            )
-            
-            # Explicitly move to device if device_map didn't work as expected
-            if device == "cuda" and next(self.vlm_model.parameters()).device.type == "cpu":
-                print(f"[DEBUG] Model still on CPU, explicitly moving to {device}")
-                self.vlm_model = self.vlm_model.to(device)
-            print(f"[DEBUG] Successfully loaded with SDPA attention, single device (cuda:0)")
-            
-            print(f"[DEBUG] LLaVA model loaded, setting to eval mode...")
-            self.vlm_model.eval()
-            
-            # Debug: Print actual device map to understand layer distribution
-            if hasattr(self.vlm_model, 'hf_device_map'):
-                print(f"[DEBUG] Actual device map: {self.vlm_model.hf_device_map}")
-            else:
-                print(f"[DEBUG] Model device: {next(self.vlm_model.parameters()).device}")
-            
-            print(f"[DEBUG] Used GPU memory after loading: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
-            print(f"[DEBUG] LLaVA initialization completed successfully")
-            self.use_llava = True
+                
+                # Explicitly move to device if device_map didn't work as expected
+                if device == "cuda" and next(self.vlm_model.parameters()).device.type == "cpu":
+                    print(f"[DEBUG] Model still on CPU, explicitly moving to {device}")
+                    self.vlm_model = self.vlm_model.to(device)
+                print(f"[DEBUG] Successfully loaded with SDPA attention, single device (cuda:0)")
+                
+                print(f"[DEBUG] LLaVA model loaded, setting to eval mode...")
+                self.vlm_model.eval()
+                
+                # Debug: Print actual device map to understand layer distribution
+                if hasattr(self.vlm_model, 'hf_device_map'):
+                    print(f"[DEBUG] Actual device map: {self.vlm_model.hf_device_map}")
+                else:
+                    print(f"[DEBUG] Model device: {next(self.vlm_model.parameters()).device}")
+                
+                print(f"[DEBUG] Used GPU memory after loading: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
+                print(f"[DEBUG] LLaVA initialization completed successfully")
+                self.use_llava = True
         except Exception as e:
             print(f"Failed to load LLaVA model, using generic pipeline: {e}")
             try:
@@ -214,6 +236,86 @@ class ToxicityRewardSystem:
         self.vlm_model_path = vlm_model
         
     # Aesthetic scorer initialization removed per user request
+    
+    def _load_vlm_model_for_gpu(self, gpu_id: int):
+        """Load VLM model on a specific GPU for multi-GPU processing."""
+        if gpu_id in self.vlm_models:
+            return self.vlm_models[gpu_id], self.vlm_processors[gpu_id]
+        
+        print(f"[MULTI-GPU] Loading VLM model on GPU {gpu_id}...")
+        
+        # Set device context
+        torch.cuda.set_device(gpu_id)
+        
+        try:
+            from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
+            
+            # Load processor
+            processor = LlavaNextProcessor.from_pretrained(self.vlm_model_path)
+            
+            # Load model with GPU-specific configuration
+            if self.enable_quantization:
+                from transformers import BitsAndBytesConfig
+                quantization_config = BitsAndBytesConfig(
+                    load_in_8bit=True,
+                    llm_int8_threshold=6.0,
+                    llm_int8_has_fp16_weight=False,
+                )
+            else:
+                quantization_config = None
+            
+            model = LlavaNextForConditionalGeneration.from_pretrained(
+                self.vlm_model_path,
+                torch_dtype=torch.float16,
+                device_map=gpu_id,
+                low_cpu_mem_usage=True,
+                attn_implementation="sdpa",
+                quantization_config=quantization_config,
+            )
+            
+            # Ensure model is on the correct device
+            if next(model.parameters()).device.index != gpu_id:
+                model = model.to(f"cuda:{gpu_id}")
+            
+            model.eval()
+            
+            # Store in dictionaries
+            self.vlm_models[gpu_id] = model
+            self.vlm_processors[gpu_id] = processor
+            
+            print(f"[MULTI-GPU] Successfully loaded VLM model on GPU {gpu_id}")
+            return model, processor
+            
+        except Exception as e:
+            print(f"[MULTI-GPU ERROR] Failed to load VLM model on GPU {gpu_id}: {e}")
+            raise e
+    
+    def cleanup_multi_gpu_models(self):
+        """Clean up multi-GPU models to free memory."""
+        if hasattr(self, 'vlm_models') and self.vlm_models:
+            print(f"[MULTI-GPU] Cleaning up {len(self.vlm_models)} VLM models...")
+            for gpu_id, model in self.vlm_models.items():
+                try:
+                    # Move model to CPU first to free GPU memory
+                    torch.cuda.set_device(gpu_id)
+                    model.cpu()
+                    del model
+                    torch.cuda.empty_cache()
+                    print(f"[MULTI-GPU] Cleaned up model on GPU {gpu_id}")
+                except Exception as e:
+                    print(f"[MULTI-GPU] Error cleaning up model on GPU {gpu_id}: {e}")
+            
+            # Clear dictionaries
+            self.vlm_models.clear()
+            self.vlm_processors.clear()
+            print("[MULTI-GPU] Multi-GPU models cleanup completed")
+    
+    def __del__(self):
+        """Destructor to ensure cleanup of multi-GPU models."""
+        try:
+            self.cleanup_multi_gpu_models()
+        except:
+            pass  # Ignore errors during cleanup
     
     def safe_generate(self, inputs: Dict, timeout: int = 300) -> List[str]:
         """Safe VLM generation with subprocess timeout."""
@@ -296,15 +398,15 @@ class ToxicityRewardSystem:
         
         print(f"[DEBUG] Processing {len(valid_images)} valid images with memory optimization...")
         
-        # Process images in smaller chunks to prevent OOM
-        chunk_size = 16  # Process only 2 images at a time
-        print(f"[DEBUG] Processing {len(valid_images)} valid images in chunks of {chunk_size} with subprocess protection...")
+        # Process images in chunks with multi-GPU support
+        chunk_size = self.chunk_size  # Use configured chunk size (default: 8)
+        print(f"[DEBUG] Processing {len(valid_images)} valid images in chunks of {chunk_size} with multi-GPU support...")
         
         try:
             if self.use_llava:
-                # CHUNKED PROCESSING FOR LLAVA TO PREVENT OOM
+                # MULTI-GPU CHUNKED PROCESSING FOR LLAVA
                 
-                # Process images in chunks
+                # Process images in chunks, distributing across available GPUs
                 for chunk_start in range(0, len(valid_images), chunk_size):
                     chunk_end = min(chunk_start + chunk_size, len(valid_images))
                     chunk_images = valid_images[chunk_start:chunk_end]
@@ -334,45 +436,76 @@ class ToxicityRewardSystem:
                         ]
                         chunk_conversations.append(conversation)
                     
+                    # Multi-GPU processing: assign chunk to specific GPU
+                    chunk_idx = chunk_start // chunk_size
+                    gpu_id = chunk_idx % self.num_gpus
+                    print(f"[MULTI-GPU] Processing chunk {chunk_idx + 1} on GPU {gpu_id}")
+                    
+                    # Load VLM model for this GPU if needed
+                    if self.use_multi_gpu and self.num_gpus > 1:
+                        vlm_model, vlm_processor = self._load_vlm_model_for_gpu(gpu_id)
+                    else:
+                        vlm_model = self.vlm_model
+                        vlm_processor = self.vlm_processor
+                    
                     # Apply chat template to chunk conversations
                     chunk_prompt_texts = []
                     for conversation in chunk_conversations:
-                        prompt_text = self.vlm_processor.apply_chat_template(
+                        prompt_text = vlm_processor.apply_chat_template(
                             conversation, add_generation_prompt=True
                         )
                         chunk_prompt_texts.append(prompt_text)
                     
                     # Process chunk inputs
-                    chunk_inputs = self.vlm_processor(
+                    chunk_inputs = vlm_processor(
                         text=chunk_prompt_texts,
                         images=chunk_images,
                         return_tensors="pt",
                         padding=True
                     )
-                
-                    # Use HF device_map auto placement
-                    print(f"[VLM CHUNK] Using HF device_map auto placement")
                     
+                    # Move inputs to the correct GPU
+                    if self.use_multi_gpu and self.num_gpus > 1:
+                        for key in chunk_inputs:
+                            if torch.is_tensor(chunk_inputs[key]):
+                                chunk_inputs[key] = chunk_inputs[key].to(f"cuda:{gpu_id}")
+                    
+                    print(f"[MULTI-GPU] Using GPU {gpu_id} for chunk processing")
                     print(f"[VLM CHUNK] Chunk input shapes:")
                     print(f"  - input_ids: {chunk_inputs['input_ids'].shape if 'input_ids' in chunk_inputs else 'None'}")
                     print(f"  - attention_mask: {chunk_inputs['attention_mask'].shape if 'attention_mask' in chunk_inputs else 'None'}")
                     print(f"  - pixel_values: {chunk_inputs['pixel_values'].shape if 'pixel_values' in chunk_inputs else 'None'}")
                     
                     # Chunk generation with memory optimization
-                    print(f"[VLM CHUNK] Starting chunk generation for {len(chunk_images)} images...")
+                    print(f"[VLM CHUNK] Starting chunk generation for {len(chunk_images)} images on GPU {gpu_id}...")
                     
-                    # Check GPU memory status
+                    # Check GPU memory status for the specific GPU
                     if torch.cuda.is_available():
-                        allocated = torch.cuda.memory_allocated() / 1e9
-                        cached = torch.cuda.memory_reserved() / 1e9
-                        print(f"[GPU MEMORY] Before chunk generation: allocated={allocated:.2f}GB, cached={cached:.2f}GB")
+                        torch.cuda.set_device(gpu_id)
+                        allocated = torch.cuda.memory_allocated(gpu_id) / 1e9
+                        cached = torch.cuda.memory_reserved(gpu_id) / 1e9
+                        print(f"[GPU {gpu_id} MEMORY] Before chunk generation: allocated={allocated:.2f}GB, cached={cached:.2f}GB")
                     
                     start_generation_time = time.time()
                     
-                    # Try safe chunk generation with subprocess timeout
+                    # Multi-GPU generation (direct model call instead of subprocess for better GPU control)
                     try:
-                        print(f"[VLM GEN] Starting safe chunk generation with 60s timeout", flush=True)
-                        chunk_responses = self.safe_generate(chunk_inputs, timeout=300)
+                        print(f"[VLM GEN] Starting multi-GPU generation on GPU {gpu_id}", flush=True)
+                        
+                        with torch.no_grad():
+                            outputs = vlm_model.generate(
+                                **chunk_inputs,
+                                max_new_tokens=30,
+                                do_sample=True,
+                                temperature=0.8,
+                                top_p=0.95,
+                                repetition_penalty=1.1,
+                                pad_token_id=getattr(vlm_processor, 'eos_token_id', getattr(vlm_processor, 'tokenizer', vlm_processor).eos_token_id),
+                                use_cache=False
+                            )
+                        
+                        # Decode responses
+                        chunk_responses = vlm_processor.batch_decode(outputs, skip_special_tokens=True)
                         
                         generation_time = time.time() - start_generation_time
                         print(f"[VLM CHUNK] Chunk generation completed in {generation_time:.3f}s!", flush=True)
@@ -467,10 +600,15 @@ class ToxicityRewardSystem:
                         for prompt in chunk_prompts:
                             chunk_responses_cleaned.append(prompt)
                     
-                    # Clear GPU memory after each chunk
+                    # Clear GPU memory after each chunk (multi-GPU aware)
                     if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                        print(f"[VLM CHUNK] GPU memory cleared after chunk")
+                        if self.use_multi_gpu and self.num_gpus > 1:
+                            torch.cuda.set_device(gpu_id)
+                            torch.cuda.empty_cache()
+                            print(f"[VLM CHUNK] GPU {gpu_id} memory cleared after chunk")
+                        else:
+                            torch.cuda.empty_cache()
+                            print(f"[VLM CHUNK] GPU memory cleared after chunk")
                     
                     # Assign responses to correct indices for this chunk
                     for i, response in enumerate(chunk_responses_cleaned):
@@ -853,7 +991,9 @@ def toxicity_reward_function(device: str = "cuda",
                              w_cvar: float = 0.1,
                              w_quality: float = 0.05,
                              use_local_models: bool = False,
-                             clip_model_path: str = None):
+                             clip_model_path: str = None,
+                             chunk_size: int = 8,
+                             use_multi_gpu: bool = True):
     """Factory function to create toxicity reward function for flow_grpo."""
     # Set multiprocessing start method for CUDA compatibility
     try:
@@ -867,7 +1007,9 @@ def toxicity_reward_function(device: str = "cuda",
         w_cvar=w_cvar,
         w_quality=w_quality,
         use_local_models=use_local_models,
-        clip_model_path=clip_model_path
+        clip_model_path=clip_model_path,
+        chunk_size=chunk_size,
+        use_multi_gpu=use_multi_gpu
     )
     
     def _fn(images, prompts, metadata):
