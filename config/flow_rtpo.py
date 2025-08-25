@@ -146,11 +146,11 @@ def flow_rtpo_debug():
     
     # Smaller settings for debugging
     config.max_prompts = 8
-    config.sample.batch_size = 1
-    config.sample.num_batches_per_epoch = 8
-    config.sample.num_image_per_prompt = 4
+    config.sample.batch_size = 1  # Keep batch size as requested
+    config.sample.num_batches_per_epoch = 8  # Process 8 different prompts per epoch for GRPO
+    config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     config.sample.num_steps = 40
-    config.train.gradient_accumulation_steps = 1
+    config.train.gradient_accumulation_steps = 4  # 8 // 2 = 4 for gradient updates
     config.num_epochs = 100
     config.save_freq = 2
     config.eval_freq = 2
@@ -168,16 +168,14 @@ def flow_rtpo_large():
     # Full dataset
     config.max_prompts = 132
     
-    # Calculate batch configuration based on GPU count (32) and target samples (132)
-    gpu_number = 32
-    target_samples_per_epoch = 132  # Total prompts in dataset
+    # Keep batch size as requested but increase batches for GRPO grouping
     config.sample.batch_size = 1  # Fixed batch size as requested
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     
-    # Calculate num_batches_per_epoch to ensure even number for gradient accumulation
-    # Formula: num_batches = target_samples / (gpu_number * batch_size * num_image_per_prompt)
-    # 132 / (32 * 1 * 4) = 132 / 128 = 1.03125 -> 2 (ensuring even number)
-    config.sample.num_batches_per_epoch = 2
+    # Increase num_batches_per_epoch to ensure sufficient GRPO groups
+    # Target: Process at least 16 different prompts per epoch for effective GRPO
+    # With 132 total prompts, we can process 16 prompts per epoch
+    config.sample.num_batches_per_epoch = 16  # Process 16 different prompts per epoch
     
     # Set gradient accumulation steps to half of num_batches_per_epoch
     # This ensures gradients are updated twice per epoch for stability
