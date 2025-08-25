@@ -297,7 +297,7 @@ class ToxicityRewardSystem:
         print(f"[DEBUG] Processing {len(valid_images)} valid images with memory optimization...")
         
         # Process images in smaller chunks to prevent OOM
-        chunk_size = 2  # Process only 2 images at a time
+        chunk_size = 16  # Process only 2 images at a time
         print(f"[DEBUG] Processing {len(valid_images)} valid images in chunks of {chunk_size} with subprocess protection...")
         
         try:
