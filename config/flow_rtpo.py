@@ -183,7 +183,7 @@ def flow_rtpo_debug():
     config.dataset_loading.use_local = False
     
     # Smaller settings for debugging
-    config.max_prompts = 8
+    config.max_prompts = 4
     config.sample.batch_size = 4  # Changed to 2 as requested
     config.sample.num_batches_per_epoch = 1  # For 8 GPUs: 8 prompts / (8 GPUs * 2 batch_size / 4 images_per_prompt) = 8 / 4 = 2
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
