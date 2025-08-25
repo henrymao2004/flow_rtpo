@@ -17,7 +17,7 @@ pip install -r requirements.txt
 # Load environment variables
 source .env
 
-# Login using environment variables
+# Login using environment variables, Swanlab api key: YiUzV5i2rB0pybueoH8A8
 huggingface-cli login --token $HUGGINGFACE_TOKEN
 swanlab login --api-key $SWANLAB_API_KEY
 ```
