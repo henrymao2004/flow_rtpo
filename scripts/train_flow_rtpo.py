@@ -92,7 +92,8 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
         device=accelerator.device,
         vlm_model=config.target_vlm,
         w_cvar=config.toxicity_reward.w_cvar,
-        w_quality=config.toxicity_reward.w_quality
+        w_quality=config.toxicity_reward.w_quality,
+        use_multi_gpu=False
     )
     
     # Set models to eval mode
@@ -980,7 +981,7 @@ def main(_):
             print(f"[DEBUG] Prompts: {[p[:50] + '...' if len(p) > 50 else p for p in prompts]}")
             
             # Sample batch using hierarchical policies
-                        samples = sample_batch(
+            samples = sample_batch(
                 pipeline, prompt_editor, prompts, config, accelerator, 
                 epoch=epoch, batch_idx=batch_idx, reward_variance=current_reward_variance
             )
