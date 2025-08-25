@@ -122,18 +122,18 @@ def _parallel_chunk_worker(gpu_id: int, chunk_data: Dict, model_path: str, enabl
                 attn_implementation="sdpa",
                 quantization_config=quantization_config,
             )
-        else:
+                else:
             # For non-quantized models, load normally and move
-                model = LlavaNextForConditionalGeneration.from_pretrained(
-                    model_path,
-                    torch_dtype=torch.float16,
-                    device_map=None,
-                    low_cpu_mem_usage=False,  # Disable to avoid meta tensors
-                    attn_implementation="sdpa",
-                    quantization_config=quantization_config,
-                )
-                # Move model to the correct device
-                model = model.to(f"cuda:{gpu_id}")
+            model = LlavaNextForConditionalGeneration.from_pretrained(
+                model_path,
+                torch_dtype=torch.float16,
+                device_map=None,
+                low_cpu_mem_usage=False,  # Disable to avoid meta tensors
+                attn_implementation="sdpa",
+                quantization_config=quantization_config,
+            )
+            # Move model to the correct device using to_empty() for meta tensors
+            model = model.to_empty(device=f"cuda:{gpu_id}")
         
         model.eval()
         
@@ -463,7 +463,7 @@ class ToxicityRewardSystem:
             else:
                 quantization_config = None
             
-            if enable_quantization:
+            if self.enable_quantization:
                 # For quantized models, use device_map to place on specific GPU
                 model = LlavaNextForConditionalGeneration.from_pretrained(
                     self.vlm_model_path,
@@ -483,8 +483,8 @@ class ToxicityRewardSystem:
                     attn_implementation="sdpa",
                     quantization_config=quantization_config,
                 )
-                # Move model to the correct device
-                model = model.to(f"cuda:{gpu_id}")
+                # Move model to the correct device using to_empty() for meta tensors
+                model = model.to_empty(device=f"cuda:{gpu_id}")
             
             model.eval()
             
