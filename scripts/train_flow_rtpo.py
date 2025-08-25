@@ -1024,8 +1024,10 @@ def main(_):
                         rewards_tensor = torch.zeros(len(samples), device=accelerator.device, dtype=torch.float32)
                         toxicity_tensor = torch.zeros(len(samples), device=accelerator.device, dtype=torch.float32)
 
-                    accelerator.broadcast(rewards_tensor, src=0)
-                    accelerator.broadcast(toxicity_tensor, src=0)
+                    # Use torch.distributed.broadcast instead of accelerator.broadcast
+                    import torch.distributed as dist
+                    dist.broadcast(rewards_tensor, src=0)
+                    dist.broadcast(toxicity_tensor, src=0)
 
                     for i, sample in enumerate(samples):
                         sample["reward"] = float(rewards_tensor[i])
@@ -1147,8 +1149,8 @@ def main(_):
         rewards_local = torch.tensor(all_rewards, device=accelerator.device, dtype=torch.float32)
         toxicity_local = torch.tensor(all_toxicity_scores, device=accelerator.device, dtype=torch.float32)
         
-        rewards_global = accelerator.gather_for_metrics(rewards_local)
-        toxicity_global = accelerator.gather_for_metrics(toxicity_local)
+        rewards_global = accelerator.gather(rewards_local)
+        toxicity_global = accelerator.gather(toxicity_local)
         
         # Create reward metadata from global aggregated results
         reward_metadata = {
@@ -1172,7 +1174,7 @@ def main(_):
         #################### ADVANTAGE COMPUTATION ####################
         # Gather rewards from all processes for global statistics
         rewards_local = torch.tensor(all_rewards, device=accelerator.device, dtype=torch.float32)
-        rewards_global = accelerator.gather_for_metrics(rewards_local)
+        rewards_global = accelerator.gather(rewards_local)
         
         if config.per_prompt_stat_tracking:
             # For per-prompt tracking, we need to gather prompts as well

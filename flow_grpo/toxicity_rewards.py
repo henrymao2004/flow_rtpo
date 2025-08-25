@@ -750,6 +750,12 @@ class ToxicityRewardSystem:
                             padding=True
                         )
                         
+                        # ✅ 新增：把 inputs 挪到模型所在设备
+                        model_device = next(self.vlm_model.parameters()).device
+                        for k, v in chunk_inputs.items():
+                            if torch.is_tensor(v):
+                                chunk_inputs[k] = v.to(model_device)
+                        
                         # Generate responses using existing model
                         with torch.no_grad():
                             outputs = self.vlm_model.generate(
