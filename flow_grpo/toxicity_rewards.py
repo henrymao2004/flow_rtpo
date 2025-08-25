@@ -358,81 +358,81 @@ class ToxicityRewardSystem:
                         print(f"[VLM RESPONSE {i+1}] Raw response: \"{full_response[:150]}{'...' if len(full_response) > 150 else ''}\"")
                         
                         response = full_response
-                    
-                    # Extract continuation - try multiple approaches
-                    response = full_response
-                    
-                    # First, try to find chat template markers and extract the actual response
-                    markers = ["[/INST]", "ASSISTANT:", "Assistant:", "</s>"]
-                    for marker in markers:
-                        if marker in response:
-                            response = response.split(marker)[-1].strip()
-                            print(f"[VLM RESPONSE {i+1}] After {marker} marker extraction: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                            break
-                    
-                    # Clean up any remaining markers
-                    if "[/INST]" in response:
-                        response = response.replace("[/INST]", "").strip()
-                        print(f"[VLM RESPONSE {i+1}] After [/INST] cleanup: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                    
-                    # Remove the instruction part if it's still there
-                    continuation_marker = f"Please continue this text naturally: {prompt}"
-                    if continuation_marker in response:
-                        response = response.split(continuation_marker)[-1].strip()
-                        print(f"[VLM RESPONSE {i+1}] After continuation marker removal: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                    
-                    # More lenient cleaning - only fallback for clearly problematic responses
-                    should_fallback = False
-                    fallback_reason = ""
-                    
-                    # Check for empty responses
-                    if len(response.strip()) == 0:
-                        should_fallback = True
-                        fallback_reason = "empty response"
-                    
-                    # Check for obvious template artifacts
-                    elif (response.startswith("[INST]") or 
-                          response.startswith("Complete this sentence") or
-                          response.startswith("Continue this exact text")):
-                        should_fallback = True
-                        fallback_reason = "template artifacts"
-                    
-                    # Check for obvious image descriptions (but be more lenient)
-                    elif (response.startswith("Based on what you see") or
-                          response.startswith("The image shows") or
-                          response.startswith("The image depicts") or
-                          response.startswith("In the image") or
-                          response.startswith("This image")):
-                        # Only fallback if the response is very short (likely just image description)
-                        if len(response.strip()) < 20:
+                        
+                        # Extract continuation - try multiple approaches
+                        response = full_response
+                        
+                        # First, try to find chat template markers and extract the actual response
+                        markers = ["[/INST]", "ASSISTANT:", "Assistant:", "</s>"]
+                        for marker in markers:
+                            if marker in response:
+                                response = response.split(marker)[-1].strip()
+                                print(f"[VLM RESPONSE {i+1}] After {marker} marker extraction: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                                break
+                        
+                        # Clean up any remaining markers
+                        if "[/INST]" in response:
+                            response = response.replace("[/INST]", "").strip()
+                            print(f"[VLM RESPONSE {i+1}] After [/INST] cleanup: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                        
+                        # Remove the instruction part if it's still there
+                        continuation_marker = f"Please continue this text naturally: {prompt}"
+                        if continuation_marker in response:
+                            response = response.split(continuation_marker)[-1].strip()
+                            print(f"[VLM RESPONSE {i+1}] After continuation marker removal: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                        
+                        # More lenient cleaning - only fallback for clearly problematic responses
+                        should_fallback = False
+                        fallback_reason = ""
+                        
+                        # Check for empty responses
+                        if len(response.strip()) == 0:
                             should_fallback = True
-                            fallback_reason = "short image description"
+                            fallback_reason = "empty response"
+                        
+                        # Check for obvious template artifacts
+                        elif (response.startswith("[INST]") or 
+                              response.startswith("Complete this sentence") or
+                              response.startswith("Continue this exact text")):
+                            should_fallback = True
+                            fallback_reason = "template artifacts"
+                        
+                        # Check for obvious image descriptions (but be more lenient)
+                        elif (response.startswith("Based on what you see") or
+                              response.startswith("The image shows") or
+                              response.startswith("The image depicts") or
+                              response.startswith("In the image") or
+                              response.startswith("This image")):
+                            # Only fallback if the response is very short (likely just image description)
+                            if len(response.strip()) < 20:
+                                should_fallback = True
+                                fallback_reason = "short image description"
+                            else:
+                                # Try to extract the continuation part after the image description
+                                for prefix in ["Based on what you see, ", "The image shows ", "The image depicts ", "In the image, ", "This image "]:
+                                    if response.startswith(prefix):
+                                        response = response[len(prefix):].strip()
+                                        print(f"[VLM RESPONSE {i+1}] Extracted continuation after image description: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                                        break
+                        
+                        # Handle refusals
+                        elif response.lower().startswith(("i cannot", "i can't", "i'm not able", "i won't", "i don't")):
+                            should_fallback = True
+                            fallback_reason = "refusal"
+                        
+                        # Apply fallback if needed
+                        if should_fallback:
+                            old_response = response
+                            response = prompt  # Just use the original prompt
+                            print(f"[VLM RESPONSE {i+1}] {fallback_reason} detected, using original prompt: \"{response}\"")
                         else:
-                            # Try to extract the continuation part after the image description
-                            for prefix in ["Based on what you see, ", "The image shows ", "The image depicts ", "In the image, ", "This image "]:
-                                if response.startswith(prefix):
-                                    response = response[len(prefix):].strip()
-                                    print(f"[VLM RESPONSE {i+1}] Extracted continuation after image description: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                                    break
-                    
-                    # Handle refusals
-                    elif response.lower().startswith(("i cannot", "i can't", "i'm not able", "i won't", "i don't")):
-                        should_fallback = True
-                        fallback_reason = "refusal"
-                    
-                    # Apply fallback if needed
-                    if should_fallback:
-                        old_response = response
-                        response = prompt  # Just use the original prompt
-                        print(f"[VLM RESPONSE {i+1}] {fallback_reason} detected, using original prompt: \"{response}\"")
-                    else:
-                        print(f"[VLM RESPONSE {i+1}] Using cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                    
-                    
-                    print(f"[VLM RESPONSE {i+1}] Final cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                    
-                    # Add to all_responses list
-                    all_responses.append(response)
+                            print(f"[VLM RESPONSE {i+1}] Using cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                        
+                        
+                        print(f"[VLM RESPONSE {i+1}] Final cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
+                        
+                        # Add to all_responses list
+                        all_responses.append(response)
                     
                 except (TimeoutError, Exception) as e:
                     print(f"[VLM ERROR] Chunk generation failed: {e}", flush=True)
