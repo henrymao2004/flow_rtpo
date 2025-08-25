@@ -676,7 +676,10 @@ def main(_):
     accelerator = Accelerator(
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
-        gradient_accumulation_steps=config.train.gradient_accumulation_steps,
+        # we always accumulate gradients across timesteps; we want config.train.gradient_accumulation_steps to be the
+        # number of *samples* we accumulate across, so we need to multiply by the number of training timesteps to get
+        # the total number of optimizer steps to accumulate across.
+        gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
     )
     
     # Debug info for each rank
@@ -907,7 +910,33 @@ def main(_):
     global_step = 0
     
     #################### TRAINING LOOP ####################
-    for epoch in range(config.num_epochs):
+    epoch = 0
+    global_step = 0
+    
+    while True:
+        #################### EVAL ####################
+        pipeline.transformer.eval()
+        prompt_editor.eval()
+        if epoch % config.get('eval_freq', 5) == 0:
+            logger.info(f"Starting test evaluation for epoch {epoch}")
+            test_results = evaluate_test_set(
+                pipeline, prompt_editor, test_prompts, test_metadata, 
+                config, accelerator, epoch, current_reward_variance
+            )
+            
+            # Log test results to swanlab
+            if accelerator.is_main_process and test_results:
+                swanlab.log({
+                    "test_attack_success_rate": test_results["attack_success_rate"],
+                    "test_avg_clip_score": test_results["avg_clip_score"],
+                    "test_set_size": test_results["test_set_size"],
+                    **{f"test_avg_{metric}": score for metric, score in test_results["metric_averages"].items()}
+                }, step=global_step)
+        
+        if epoch % config.save_freq == 0 and epoch > 0 and accelerator.is_main_process:
+            save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 
+                     accelerator, ema, transformer_trainable_parameters, config)
+        
         epoch_start_time = time.time()
         
         # Get current reward variance for adaptive epsilon (moved up to fix scope issue)
@@ -928,23 +957,6 @@ def main(_):
                 current_reward_variance = prompt_editor_model.reward_variance_tracker.get('current', 0.01)
             if current_reward_variance is None:
                 current_reward_variance = 0.01
-        
-        #################### TEST EVALUATION ####################
-        if epoch % config.get('eval_freq', 5) == 0:
-            logger.info(f"Starting test evaluation for epoch {epoch}")
-            test_results = evaluate_test_set(
-                pipeline, prompt_editor, test_prompts, test_metadata, 
-                config, accelerator, epoch, current_reward_variance
-            )
-            
-            # Log test results to swanlab
-            if accelerator.is_main_process and test_results:
-                swanlab.log({
-                    "test_attack_success_rate": test_results["attack_success_rate"],
-                    "test_avg_clip_score": test_results["avg_clip_score"],
-                    "test_set_size": test_results["test_set_size"],
-                    **{f"test_avg_{metric}": score for metric, score in test_results["metric_averages"].items()}
-                })
         
         #################### SAMPLING ####################
         pipeline.transformer.eval()
@@ -1225,7 +1237,8 @@ def main(_):
                             accelerator.backward(flow_loss)
                             
                             # Gradient clipping
-                            torch.nn.utils.clip_grad_norm_(transformer_trainable_parameters, 1.0)
+                            if accelerator.sync_gradients:
+                                accelerator.clip_grad_norm_(transformer_trainable_parameters, config.train.max_grad_norm)
                             
                             # Track KL divergence for logging
                             if config.train.beta > 0:
@@ -1233,6 +1246,18 @@ def main(_):
                             
                             train_info["flow_policy_loss"].append(policy_loss.item())
                             train_info["kl_loss"].append(kl_loss.item())
+                            train_info["loss"].append(flow_loss.item())
+                            
+                            # Checks if the accelerator has performed an optimization step behind the scenes
+                            if accelerator.sync_gradients:
+                                # log training-related stuff
+                                info = {k: torch.mean(torch.stack(v)) for k, v in train_info.items()}
+                                info = accelerator.reduce(info, reduction="mean")
+                                info.update({"epoch": epoch, "inner_epoch": inner_epoch})
+                                if accelerator.is_main_process:
+                                    swanlab.log(info, step=global_step)
+                                global_step += 1
+                                train_info = defaultdict(list)
                 
                 # Optimizer step
                 optimizer.step()
@@ -1316,81 +1341,41 @@ def main(_):
                     sample_policy_info = epoch_samples[0]['policy_info']
                     train_info["prompt_warmup_factor"].append(sample_policy_info.get('warmup_factor', 1.0))
         
-        global_step += 1
-        
-        #################### LOGGING AND SAVING ####################
+        #################### EPOCH-LEVEL LOGGING AND SAVING ####################
         epoch_time = time.time() - epoch_start_time
         
-        # Gather metrics from all processes using individual gather calls
-        num_samples_tensor = torch.tensor(len(epoch_samples), device=accelerator.device)
-        reward_mean_tensor = torch.tensor(np.mean(all_rewards), device=accelerator.device)
-        reward_std_tensor = torch.tensor(np.std(all_rewards), device=accelerator.device)
-        flow_policy_loss_tensor = torch.tensor(np.mean(train_info["flow_policy_loss"]), device=accelerator.device)
-        kl_loss_tensor = torch.tensor(np.mean(train_info["kl_loss"]), device=accelerator.device)
-        prompt_policy_loss_tensor = torch.tensor(np.mean(train_info["prompt_policy_loss"]), device=accelerator.device)
-        prompt_reg_loss_tensor = torch.tensor(np.mean(train_info["prompt_reg_loss"]), device=accelerator.device)
-        total_prompt_loss_tensor = torch.tensor(np.mean(train_info["total_prompt_loss"]), device=accelerator.device)
-        
-        gathered_num_samples = accelerator.gather(num_samples_tensor)
-        gathered_reward_mean = accelerator.gather(reward_mean_tensor)
-        gathered_reward_std = accelerator.gather(reward_std_tensor)
-        gathered_flow_policy_loss = accelerator.gather(flow_policy_loss_tensor)
-        gathered_kl_loss = accelerator.gather(kl_loss_tensor)
-        gathered_prompt_policy_loss = accelerator.gather(prompt_policy_loss_tensor)
-        gathered_prompt_reg_loss = accelerator.gather(prompt_reg_loss_tensor)
-        gathered_total_prompt_loss = accelerator.gather(total_prompt_loss_tensor)
-        
-        # Update convergence monitoring
-        convergence_metrics = {}
-        if convergence_monitor is not None:
-            # Extract rewards from samples
-            all_rewards = [sample["reward"] for sample in epoch_samples]
-            kl_div = gathered_kl_loss.float().mean().item() if len(train_info.get("kl_loss", [])) > 0 else None
-            
-            convergence_metrics = convergence_monitor.update(
-                rewards=all_rewards,
-                kl_div=kl_div,
-                epoch=epoch
-            )
-        
-        # Log training metrics
+        # Log epoch-level metrics (only on main process)
         if accelerator.is_main_process:
-            log_data = {
+            # Update convergence monitoring
+            convergence_metrics = {}
+            if convergence_monitor is not None:
+                # Extract rewards from samples
+                all_rewards = [sample["reward"] for sample in epoch_samples]
+                convergence_metrics = convergence_monitor.update(
+                    rewards=all_rewards,
+                    kl_div=None,  # KL divergence is now logged during training steps
+                    epoch=epoch
+                )
+            
+            # Log epoch-level summary
+            epoch_log_data = {
                 "epoch": epoch,
                 "global_step": global_step,
                 "epoch_time": epoch_time,
-                "num_samples": gathered_num_samples.float().mean().item(),
-                "reward_mean": gathered_reward_mean.float().mean().item(),
-                "reward_std": gathered_reward_std.float().mean().item(),
+                "num_samples": len(epoch_samples),
+                "reward_mean": np.mean(all_rewards) if all_rewards else 0.0,
+                "reward_std": np.std(all_rewards) if all_rewards else 0.0,
                 "toxicity_mean": reward_metadata["statistics"]["mean_toxicity"],
                 "toxicity_max": reward_metadata["statistics"]["max_toxicity"],
                 "cvar_mean": reward_metadata["statistics"]["cvar_mean"],
                 "cvar_threshold": reward_metadata["cvar_threshold"],
                 "quality_mean": reward_metadata["statistics"]["quality_mean"],
-                "flow_policy_loss": gathered_flow_policy_loss.float().mean().item(),
-                "kl_loss": gathered_kl_loss.float().mean().item(),
-                "prompt_policy_loss": gathered_prompt_policy_loss.float().mean().item(),
-                "prompt_reg_loss": gathered_prompt_reg_loss.float().mean().item(),
-                "total_prompt_loss": gathered_total_prompt_loss.float().mean().item(),
-                "prompt_mean_advantage": np.mean(train_info.get("prompt_mean_advantage", [0])),
-                "prompt_baseline_value": np.mean(train_info.get("prompt_baseline_value", [0])),
-                # Enhanced adaptive and semantic metrics
-                "reward_variance": np.mean(train_info.get("reward_variance", [0])),
-                "epsilon_adaptive": np.mean(train_info.get("epsilon_adaptive", [0])),
-                "num_groups": np.mean(train_info.get("num_groups", [0])),
-                "reg_proximity_reg": np.mean(train_info.get("reg_proximity_reg", [0])),
-                "reg_semantic_reg": np.mean(train_info.get("reg_semantic_reg", [0])),
-                "reg_reconstruction": np.mean(train_info.get("reg_reconstruction", [0])),
-                "reg_epsilon_current": np.mean(train_info.get("reg_epsilon_current", [0])),
-                "reg_mean_semantic_sim": np.mean(train_info.get("reg_mean_semantic_sim", [0])),
-                # Warmup tracking
-                "prompt_warmup_factor": np.mean(train_info.get("prompt_warmup_factor", [1])),
                 # Convergence monitoring metrics
                 **convergence_metrics,
             }
             
-            swanlab.log(log_data)
-            logger.info(f"Epoch {epoch}: {log_data}")
+            swanlab.log(epoch_log_data)
+            logger.info(f"Epoch {epoch} Summary: {epoch_log_data}")
         
         # Save results for each processed prompt
         if accelerator.is_main_process:
@@ -1446,10 +1431,7 @@ def main(_):
                      accelerator, ema, transformer_trainable_parameters, config)
             logger.info(f"Best model saved at epoch {epoch} with EMA reward: {convergence_metrics.get('ema_reward', 0):.4f}")
         
-        # Save checkpoint
-        if (epoch + 1) % config.save_freq == 0:
-            save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 
-                     accelerator, ema, transformer_trainable_parameters, config)
+        epoch += 1
     
     # Final save
     save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 
