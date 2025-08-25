@@ -1,0 +1,70 @@
+# Core PyTorch ecosystem
+torch==2.6.0
+torchvision==0.21.0
+torchaudio
+
+# Hugging Face ecosystem
+transformers==4.40.0
+diffusers==0.33.1
+accelerate==1.4.0
+peft==0.10.0
+datasets==3.3.2
+tokenizers==0.19.1
+huggingface-hub==0.29.1
+
+# Scientific computing
+numpy==1.26.4
+scipy==1.15.2
+scikit-learn==1.6.1
+scikit-image==0.25.2
+pandas==2.2.3
+
+# Computer vision and image processing
+opencv-python==4.11.0.86
+pillow==10.4.0
+albumentations==1.4.10
+torchvision
+
+# Deep learning optimization
+deepspeed==0.16.4
+bitsandbytes==0.45.3
+xformers
+einops==0.8.1
+
+# Configuration and utilities
+ml_collections
+absl-py
+tqdm==4.67.1
+pydantic==2.10.6
+
+# Logging and monitoring
+wandb==0.18.7
+swanlab
+
+# Web and API
+requests==2.32.3
+aiohttp==3.11.13
+fastapi==0.115.11
+uvicorn==0.34.0
+
+# Text processing and NLP
+sentencepiece
+sentence-transformers
+vec2text
+
+# Toxicity detection
+detoxify
+
+# Visualization
+matplotlib==3.10.0
+
+# System utilities
+nvidia-ml-py==12.570.86
+
+# Optional dependencies (uncomment if needed)
+# flash-attn==2.7.4.post1
+
+# Development dependencies (optional)
+# ipython==8.34.0
+# black==24.2.0
+# pytest==8.2.0 

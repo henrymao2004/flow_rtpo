@@ -887,6 +887,10 @@ def main(_):
         train_dataloader
     )
     
+    # for deepspeed zero
+    if accelerator.state.deepspeed_plugin:
+        accelerator.state.deepspeed_plugin.deepspeed_config['train_micro_batch_size_per_gpu'] = config.sample.train_batch_size
+    
     # Move pipeline components to device
     pipeline.vae.to(accelerator.device)
     pipeline.text_encoder.to(accelerator.device)
