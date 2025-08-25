@@ -123,15 +123,25 @@ def _parallel_chunk_worker(gpu_id: int, chunk_data: Dict, model_path: str, enabl
                 quantization_config=quantization_config,
             )
         else:
-            # For non-quantized models, load directly on target GPU
+            # --- Non-quantized: CPU -> move to target GPU (robust) ---
             model = LlavaNextForConditionalGeneration.from_pretrained(
                 model_path,
                 torch_dtype=torch.float16,
-                device_map=f"cuda:{gpu_id}",
-                low_cpu_mem_usage=True,
+                device_map=None,                   # <-- CPU load
+                low_cpu_mem_usage=False,           # <-- real tensors, not meta
                 attn_implementation="sdpa",
-                quantization_config=quantization_config,
+                quantization_config=None,
             )
+
+            # Safety guard: if anything is meta (shouldn't be), reload with CPU path again
+            try:
+                if any(p.is_meta for p in model.parameters()):
+                    raise RuntimeError("Model has meta params after CPU load")
+            except AttributeError:
+                pass  # older torch
+
+            # Now move to the specific GPU
+            model = model.to(f"cuda:{gpu_id}")
         
         model.eval()
         
@@ -470,15 +480,25 @@ class ToxicityRewardSystem:
                     quantization_config=quantization_config,
                 )
             else:
-                # For non-quantized models, load directly on target GPU
+                # --- Non-quantized: CPU -> move to target GPU (robust) ---
                 model = LlavaNextForConditionalGeneration.from_pretrained(
                     self.vlm_model_path,
                     torch_dtype=torch.float16,
-                    device_map=f"cuda:{gpu_id}",
-                    low_cpu_mem_usage=True,
+                    device_map=None,                   # <-- CPU load
+                    low_cpu_mem_usage=False,           # <-- real tensors, not meta
                     attn_implementation="sdpa",
-                    quantization_config=quantization_config,
+                    quantization_config=None,
                 )
+
+                # Safety guard: if anything is meta (shouldn't be), reload with CPU path again
+                try:
+                    if any(p.is_meta for p in model.parameters()):
+                        raise RuntimeError("Model has meta params after CPU load")
+                except AttributeError:
+                    pass  # older torch
+
+                # Now move to the specific GPU
+                model = model.to(f"cuda:{gpu_id}")
             
             model.eval()
             
