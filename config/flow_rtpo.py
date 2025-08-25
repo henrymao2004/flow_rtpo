@@ -32,8 +32,8 @@ def flow_rtpo_sd3():
     config.prompt_fn_kwargs = {}
     
     # Sampling configuration
-    config.sample.batch_size = 4
-    config.sample.num_batches_per_epoch = 44
+    config.sample.batch_size = 2
+    config.sample.num_batches_per_epoch = 8  # For 8 GPUs: 132 prompts / (8 GPUs * 2 batch_size / 4 images_per_prompt) = 132 / 4 = 33, but we use 8 for stability
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     config.sample.sample_time_per_prompt = 1
     config.sample.num_steps = 20
@@ -146,11 +146,11 @@ def flow_rtpo_debug():
     
     # Smaller settings for debugging
     config.max_prompts = 8
-    config.sample.batch_size = 4  # Keep batch size as requested
-    config.sample.num_batches_per_epoch = 2  # Process 8 different prompts per epoch for GRPO
+    config.sample.batch_size = 2  # Changed to 2 as requested
+    config.sample.num_batches_per_epoch = 2  # For 8 GPUs: 8 prompts / (8 GPUs * 2 batch_size / 4 images_per_prompt) = 8 / 4 = 2
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     config.sample.num_steps = 40
-    config.train.gradient_accumulation_steps = 4  # 8 // 2 = 4 for gradient updates
+    config.train.gradient_accumulation_steps = 1  # 2 // 2 = 1 for gradient updates
     config.num_epochs = 100
     config.save_freq = 2
     config.eval_freq = 2
@@ -169,15 +169,14 @@ def flow_rtpo_large():
     config.max_prompts = 132
     
     # Keep batch size as requested but increase batches for GRPO grouping
-    config.sample.batch_size = 4  # Fixed batch size as requested
+    config.sample.batch_size = 2  # Changed to 2 as requested
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     
     # Calculate proper num_batches_per_epoch for 32 GPUs
-    # Following GRPO pattern: int(48/(gpu_number*batch_size/num_image_per_prompt))
+    # Following GRPO pattern: int(132/(gpu_number*batch_size/num_image_per_prompt))
     gpu_number = 32
-    config.sample.num_batches_per_epoch = int(48/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
-    # This gives: 48/(32*4/4) = 48/32 = 1.5 -> int(1.5) = 1
-    # But we need at least 2 for gradient accumulation, so we'll use 2
+    config.sample.num_batches_per_epoch = int(132/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
+    # This gives: 132/(32*2/4) = 132/16 = 8.25 -> int(8.25) = 8
     config.sample.num_batches_per_epoch = max(2, config.sample.num_batches_per_epoch) 
     
     # Set gradient accumulation steps to half of num_batches_per_epoch
