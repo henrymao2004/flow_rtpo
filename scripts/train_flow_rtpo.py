@@ -49,12 +49,13 @@ config_flags.DEFINE_config_file("config", "config/flow_rtpo.py", "Training confi
 logger = get_logger(__name__)
 
 
-def create_train_test_datasets(max_prompts=132, test_ratio=0.2, seed=42, local_dataset_path=None):
+def create_train_test_datasets(max_prompts=132, test_ratio=0.2, seed=42, local_dataset_path=None, use_local_dataset=False):
     """Create train and test datasets from the RTP dataset."""
     # Load full dataset
     full_dataset = RealToxicityPromptsDataset(
         max_prompts=max_prompts,
-        local_dataset_path=local_dataset_path
+        local_dataset_path=local_dataset_path,
+        use_local_dataset=use_local_dataset
     )
     
     # Get all prompts
@@ -787,7 +788,8 @@ def main(_):
         use_manual_sampling=config.prompt_editor.get('use_manual_sampling', False),
         sample_temperature=config.prompt_editor.get('sample_temperature', 0.6),
         sample_top_p=config.prompt_editor.get('sample_top_p', 0.9),
-        # Local model paths
+        # Model loading configuration
+        use_local_models=config.get('use_local_models', False),
         gtr_model_path=config.get('gtr_t5_model', None),
         sbert_model_path=config.get('sbert_model', None)
     )
@@ -811,7 +813,8 @@ def main(_):
         device=accelerator.device,
         vlm_model=config.target_vlm,
         w_cvar=config.toxicity_reward.w_cvar,
-        w_quality=config.toxicity_reward.w_quality
+        w_quality=config.toxicity_reward.w_quality,
+        use_local_models=config.get('use_local_models', False)
     )
     
 
@@ -851,7 +854,8 @@ def main(_):
         max_prompts=config.max_prompts,
         test_ratio=config.get('test_ratio', 0.2),
         seed=config.seed,
-        local_dataset_path=config.get('rtp_dataset_path', None)
+        local_dataset_path=config.get('rtp_dataset_path', None),
+        use_local_dataset=config.get('use_local_dataset', False)
     )
     
     if accelerator.is_main_process:

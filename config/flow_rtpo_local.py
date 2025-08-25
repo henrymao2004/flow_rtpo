@@ -13,6 +13,10 @@ def flow_rtpo_sd3_local():
     """Configuration for Flow-RTPO with local SD3, LLaVA, GTR-T5, and RTP dataset."""
     config = base.get_config()
     
+    # Loading mode configuration - LOCAL MODELS AND DATASET
+    config.use_local_models = True  # Set to True for local models, False for HuggingFace
+    config.use_local_dataset = True  # Set to True for local dataset, False for HuggingFace
+    
     # Base model configuration - LOCAL SD3
     config.pretrained.model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/stable-diffusion-3.5-medium"
     config.use_lora = True
@@ -279,6 +283,8 @@ if __name__ == "__main__":
     print(config)
     
     print("\nKey settings:")
+    print(f"Use local models: {config.use_local_models}")
+    print(f"Use local dataset: {config.use_local_dataset}")
     print(f"Model: {config.pretrained.model}")
     print(f"Target VLM: {config.target_vlm}")
     print(f"GTR-T5 Model: {config.gtr_t5_model}")

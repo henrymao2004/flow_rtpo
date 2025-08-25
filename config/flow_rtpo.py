@@ -13,8 +13,15 @@ def flow_rtpo_sd3():
     """Configuration for Flow-RTPO with SD3 and LLaVA target."""
     config = base.get_config()
     
+    # Loading mode configuration
+    config.use_local_models = False  # Set to True for local models, False for HuggingFace
+    config.use_local_dataset = False  # Set to True for local dataset, False for HuggingFace
+    
     # Base model configuration
-    config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
+    if config.use_local_models:
+        config.pretrained.model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/stable-diffusion-3.5-medium"
+    else:
+        config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
     config.use_lora = True
     
     # LoRA configuration for flow controller
@@ -25,7 +32,12 @@ def flow_rtpo_sd3():
     # Dataset configuration - Real Toxicity Prompts
     config.dataset_type = "rtp"
     config.max_prompts = 132  # First 132 prompts from RTP challenge subset
-    config.dataset_cache_dir = None
+    if config.use_local_dataset:
+        config.dataset_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/dataset/local/real-toxicity-prompts"
+        config.rtp_dataset_path = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/dataset/local/real-toxicity-prompts"
+    else:
+        config.dataset_cache_dir = None
+        config.rtp_dataset_path = None
     
     # Override base config prompt function - Flow-RTPO uses RTP dataset, not prompt functions
     config.prompt_fn = None
@@ -85,7 +97,22 @@ def flow_rtpo_sd3():
     config.prompt_editor.sample_top_p = 0.9  # Nucleus sampling threshold
     
     # Target VLM configuration
-    config.target_vlm = "llava-hf/llava-v1.6-mistral-7b-hf"
+    if config.use_local_models:
+        config.target_vlm = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/llava-v1.6-mistral-7b-hf"
+    else:
+        config.target_vlm = "llava-hf/llava-v1.6-mistral-7b-hf"
+    
+    # GTR-T5 configuration for prompt editor
+    if config.use_local_models:
+        config.gtr_t5_model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/gtr-t5-base"
+    else:
+        config.gtr_t5_model = "sentence-transformers/gtr-t5-base"
+    
+    # SBERT configuration for semantic similarity
+    if config.use_local_models:
+        config.sbert_model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/all-MiniLM-L6-v2"
+    else:
+        config.sbert_model = "sentence-transformers/all-MiniLM-L6-v2"
     
     # Toxicity reward configuration
     config.reward_fn = {"toxicity_cvar": 1.0}
@@ -140,6 +167,31 @@ def flow_rtpo_sd3():
     return config
 
 
+def flow_rtpo_sd3_local():
+    """Configuration for Flow-RTPO with local SD3, LLaVA, GTR-T5, and RTP dataset."""
+    config = flow_rtpo_sd3()
+    
+    # Enable local model and dataset loading
+    config.use_local_models = True
+    config.use_local_dataset = True
+    
+    # Update model paths for local loading
+    config.pretrained.model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/stable-diffusion-3.5-medium"
+    config.target_vlm = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/llava-v1.6-mistral-7b-hf"
+    config.gtr_t5_model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/gtr-t5-base"
+    config.sbert_model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/all-MiniLM-L6-v2"
+    
+    # Update dataset paths for local loading
+    config.dataset_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/dataset/local/real-toxicity-prompts"
+    config.rtp_dataset_path = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/dataset/local/real-toxicity-prompts"
+    
+    # Update run name to indicate local models
+    config.run_name = "flow_rtpo_sd3_llava_local"
+    config.save_dir = f'/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/logs/flow_rtpo/{config.run_name}'
+    
+    return config
+
+
 def flow_rtpo_debug():
     """Debug configuration with smaller settings for faster iteration."""
     config = flow_rtpo_sd3()
@@ -156,6 +208,27 @@ def flow_rtpo_debug():
     config.eval_freq = 2
     
     config.run_name = "flow_rtpo_debug"
+    config.save_dir = f'/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/logs/flow_rtpo/{config.run_name}'
+    
+    return config
+
+
+def flow_rtpo_debug_local():
+    """Debug configuration with smaller settings for faster iteration - LOCAL models."""
+    config = flow_rtpo_sd3_local()
+    
+    # Smaller settings for debugging
+    config.max_prompts = 8
+    config.sample.batch_size = 2  # Changed to 2 as requested
+    config.sample.num_batches_per_epoch = 2  # For 8 GPUs: 8 prompts / (8 GPUs * 2 batch_size / 4 images_per_prompt) = 8 / 4 = 2
+    config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
+    config.sample.num_steps = 40
+    config.train.gradient_accumulation_steps = 1  # 2 // 2 = 1 for gradient updates
+    config.num_epochs = 100
+    config.save_freq = 2
+    config.eval_freq = 2
+    
+    config.run_name = "flow_rtpo_debug_local"
     config.save_dir = f'/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/logs/flow_rtpo/{config.run_name}'
     
     return config
@@ -193,6 +266,43 @@ def flow_rtpo_large():
     config.toxicity_reward.tau = 0.2  
     
     config.run_name = "flow_rtpo_large_scale"
+    config.save_dir = f'/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/logs/flow_rtpo/{config.run_name}'
+    
+    return config
+
+
+def flow_rtpo_large_local():
+    """Large-scale configuration for full training - LOCAL models."""
+    config = flow_rtpo_sd3_local()
+    
+    # Full dataset
+    config.max_prompts = 132
+    
+    # Keep batch size as requested but increase batches for GRPO grouping
+    config.sample.batch_size = 2  # Changed to 2 as requested
+    config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
+    
+    # Calculate proper num_batches_per_epoch for 32 GPUs
+    # Following GRPO pattern: int(132/(gpu_number*batch_size/num_image_per_prompt))
+    gpu_number = 32
+    config.sample.num_batches_per_epoch = int(105/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
+    # This gives: 132/(32*2/4) = 132/16 = 8.25 -> int(8.25) = 8
+    config.sample.num_batches_per_epoch = max(2, config.sample.num_batches_per_epoch) 
+    
+    # Set gradient accumulation steps to half of num_batches_per_epoch
+    # This ensures gradients are updated twice per epoch for stability
+    config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch // 2
+    
+    # Extended training
+    config.num_epochs = 200
+    config.save_freq = 20
+    config.eval_freq = 10
+    
+    # More aggressive toxicity optimization
+    config.toxicity_reward.w_cvar = 1.0
+    config.toxicity_reward.tau = 0.2  
+    
+    config.run_name = "flow_rtpo_large_scale_local"
     config.save_dir = f'/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/logs/flow_rtpo/{config.run_name}'
     
     return config
@@ -251,16 +361,77 @@ def flow_rtpo_memory_optimized():
     return config
 
 
+def flow_rtpo_memory_optimized_local():
+    """Memory-optimized configuration to prevent CUDA OOM errors - LOCAL models."""
+    config = flow_rtpo_sd3_local()
+    
+    # Reduce batch sizes to minimize memory usage
+    config.sample.batch_size = 1  # Reduce from 2 to 1
+    config.sample.num_batches_per_epoch = 44  # Increase to maintain same total samples
+    config.sample.num_image_per_prompt = 2  # Reduce from 4 to 2
+    config.sample.test_batch_size = 1  # Reduce from 4 to 1
+    config.sample.train_batch_size = config.sample.batch_size
+    
+    # Reduce resolution to save memory
+    config.resolution = 512  # Reduce from 768 to 512
+    config.height = 512
+    config.width = 512
+    
+    # Reduce sampling steps
+    config.sample.num_steps = 8  # Reduce from 10 to 8
+    config.sample.eval_num_steps = 20  # Reduce from 40 to 20
+    
+    # Enable gradient checkpointing to save memory
+    config.gradient_checkpointing = True
+    
+    # Reduce LoRA rank to save memory
+    config.lora_rank = 8  # Reduce from 16 to 8
+    config.lora_alpha = 16  # Reduce from 32 to 16
+    
+    # Reduce prompt editor parameters
+    config.prompt_editor.embedding_dim = 512  # Reduce from 768 to 512
+    config.prompt_editor.decode_num_steps = 10  # Reduce from 20 to 10
+    config.prompt_editor.decode_beam_width = 2  # Reduce from 4 to 2
+    config.prompt_editor.k_samples = 2  # Reduce from 4 to 2
+    
+    # Memory management settings
+    config.mixed_precision = "fp16"  # Use fp16 instead of bf16 for better memory efficiency
+    config.allow_tf32 = False  # Disable tf32 to save memory
+    
+    # Reduce dataset size for testing
+    config.max_prompts = 10  # Reduce for testing
+    
+    # Training adjustments
+    config.train.gradient_accumulation_steps = 22  # Adjust for new batch size
+    config.train.num_inner_epochs = 1
+    
+    # Evaluation settings
+    config.eval.num_samples = 10  # Reduce from 20 to 10
+    
+    config.run_name = "flow_rtpo_memory_optimized_local"
+    config.save_dir = f'/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/logs/flow_rtpo/{config.run_name}'
+    
+    return config
+
+
 def get_config(config_name="flow_rtpo_sd3"):
     """Get configuration by name."""
     if config_name == "flow_rtpo_sd3":
         return flow_rtpo_sd3()
+    elif config_name == "flow_rtpo_sd3_local":
+        return flow_rtpo_sd3_local()
     elif config_name == "flow_rtpo_debug":
         return flow_rtpo_debug()
+    elif config_name == "flow_rtpo_debug_local":
+        return flow_rtpo_debug_local()
     elif config_name == "flow_rtpo_large":
         return flow_rtpo_large()
+    elif config_name == "flow_rtpo_large_local":
+        return flow_rtpo_large_local()
     elif config_name == "flow_rtpo_memory_optimized":
         return flow_rtpo_memory_optimized()
+    elif config_name == "flow_rtpo_memory_optimized_local":
+        return flow_rtpo_memory_optimized_local()
     else:
         return flow_rtpo_sd3()
 
@@ -272,8 +443,13 @@ if __name__ == "__main__":
     print(config)
     
     print("\nKey settings:")
+    print(f"Use local models: {config.use_local_models}")
+    print(f"Use local dataset: {config.use_local_dataset}")
     print(f"Model: {config.pretrained.model}")
     print(f"Target VLM: {config.target_vlm}")
+    print(f"GTR-T5 Model: {config.gtr_t5_model}")
+    print(f"SBERT Model: {config.sbert_model}")
+    print(f"RTP Dataset: {config.rtp_dataset_path}")
     print(f"Max prompts: {config.max_prompts}")
     print(f"Batch size: {config.sample.batch_size}")
     print(f"Images per prompt: {config.sample.num_image_per_prompt}")

@@ -26,16 +26,19 @@ class RealToxicityPromptsDataset(Dataset):
                  max_prompts: int = 132,
                  split: str = "train",
                  cache_dir: Optional[str] = None,
-                 local_dataset_path: Optional[str] = None):
+                 local_dataset_path: Optional[str] = None,
+                 use_local_dataset: bool = False):
         self.max_prompts = max_prompts
         self.split = split
         self.cache_dir = cache_dir
         self.local_dataset_path = local_dataset_path
         
         # Load dataset
-        if local_dataset_path and os.path.exists(local_dataset_path):
+        if use_local_dataset and local_dataset_path and os.path.exists(local_dataset_path):
+            print(f"[INFO] Loading dataset from local path: {local_dataset_path}")
             self.prompts = self._load_from_local()
         else:
+            print(f"[INFO] Loading dataset from HuggingFace")
             self.prompts = self._load_from_huggingface()
         
         # Limit to specified number of prompts
@@ -266,7 +269,8 @@ def create_rtp_dataset_and_loader(max_prompts: int = 132,
                                   batch_size: int = 8,
                                   shuffle: bool = True,
                                   cache_dir: Optional[str] = None,
-                                  local_dataset_path: Optional[str] = None) -> tuple:
+                                  local_dataset_path: Optional[str] = None,
+                                  use_local_dataset: bool = False) -> tuple:
     """
     Convenience function to create RTP dataset and dataloader.
     
@@ -276,7 +280,8 @@ def create_rtp_dataset_and_loader(max_prompts: int = 132,
     dataset = RealToxicityPromptsDataset(
         max_prompts=max_prompts,
         cache_dir=cache_dir,
-        local_dataset_path=local_dataset_path
+        local_dataset_path=local_dataset_path,
+        use_local_dataset=use_local_dataset
     )
     
     dataloader = RTPromptsDataLoader(

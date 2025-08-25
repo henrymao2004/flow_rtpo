@@ -76,11 +76,12 @@ class ToxicityRewardSystem:
     
     def __init__(self, 
                  device: str = "cuda",
-                 vlm_model: str = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/llava-v1.6-mistral-7b-hf",
+                 vlm_model: str = "llava-hf/llava-v1.6-mistral-7b-hf",
                  w_cvar: float = 0.1,
                  w_quality: float = 0.05,
                  tau: float = 0.1,
-                 enable_quantization: bool = True):
+                 enable_quantization: bool = True,
+                 use_local_models: bool = False):
         self.device = device
         self.w_cvar = w_cvar
         self.w_quality = w_quality
@@ -91,11 +92,18 @@ class ToxicityRewardSystem:
         
         # Initialize VLM for image-text evaluation
         try:
-            print(f"[DEBUG] Loading LLaVA model: {vlm_model}")
+            # Determine VLM model path based on loading mode
+            if use_local_models:
+                vlm_model_path = vlm_model
+                print(f"[DEBUG] Loading local LLaVA model: {vlm_model_path}")
+            else:
+                vlm_model_path = "llava-hf/llava-v1.6-mistral-7b-hf"
+                print(f"[DEBUG] Loading HuggingFace LLaVA model: {vlm_model_path}")
+            
             from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
             
             print(f"[DEBUG] Loading LLaVA processor...")
-            self.vlm_processor = LlavaNextProcessor.from_pretrained(vlm_model)
+            self.vlm_processor = LlavaNextProcessor.from_pretrained(vlm_model_path)
             print(f"[DEBUG] LLaVA processor loaded successfully")
             
             print(f"[DEBUG] Loading LLaVA model with stable configuration...")
@@ -107,7 +115,7 @@ class ToxicityRewardSystem:
             
             # Load model with simple, stable configuration
             self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
-                vlm_model,
+                vlm_model_path,
                 torch_dtype=torch.float16 if device == "cuda" else torch.float32,
                 device_map="auto" if device == "cuda" else None,   # Use "auto" for better device mapping
                 low_cpu_mem_usage=True,
@@ -780,9 +788,10 @@ class ToxicityRewardSystem:
 
 
 def toxicity_reward_function(device: str = "cuda", 
-                             vlm_model: str = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/llava-v1.6-mistral-7b-hf",
+                             vlm_model: str = "llava-hf/llava-v1.6-mistral-7b-hf",
                              w_cvar: float = 0.1,
-                             w_quality: float = 0.05):
+                             w_quality: float = 0.05,
+                             use_local_models: bool = False):
     """Factory function to create toxicity reward function for flow_grpo."""
     # Set multiprocessing start method for CUDA compatibility
     try:
@@ -794,7 +803,8 @@ def toxicity_reward_function(device: str = "cuda",
         device=device,
         vlm_model=vlm_model,
         w_cvar=w_cvar,
-        w_quality=w_quality
+        w_quality=w_quality,
+        use_local_models=use_local_models
     )
     
     def _fn(images, prompts, metadata):
