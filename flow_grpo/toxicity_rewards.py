@@ -122,18 +122,18 @@ def _parallel_chunk_worker(gpu_id: int, chunk_data: Dict, model_path: str, enabl
                 attn_implementation="sdpa",
                 quantization_config=quantization_config,
             )
-        else:
-            # For non-quantized models, load normally and move
-            model = LlavaNextForConditionalGeneration.from_pretrained(
-                model_path,
-                torch_dtype=torch.float16,
-                device_map=None,
-                low_cpu_mem_usage=True,
-                attn_implementation="sdpa",
-                quantization_config=quantization_config,
-            )
-            # Move model to the correct device
-            model = model.to(f"cuda:{gpu_id}")
+                    else:
+                # For non-quantized models, load normally and move
+                model = LlavaNextForConditionalGeneration.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.float16,
+                    device_map=None,
+                    low_cpu_mem_usage=False,  # Disable to avoid meta tensors
+                    attn_implementation="sdpa",
+                    quantization_config=quantization_config,
+                )
+                # Move model to the correct device
+                model = model.to(f"cuda:{gpu_id}")
         
         model.eval()
         
@@ -479,7 +479,7 @@ class ToxicityRewardSystem:
                     self.vlm_model_path,
                     torch_dtype=torch.float16,
                     device_map=None,
-                    low_cpu_mem_usage=True,
+                    low_cpu_mem_usage=False,  # Disable to avoid meta tensors
                     attn_implementation="sdpa",
                     quantization_config=quantization_config,
                 )
