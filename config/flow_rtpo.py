@@ -146,8 +146,8 @@ def flow_rtpo_debug():
     
     # Smaller settings for debugging
     config.max_prompts = 8
-    config.sample.batch_size = 2  # Keep batch size as requested
-    config.sample.num_batches_per_epoch = 4  # Process 8 different prompts per epoch for GRPO
+    config.sample.batch_size = 4  # Keep batch size as requested
+    config.sample.num_batches_per_epoch = 2  # Process 8 different prompts per epoch for GRPO
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     config.sample.num_steps = 40
     config.train.gradient_accumulation_steps = 4  # 8 // 2 = 4 for gradient updates
