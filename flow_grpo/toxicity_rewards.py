@@ -76,7 +76,7 @@ class ToxicityRewardSystem:
     
     def __init__(self, 
                  device: str = "cuda",
-                 vlm_model: str = "models/local/llava-v1.6-mistral-7b-hf",
+                 vlm_model: str = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/llava-v1.6-mistral-7b-hf",
                  w_cvar: float = 0.1,
                  w_quality: float = 0.05,
                  tau: float = 0.1,
@@ -780,7 +780,7 @@ class ToxicityRewardSystem:
 
 
 def toxicity_reward_function(device: str = "cuda", 
-                             vlm_model: str = "models/local/llava-v1.6-mistral-7b-hf",
+                             vlm_model: str = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/llava-v1.6-mistral-7b-hf",
                              w_cvar: float = 0.1,
                              w_quality: float = 0.05):
     """Factory function to create toxicity reward function for flow_grpo."""

@@ -77,8 +77,8 @@ class PromptEditorPolicy(nn.Module):
                  use_modification_noise: bool = True,  # Use random noise during embedding modification
                  modification_noise_std: float = 0.005,  # Standard deviation for modification noise
                  # Local model paths
-                 gtr_model_path: str = None,  # Local GTR model path
-                 sbert_model_path: str = None,  # Local SBERT model path
+                 gtr_model_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/gtr-base-t5",  # Local GTR model path
+                 sbert_model_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/all-MiniLM-L6-v2",  # Local SBERT model path
                  **kwargs):  # Accept extra kwargs for backward compatibility
         super().__init__()
         self.epsilon_p = epsilon_p
@@ -131,7 +131,7 @@ class PromptEditorPolicy(nn.Module):
             from sentence_transformers import SentenceTransformer as ST
             
             # Use local SBERT model path if provided, otherwise fall back to HuggingFace
-            sbert_model_name = sbert_model_path if sbert_model_path else 'all-MiniLM-L6-v2'
+            sbert_model_name = sbert_model_path
             print(f"[INFO] Loading SBERT model from: {sbert_model_name}")
             
             self.sbert_model = ST(sbert_model_name).to(device)
@@ -150,7 +150,7 @@ class PromptEditorPolicy(nn.Module):
         from transformers import AutoTokenizer, AutoModel
         
         # Use local GTR model path if provided, otherwise fall back to HuggingFace
-        gtr_model_name = gtr_model_path if gtr_model_path else 'sentence-transformers/gtr-t5-base'
+        gtr_model_name = gtr_model_path
         print(f"[INFO] Loading GTR model from: {gtr_model_name}")
         
         self.gtr_tokenizer = AutoTokenizer.from_pretrained(gtr_model_name)
@@ -167,7 +167,7 @@ class PromptEditorPolicy(nn.Module):
             # Use a simple fallback encoder
             try:
                 from sentence_transformers import SentenceTransformer
-                fallback_model_name = sbert_model_path if sbert_model_path else 'all-MiniLM-L6-v2'
+                fallback_model_name = sbert_model_path
                 self.sentence_transformer_fallback = SentenceTransformer(fallback_model_name).to(device)
             except ImportError:
                 print("[WARNING] sentence-transformers not available for fallback encoder")
