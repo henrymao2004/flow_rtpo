@@ -944,38 +944,38 @@ def main(_):
         epoch_metadata = []
         epoch_clip_scores = []  # Track CLIP similarity scores for quality_mean
         
-        for batch_idx, (prompts, metadata) in enumerate(train_dataloader):
-            if batch_idx >= config.sample.num_batches_per_epoch:
-                break
+        # Training loop
+        for batch_idx, (prompts, metadatas) in enumerate(train_dataloader):
+            print(f"[DEBUG] Epoch {epoch}, Batch {batch_idx}: Processing {len(prompts)} prompts")
+            print(f"[DEBUG] Prompts: {[p[:50] + '...' if len(p) > 50 else p for p in prompts]}")
             
-            logger.info(f"Sampling batch {batch_idx + 1}/{config.sample.num_batches_per_epoch}")
-            logger.info(f"Using reward variance: {current_reward_variance:.6f}")
-            
-            # Sample images using enhanced hierarchical policies
-            batch_samples = sample_batch(pipeline, prompt_editor, prompts, config, accelerator, 
-                                       epoch, batch_idx, current_reward_variance)
+            # Sample batch using hierarchical policies
+            samples = sample_batch(
+                pipeline, prompt_editor, prompts, config, accelerator, 
+                epoch=epoch, batch_idx=batch_idx, reward_variance=current_reward_variance
+            )
             
             # Immediate reward evaluation and saving for this batch
-            if batch_samples:
+            if samples:
                 # Only compute rewards on main process, then broadcast to all processes
                 if accelerator.is_main_process:
                     logger.info(f"Computing rewards for batch {batch_idx + 1}...")
-                    logger.info(f"Batch contains {len(batch_samples)} samples")
+                    logger.info(f"Batch contains {len(samples)} samples")
                     
                     # Prepare batch data
-                    batch_images = [sample["final_image"] for sample in batch_samples]
-                    batch_prompts = [sample["modified_prompt"] for sample in batch_samples]
+                    batch_images = [sample["final_image"] for sample in samples]
+                    batch_prompts = [sample["modified_prompt"] for sample in samples]
                     
                     logger.info(f"Sample modified_prompts: {[p[:50] + '...' if len(p) > 50 else p for p in batch_prompts[:2]]}")
                     logger.info(f"Image types: {[type(img) for img in batch_images[:2]]}")
                     
                     # Compute rewards for this batch
                     logger.info("Starting reward computation...")
-                    batch_rewards, batch_reward_metadata = reward_fn(batch_images, batch_prompts, [{}] * len(batch_samples))
+                    batch_rewards, batch_reward_metadata = reward_fn(batch_images, batch_prompts, [{}] * len(samples))
                     logger.info("Reward computation completed!")
                     
                     # Assign rewards to samples and collect CLIP scores
-                    for i, sample in enumerate(batch_samples):
+                    for i, sample in enumerate(samples):
                         sample["reward"] = batch_rewards[i]
                         sample["final_toxicity"] = batch_reward_metadata["toxicity_scores"]["primary"][i]
                     
@@ -983,9 +983,9 @@ def main(_):
                     epoch_clip_scores.extend(batch_reward_metadata["quality_scores"]["clip_similarity"])
                 else:
                     # Non-main processes: initialize dummy rewards that will be overwritten by broadcast
-                    batch_rewards = [0.0] * len(batch_samples)
-                    batch_reward_metadata = {"toxicity_scores": {"primary": [0.0] * len(batch_samples)}}
-                    for i, sample in enumerate(batch_samples):
+                    batch_rewards = [0.0] * len(samples)
+                    batch_reward_metadata = {"toxicity_scores": {"primary": [0.0] * len(samples)}}
+                    for i, sample in enumerate(samples):
                         sample["reward"] = 0.0
                         sample["final_toxicity"] = 0.0
                 
@@ -996,7 +996,7 @@ def main(_):
                     # Main process has the rewards, others will work with dummy values
                     if not accelerator.is_main_process:
                         # Non-main processes: use dummy values
-                        for sample in batch_samples:
+                        for sample in samples:
                             sample["reward"] = 0.0
                             sample["final_toxicity"] = 0.0
                 
@@ -1006,7 +1006,7 @@ def main(_):
                     logger.info(f"BATCH {batch_idx + 1} REAL-TIME RESULTS:")
                     logger.info("=" * 80)
                     
-                    for i, sample in enumerate(batch_samples):
+                    for i, sample in enumerate(samples):
                         vlm_response = batch_reward_metadata["vlm_responses"][i]
                         
                         # Complete toxicity breakdown with all 6 categories
@@ -1025,7 +1025,7 @@ def main(_):
                         }
                         cvar_bonus = batch_reward_metadata["cvar_bonus"][i]
                         
-                        logger.info(f"Sample {i+1}/{len(batch_samples)}:")
+                        logger.info(f"Sample {i+1}/{len(samples)}:")
                         logger.info(f"  original_prompt: \"{sample['original_prompt'][:80]}{'...' if len(sample['original_prompt']) > 80 else ''}\"")
                         logger.info(f"  modified_prompt: \"{sample['modified_prompt'][:80]}{'...' if len(sample['modified_prompt']) > 80 else ''}\"")
                         logger.info(f"  vlm_response: \"{vlm_response[:80]}{'...' if len(vlm_response) > 80 else ''}\"")
@@ -1053,7 +1053,7 @@ def main(_):
                     # Update the immediately saved files with reward information
                     immediate_save_dir = os.path.join(config.save_dir, "immediate_saves", f"epoch_{epoch}", f"batch_{batch_idx}")
                     
-                    for i, sample in enumerate(batch_samples):
+                    for i, sample in enumerate(samples):
                         sample_id = sample["sample_id"]  # Use the sample_id from the sample
                         
                         # Read the existing basic data
@@ -1101,9 +1101,9 @@ def main(_):
                     logger.info(f"Batch {batch_idx + 1} reward data updated in: {immediate_save_dir}")
                     logger.info(f"Batch {batch_idx + 1} mean reward: {np.mean(batch_rewards):.4f}")
             
-            epoch_samples.extend(batch_samples)
-            epoch_prompts.extend([s["modified_prompt"] for s in batch_samples])
-            epoch_metadata.extend([{} for _ in batch_samples])
+            epoch_samples.extend(samples)
+            epoch_prompts.extend([s["modified_prompt"] for s in samples])
+            epoch_metadata.extend([{} for _ in samples])
         
         logger.info(f"Generated {len(epoch_samples)} samples for epoch {epoch}")
         

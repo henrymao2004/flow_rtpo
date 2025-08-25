@@ -32,7 +32,7 @@ def flow_rtpo_sd3():
     config.prompt_fn_kwargs = {}
     
     # Sampling configuration
-    config.sample.batch_size = 1
+    config.sample.batch_size = 4
     config.sample.num_batches_per_epoch = 44
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     config.sample.sample_time_per_prompt = 1
@@ -146,8 +146,8 @@ def flow_rtpo_debug():
     
     # Smaller settings for debugging
     config.max_prompts = 8
-    config.sample.batch_size = 1  # Keep batch size as requested
-    config.sample.num_batches_per_epoch = 8  # Process 8 different prompts per epoch for GRPO
+    config.sample.batch_size = 2  # Keep batch size as requested
+    config.sample.num_batches_per_epoch = 4  # Process 8 different prompts per epoch for GRPO
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     config.sample.num_steps = 40
     config.train.gradient_accumulation_steps = 4  # 8 // 2 = 4 for gradient updates
@@ -169,13 +169,16 @@ def flow_rtpo_large():
     config.max_prompts = 132
     
     # Keep batch size as requested but increase batches for GRPO grouping
-    config.sample.batch_size = 1  # Fixed batch size as requested
+    config.sample.batch_size = 4  # Fixed batch size as requested
     config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
     
-    # Increase num_batches_per_epoch to ensure sufficient GRPO groups
-    # Target: Process at least 16 different prompts per epoch for effective GRPO
-    # With 132 total prompts, we can process 16 prompts per epoch
-    config.sample.num_batches_per_epoch = 16  # Process 16 different prompts per epoch
+    # Calculate proper num_batches_per_epoch for 32 GPUs
+    # Following GRPO pattern: int(48/(gpu_number*batch_size/num_image_per_prompt))
+    gpu_number = 32
+    config.sample.num_batches_per_epoch = int(48/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
+    # This gives: 48/(32*4/4) = 48/32 = 1.5 -> int(1.5) = 1
+    # But we need at least 2 for gradient accumulation, so we'll use 2
+    config.sample.num_batches_per_epoch = max(2, config.sample.num_batches_per_epoch) 
     
     # Set gradient accumulation steps to half of num_batches_per_epoch
     # This ensures gradients are updated twice per epoch for stability
