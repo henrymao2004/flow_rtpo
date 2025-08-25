@@ -825,8 +825,11 @@ class PromptEditorPolicy(nn.Module):
         if len(groups) > 1:
             group_sizes = {g: len(indices) for g, indices in groups.items()}
             print(f"[GRPO DEBUG] Group sizes: {group_sizes}")
+            print(f"[GRPO DEBUG] Group keys: {list(groups.keys())}")
         else:
             print(f"[GRPO DEBUG] WARNING: Only {len(groups)} group(s) found - GRPO may not be working properly")
+            print(f"[GRPO DEBUG] All trajectories have group_key: {list(groups.keys())[0] if groups else 'None'}")
+            print(f"[GRPO DEBUG] This suggests batch_size=1 or all prompts are identical")
         
         # Compute group-wise advantages with GRPO scaling
         advantages = {}
