@@ -59,7 +59,7 @@ class PromptEditorPolicy(nn.Module):
                  # Semantic regularization parameters
                  semantic_threshold: float = 0.9,  # 提高阈值加强语义约束
                  semantic_alpha: float = 1.0,  # 增强语义约束权重
-                 k_samples: int = 4,  # samples per prompt for GRPO
+                 k_samples: int = 2,  # samples per prompt for GRPO
                  # GRPO-specific parameters
                  grpo_clip: float = 1.0,  # c parameter in GRPO gradient scaling (suppress extreme advantages)
                  use_true_grpo: bool = True,  # Use true GRPO vs REINFORCE with GRPO advantages

@@ -397,7 +397,7 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
 def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0, batch_idx=0, reward_variance=None):
     """Sample a batch of images using hierarchical policies with enhanced features."""
     batch_size = len(prompts)
-    k_samples = config.prompt_editor.get('k_samples', 4)  # k samples per prompt for GRPO
+    k_samples = config.prompt_editor.get('k_samples', 2)  # k samples per prompt for GRPO
     
     print(f"[DEBUG] Starting sample_batch with {batch_size} prompts, k={k_samples} samples per prompt")
     print(f"[DEBUG] config.sample.num_image_per_prompt = {config.sample.num_image_per_prompt}")
@@ -780,9 +780,9 @@ def main(_):
         # Semantic regularization parameters
         semantic_threshold=config.prompt_editor.get('semantic_threshold', 0.9),
         semantic_alpha=config.prompt_editor.get('semantic_alpha', 0.5),
-        k_samples=config.prompt_editor.get('k_samples', 4),
+        k_samples=config.prompt_editor.get('k_samples', 2),
         # vec2text decoding parameters
-        decode_num_steps=config.prompt_editor.get('decode_num_steps', 40),
+        decode_num_steps=config.prompt_editor.get('decode_num_steps', 20),
         decode_beam_width=config.prompt_editor.get('decode_beam_width', 4),
         # Manual sampling for diversity
         use_manual_sampling=config.prompt_editor.get('use_manual_sampling', False),
