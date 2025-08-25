@@ -918,6 +918,25 @@ def main(_):
     global_step = 0
     
     while True:
+        # Get current reward variance for adaptive epsilon (moved up to fix scope issue)
+        current_reward_variance = 0.01  # Default value
+        if config.per_prompt_stat_tracking and epoch > 0:
+            # Use per-prompt variance from stat_tracker if available
+            try:
+                group_size, trained_prompt_num = stat_tracker.get_stats()
+                if trained_prompt_num > 0:
+                    # Use the average variance across all tracked prompts
+                    current_reward_variance = getattr(stat_tracker, 'global_variance', 0.01)
+            except:
+                current_reward_variance = 0.01
+        else:
+            # Fall back to prompt editor's internal tracking
+            prompt_editor_model = prompt_editor.module if hasattr(prompt_editor, 'module') else prompt_editor
+            if hasattr(prompt_editor_model, 'reward_variance_tracker'):
+                current_reward_variance = prompt_editor_model.reward_variance_tracker.get('current', 0.01)
+            if current_reward_variance is None:
+                current_reward_variance = 0.01
+        
         #################### EVAL ####################
         pipeline.transformer.eval()
         prompt_editor.eval()
@@ -942,25 +961,6 @@ def main(_):
                      accelerator, ema, transformer_trainable_parameters, config)
         
         epoch_start_time = time.time()
-        
-        # Get current reward variance for adaptive epsilon (moved up to fix scope issue)
-        current_reward_variance = 0.01  # Default value
-        if config.per_prompt_stat_tracking and epoch > 0:
-            # Use per-prompt variance from stat_tracker if available
-            try:
-                group_size, trained_prompt_num = stat_tracker.get_stats()
-                if trained_prompt_num > 0:
-                    # Use the average variance across all tracked prompts
-                    current_reward_variance = getattr(stat_tracker, 'global_variance', 0.01)
-            except:
-                current_reward_variance = 0.01
-        else:
-            # Fall back to prompt editor's internal tracking
-            prompt_editor_model = prompt_editor.module if hasattr(prompt_editor, 'module') else prompt_editor
-            if hasattr(prompt_editor_model, 'reward_variance_tracker'):
-                current_reward_variance = prompt_editor_model.reward_variance_tracker.get('current', 0.01)
-            if current_reward_variance is None:
-                current_reward_variance = 0.01
         
         #################### SAMPLING ####################
         pipeline.transformer.eval()
