@@ -101,9 +101,9 @@ def flow_rtpo_sd3():
     config.log_freq = 1    # Log every epoch
     
     # Resolution
-    config.resolution = 768
-    config.height = 768
-    config.width = 768
+    config.resolution = 1024
+    config.height = 1024
+    config.width = 1024
     
     # Per-prompt stat tracking for GRPO
     config.per_prompt_stat_tracking = True
@@ -175,7 +175,7 @@ def flow_rtpo_large():
     # Calculate proper num_batches_per_epoch for 32 GPUs
     # Following GRPO pattern: int(132/(gpu_number*batch_size/num_image_per_prompt))
     gpu_number = 32
-    config.sample.num_batches_per_epoch = int(132/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
+    config.sample.num_batches_per_epoch = int(105/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
     # This gives: 132/(32*2/4) = 132/16 = 8.25 -> int(8.25) = 8
     config.sample.num_batches_per_epoch = max(2, config.sample.num_batches_per_epoch) 
     
