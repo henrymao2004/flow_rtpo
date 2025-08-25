@@ -1,0 +1,71 @@
+# Flow-RTPO Requirements
+# Core ML and Deep Learning
+torch==2.6.0
+torchvision==0.21.0
+torchaudio
+transformers==4.40.0
+accelerate==1.4.0
+diffusers==0.33.1
+peft==0.10.0
+deepspeed==0.16.4
+bitsandbytes==0.45.3
+
+# Scientific Computing
+numpy==1.26.4
+pandas==2.2.3
+scipy==1.15.2
+scikit-learn==1.6.1
+scikit-image==0.25.2
+
+# Computer Vision and Image Processing
+opencv-python==4.11.0.86
+pillow==10.4.0
+albumentations==1.4.10
+
+# HuggingFace Ecosystem
+huggingface-hub==0.29.1
+datasets==3.3.2
+tokenizers==0.19.1
+sentence-transformers
+
+# Optimization and Performance
+xformers
+einops==0.8.1
+nvidia-ml-py==12.570.86
+
+# Toxicity Detection
+detoxify
+
+# Text Processing and Embeddings
+vec2text
+sentencepiece
+
+# Configuration and Utilities
+ml_collections
+absl-py
+pydantic==2.10.6
+
+# Web and API
+requests==2.32.3
+aiohttp==3.11.13
+fastapi==0.115.11
+uvicorn==0.34.0
+
+# Logging and Monitoring
+wandb==0.18.7
+swanlab
+tqdm==4.67.1
+
+# Visualization
+matplotlib==3.10.0
+
+# OpenAI (for potential API usage)
+openai
+
+# Development Tools (optional)
+# ipython==8.34.0
+# black==24.2.0
+# pytest==8.2.0
+
+# Additional dependencies for specific features
+# flash-attn==2.7.4.post1  # Uncomment if needed for Flash Attention 
