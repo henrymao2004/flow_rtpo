@@ -44,7 +44,7 @@ import random
 tqdm = partial(tqdm.tqdm, dynamic_ncols=True)
 
 FLAGS = flags.FLAGS
-config_flags.DEFINE_config_file("config", "config/flow_rtpo.py", "Training configuration.")
+config_flags.DEFINE_config_file("config", "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/config/flow_rtpo.py", "Training configuration.")
 
 logger = get_logger(__name__)
 
@@ -887,13 +887,10 @@ def main(_):
         train_dataloader
     )
     
-<<<<<<< HEAD
     # for deepspeed zero
     if accelerator.state.deepspeed_plugin:
         accelerator.state.deepspeed_plugin.deepspeed_config['train_micro_batch_size_per_gpu'] = config.sample.train_batch_size
     
-=======
->>>>>>> d06b514e9bb6b7682aa06862500e15792275a8bd
     # Move pipeline components to device
     pipeline.vae.to(accelerator.device)
     pipeline.text_encoder.to(accelerator.device)

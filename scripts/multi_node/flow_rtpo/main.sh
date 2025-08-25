@@ -8,14 +8,9 @@ export NCCL_IB_GID_INDEX=3
 MASTER_PORT=19001
 RANK=0
 MASTER_ADDR=10.82.139.22
-<<<<<<< HEAD
 # Launch command with DeepSpeed support
-accelerate launch --config_file scripts/accelerate_configs/deepspeed_zero2_multi_node.yaml \
-=======
-# Launch command (parameters automatically read from accelerate_multi_node.yaml)
-accelerate launch --config_file scripts/accelerate_configs/flow_rtpo_multi_node.yaml \
->>>>>>> d06b514e9bb6b7682aa06862500e15792275a8bd
+accelerate launch --config_file /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/scripts/accelerate_configs/deepspeed_zero2_multi_node.yaml \
     --num_machines 4 --num_processes 32 \
     --machine_rank ${RANK} --main_process_ip ${MASTER_ADDR} --main_process_port ${MASTER_PORT} \
-    scripts/train_flow_rtpo.py \
-    --config config/flow_rtpo.py:flow_rtpo_large 
+    /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/scripts/train_flow_rtpo.py \
+    --config /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/config/flow_rtpo.py:flow_rtpo_large 

@@ -121,7 +121,7 @@ def flow_rtpo_sd3():
     
     # Logging and saving
     config.run_name = "flow_rtpo_sd3_llava"
-    config.save_dir = f'logs/flow_rtpo/{config.run_name}'
+    config.save_dir = f'/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/logs/flow_rtpo/{config.run_name}'
     config.num_checkpoint_limit = 5
     config.resume_from = None
     
@@ -156,7 +156,7 @@ def flow_rtpo_debug():
     config.eval_freq = 2
     
     config.run_name = "flow_rtpo_debug"
-    config.save_dir = f'logs/flow_rtpo/{config.run_name}'
+    config.save_dir = f'/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/logs/flow_rtpo/{config.run_name}'
     
     return config
 
@@ -193,7 +193,7 @@ def flow_rtpo_large():
     config.toxicity_reward.tau = 0.2  
     
     config.run_name = "flow_rtpo_large_scale"
-    config.save_dir = f'logs/flow_rtpo/{config.run_name}'
+    config.save_dir = f'/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/logs/flow_rtpo/{config.run_name}'
     
     return config
 
@@ -246,7 +246,7 @@ def flow_rtpo_memory_optimized():
     config.eval.num_samples = 10  # Reduce from 20 to 10
     
     config.run_name = "flow_rtpo_memory_optimized"
-    config.save_dir = f'logs/flow_rtpo/{config.run_name}'
+    config.save_dir = f'/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/logs/flow_rtpo/{config.run_name}'
     
     return config
 
