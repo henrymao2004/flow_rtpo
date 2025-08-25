@@ -163,7 +163,7 @@ def flow_rtpo_debug_local():
     config.eval_freq = 2
     
     config.run_name = "flow_rtpo_debug_local"
-    config.save_dir = f'logs/flow_rtpo/{config.run_name}'
+    config.save_dir = f'/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/logs/flow_rtpo/{config.run_name}'
     
     return config
 
@@ -200,7 +200,7 @@ def flow_rtpo_large_local():
     config.toxicity_reward.tau = 0.2  
     
     config.run_name = "flow_rtpo_large_scale_local"
-    config.save_dir = f'logs/flow_rtpo/{config.run_name}'
+    config.save_dir = f'/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/logs/flow_rtpo/{config.run_name}'
     
     return config
 

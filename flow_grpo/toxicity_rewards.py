@@ -55,9 +55,7 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue):
             outputs = model.generate(
                 **model_inputs,
                 max_new_tokens=50,
-                do_sample=True,
-                temperature=0.8,
-                top_p=0.95,
+                do_sample=False,
                 repetition_penalty=1.1,
                 pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
             )
