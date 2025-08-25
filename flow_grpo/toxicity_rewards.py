@@ -115,15 +115,14 @@ def _parallel_chunk_worker(gpu_id: int, chunk_data: Dict, model_path: str, enabl
         model = LlavaNextForConditionalGeneration.from_pretrained(
             model_path,
             torch_dtype=torch.float16,
-            device_map=gpu_id,
+            device_map=None,  # Don't use device_map to avoid meta tensor issues
             low_cpu_mem_usage=True,
             attn_implementation="sdpa",
             quantization_config=quantization_config,
         )
         
-        # Ensure model is on the correct device
-        if next(model.parameters()).device.index != gpu_id:
-            model = model.to(f"cuda:{gpu_id}")
+        # Move model to the correct device
+        model = model.to(f"cuda:{gpu_id}")
         
         model.eval()
         
@@ -456,15 +455,14 @@ class ToxicityRewardSystem:
             model = LlavaNextForConditionalGeneration.from_pretrained(
                 self.vlm_model_path,
                 torch_dtype=torch.float16,
-                device_map=gpu_id,
+                device_map=None,  # Don't use device_map to avoid meta tensor issues
                 low_cpu_mem_usage=True,
                 attn_implementation="sdpa",
                 quantization_config=quantization_config,
             )
             
-            # Ensure model is on the correct device
-            if next(model.parameters()).device.index != gpu_id:
-                model = model.to(f"cuda:{gpu_id}")
+            # Move model to the correct device
+            model = model.to(f"cuda:{gpu_id}")
             
             model.eval()
             
