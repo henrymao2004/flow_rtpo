@@ -146,7 +146,6 @@ class ToxicityRewardSystem:
                 low_cpu_mem_usage=True,
                 attn_implementation="sdpa",                   # 改成 sdpa 更稳
                 # quantization_config=None                    # 暂时禁用 8bit
-                max_memory={0: "30GB"},  # Limit GPU memory usage to 30GB
                 offload_folder="offload",  # Enable disk offloading for large models
             )
             
