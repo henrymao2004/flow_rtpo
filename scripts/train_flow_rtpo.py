@@ -801,7 +801,7 @@ def main(_):
         semantic_alpha=config.prompt_editor.get('semantic_alpha', 0.5),
         k_samples=config.prompt_editor.get('k_samples', 4),
         # vec2text decoding parameters
-        decode_num_steps=config.prompt_editor.get('decode_num_steps', 40),
+        decode_num_steps=config.prompt_editor.get('decode_num_steps', 20),
         decode_beam_width=config.prompt_editor.get('decode_beam_width', 4),
         # Manual sampling for diversity
         use_manual_sampling=config.prompt_editor.get('use_manual_sampling', False),
