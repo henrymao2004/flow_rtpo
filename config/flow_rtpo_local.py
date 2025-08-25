@@ -89,7 +89,7 @@ def flow_rtpo_sd3_local():
     config.target_vlm = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/llava-v1.6-mistral-7b-hf"
     
     # GTR-T5 configuration - LOCAL GTR-T5
-    config.gtr_t5_model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/gtr-base-t5"
+    config.gtr_t5_model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/gtr-t5-base"
     
     # SBERT configuration - LOCAL all-MiniLM-L6-v2
     config.sbert_model = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/all-MiniLM-L6-v2"

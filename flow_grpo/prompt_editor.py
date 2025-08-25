@@ -77,7 +77,8 @@ class PromptEditorPolicy(nn.Module):
                  use_modification_noise: bool = True,  # Use random noise during embedding modification
                  modification_noise_std: float = 0.005,  # Standard deviation for modification noise
                  # Local model paths
-                 gtr_model_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/gtr-base-t5",  # Local GTR model path
+                 
+                 gtr_model_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/gtr-t5-base",  # Local GTR model path
                  sbert_model_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/models/local/all-MiniLM-L6-v2",  # Local SBERT model path
                  **kwargs):  # Accept extra kwargs for backward compatibility
         super().__init__()
