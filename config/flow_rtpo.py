@@ -95,7 +95,7 @@ def flow_rtpo_sd3():
     config.train.learning_rate = 1e-5
     config.train.clip_range = 1e-3
     config.train.adv_clip_max = 5
-    config.train.beta = 0.000  # KL regularization coefficient
+    config.train.beta = 0.004  # KL regularization coefficient
     
     # Enhanced hierarchical policy configuration
     config.prompt_editor = ml_collections.ConfigDict()
