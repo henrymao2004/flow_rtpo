@@ -955,7 +955,7 @@ def main(_):
                 current_reward_variance = 0.01
         
         #################### TEST EVALUATION ####################
-        if epoch % config.get('eval_freq', 5) == 0:
+        if epoch > 0 and epoch % config.get('eval_freq', 5) == 0:
             logger.info(f"Starting test evaluation for epoch {epoch}")
             test_results = evaluate_test_set(
                 pipeline, prompt_editor, test_prompts, test_metadata, 
