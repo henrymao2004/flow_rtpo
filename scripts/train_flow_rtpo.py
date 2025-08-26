@@ -7,7 +7,7 @@ import time
 import json
 import hashlib
 from absl import app, flags
-from accelerate import Accelerator
+from accelerate import Accelerator, DistributedDataParallelKwargs
 from ml_collections import config_flags
 from accelerate.utils import set_seed, ProjectConfiguration
 from accelerate.logging import get_logger
@@ -380,24 +380,14 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
         timesteps = sample["timesteps"][timestep_idx].view(1)
         latents = sample["latents"][timestep_idx].unsqueeze(0)
 
-        # Fix: Only transformer is DDP-wrapped and needs no_sync
-        if hasattr(transformer, 'no_sync'):
-            with transformer.no_sync():
-                noise_pred = transformer(
-                    hidden_states=latents,
-                    timestep=timesteps,
-                    encoder_hidden_states=embeds,
-                    pooled_projections=pooled_embeds,
-                    return_dict=False,
-                )[0]
-        else:
-            noise_pred = transformer(
-                hidden_states=latents,
-                timestep=timesteps,
-                encoder_hidden_states=embeds,
-                pooled_projections=pooled_embeds,
-                return_dict=False,
-            )[0]
+        # Use transformer (buffer broadcasting disabled at DDP level)
+        noise_pred = transformer(
+            hidden_states=latents,
+            timestep=timesteps,
+            encoder_hidden_states=embeds,
+            pooled_projections=pooled_embeds,
+            return_dict=False,
+        )[0]
 
         # previous latent (if any) should also be [1, C, H, W]
         prev_latent = sample["latents"][timestep_idx - 1].unsqueeze(0) if timestep_idx > 0 else None
@@ -445,15 +435,9 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
     print(f"[DEBUG] Expanded to {len(prompts_expanded)} prompt modifications")
     print(f"[DEBUG] Starting prompt editor with reward_variance={reward_variance}...")
     
-    # Fix prompt_editor DDP synchronization
-    if accelerator.num_processes > 1:
-        with prompt_editor.no_sync():  # prompt_editor is DDP-wrapped
-            with torch.no_grad():
-                modified_prompts, prompt_deltas, original_embeddings, policy_info = prompt_editor(prompts_expanded, reward_variance)
-    else:
-        # Single GPU - use regular prompt_editor
-        with torch.no_grad():
-            modified_prompts, prompt_deltas, original_embeddings, policy_info = prompt_editor(prompts_expanded, reward_variance)
+    # Use prompt_editor (buffer broadcasting disabled at DDP level)
+    with torch.no_grad():
+        modified_prompts, prompt_deltas, original_embeddings, policy_info = prompt_editor(prompts_expanded, reward_variance)
     
     print(f"[DEBUG] Prompt editor completed. Modified prompts: {[p[:50] + '...' if len(p) > 50 else p for p in modified_prompts[:2]]}")
     print(f"[DEBUG] Length mismatch check: prompts_expanded={len(prompts_expanded)}, modified_prompts={len(modified_prompts)}")
@@ -691,10 +675,18 @@ def main(_):
         total_limit=config.num_checkpoint_limit,
     )
     
+    # Configure DDP to disable buffer broadcasting (prevents NCCL timeout during inference)
+    ddp_kwargs = DistributedDataParallelKwargs(
+        broadcast_buffers=False,   # Key: disable buffer broadcasting
+        find_unused_parameters=False,
+        static_graph=True,
+    )
+    
     accelerator = Accelerator(
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
         gradient_accumulation_steps=config.train.gradient_accumulation_steps,
+        kwargs_handlers=[ddp_kwargs],
     )
     
     # Debug info for each rank
