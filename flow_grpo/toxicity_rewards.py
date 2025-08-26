@@ -29,7 +29,7 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue):
         model = LlavaNextForConditionalGeneration.from_pretrained(
             model_path,
             torch_dtype=torch.float16,
-            device_map=0,
+            device_map={"": f"cuda:{gpu_id}"},  # 每个 worker 用不同的 GPU
             low_cpu_mem_usage=True,
             attn_implementation="sdpa",
         )
@@ -213,7 +213,7 @@ class ToxicityRewardSystem:
         
     # Aesthetic scorer initialization removed per user request
     
-    def safe_generate(self, inputs: Dict, timeout: int = 60) -> List[str]:
+    def safe_generate(self, inputs: Dict, timeout: int = 120) -> List[str]:
         """Safe VLM generation with subprocess timeout."""
         try:
             # Serialize inputs
@@ -374,8 +374,8 @@ class ToxicityRewardSystem:
                     
                     # Try safe batch generation with subprocess timeout
                     try:
-                        print(f"[VLM GEN] Starting safe generation with 60s timeout", flush=True)
-                        batch_responses = self.safe_generate(batch_inputs, timeout=60)
+                        print(f"[VLM GEN] Starting safe generation with 120s timeout", flush=True)
+                        batch_responses = self.safe_generate(batch_inputs, timeout=120)
                         
                         generation_time = time.time() - start_generation_time
                         print(f"[VLM STEP] Batch generation completed in {generation_time:.3f}s!", flush=True)

@@ -1271,14 +1271,21 @@ def main(_):
                 
                 # Log flow controller metrics after each optimizer step
                 if accelerator.is_main_process:
+                    # Calculate current reward metrics from epoch_samples
+                    current_rewards = [sample["reward"] for sample in epoch_samples] if epoch_samples else [0]
+                    current_toxicity = [sample["final_toxicity"] for sample in epoch_samples] if epoch_samples else [0]
+                    
                     flow_log_data = {
                         "epoch": epoch,
                         "global_step": global_step,
-                        "optimizer_type": "flow_controller",
                         "flow_policy_loss": np.mean(train_info.get("flow_policy_loss", [0])),
                         "kl_loss": np.mean(train_info.get("kl_loss", [0])),
                         "batch_idx": i,
                         "inner_epoch": inner_epoch,
+                        "reward_mean": np.mean(current_rewards),
+                        "reward_std": np.std(current_rewards),
+                        "toxicity_mean": np.mean(current_toxicity),
+                        "toxicity_max": np.max(current_toxicity) if current_toxicity else 0,
                     }
                     swanlab.log(flow_log_data)
                     logger.info(f"Flow Controller Step {global_step}: {flow_log_data}")
@@ -1367,10 +1374,13 @@ def main(_):
                 
                 # Log prompt editor metrics after each optimizer step
                 if accelerator.is_main_process:
+                    # Calculate current reward metrics from epoch_samples
+                    current_rewards = [sample["reward"] for sample in epoch_samples] if epoch_samples else [0]
+                    current_toxicity = [sample["final_toxicity"] for sample in epoch_samples] if epoch_samples else [0]
+                    
                     prompt_log_data = {
                         "epoch": epoch,
                         "global_step": global_step,
-                        "optimizer_type": "prompt_editor",
                         "prompt_policy_loss": np.mean(train_info.get("prompt_policy_loss", [0])),
                         "prompt_reg_loss": np.mean(train_info.get("prompt_reg_loss", [0])),
                         "total_prompt_loss": np.mean(train_info.get("total_prompt_loss", [0])),
@@ -1386,6 +1396,10 @@ def main(_):
                         "reg_mean_semantic_sim": np.mean(train_info.get("reg_mean_semantic_sim", [0])),
                         "prompt_warmup_factor": np.mean(train_info.get("prompt_warmup_factor", [1])),
                         "inner_epoch": inner_epoch,
+                        "reward_mean": np.mean(current_rewards),
+                        "reward_std": np.std(current_rewards),
+                        "toxicity_mean": np.mean(current_toxicity),
+                        "toxicity_max": np.max(current_toxicity) if current_toxicity else 0,
                     }
                     swanlab.log(prompt_log_data)
                     logger.info(f"Prompt Editor Step {global_step}: {prompt_log_data}")
@@ -1455,7 +1469,6 @@ def main(_):
                 "cvar_mean": reward_metadata["statistics"]["cvar_mean"],
                 "cvar_threshold": reward_metadata["cvar_threshold"],
                 "quality_mean": reward_metadata["statistics"]["quality_mean"],
-                "log_type": "epoch_summary",
                 # Convergence monitoring metrics
                 **convergence_metrics,
             }
