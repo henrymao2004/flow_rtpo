@@ -19,6 +19,24 @@ export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
+# NCCL Configuration - Fix timeout issues
+export NCCL_TIMEOUT=1800  # 30 minutes timeout
+export NCCL_IB_TIMEOUT=1800
+export NCCL_IB_RETRY_CNT=7
+export NCCL_IB_SL=0
+export NCCL_IB_TC=41
+export NCCL_IB_HCA=mlx5
+export NCCL_DEBUG=INFO
+export NCCL_IB_DISABLE=0
+export NCCL_P2P_DISABLE=0
+export NCCL_SHM_DISABLE=0
+export NCCL_NET_GDR_LEVEL=0
+export NCCL_NET_GDR_READ=0
+export NCCL_CROSS_NIC=0
+export NCCL_BUFFSIZE=2097152
+export NCCL_NTHREADS=8
+export NCCL_RINGS=4
+
 # Set environment variables for multi-GPU
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7  # Eight GPUs
 export TOKENIZERS_PARALLELISM=false

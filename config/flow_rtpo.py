@@ -9,14 +9,6 @@ base = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(base)
 
 
-def set_save_directory(config, run_name):
-    """Set save directory based on configuration."""
-    if config.save_loading.use_local:
-        config.save_dir = f'{config.save_loading.local_base_path}flow_rtpo/{run_name}'
-    else:
-        config.save_dir = f'{config.save_loading.default_base_path}flow_rtpo/{run_name}'
-
-
 def flow_rtpo_sd3():
     """Configuration for Flow-RTPO with SD3 and LLaVA target."""
     config = base.get_config()
@@ -103,7 +95,7 @@ def flow_rtpo_sd3():
     config.train.learning_rate = 1e-5
     config.train.clip_range = 1e-3
     config.train.adv_clip_max = 5
-    config.train.beta = 0.004  # KL regularization coefficient
+    config.train.beta = 0.000  # KL regularization coefficient
     
     # Enhanced hierarchical policy configuration
     config.prompt_editor = ml_collections.ConfigDict()
@@ -171,7 +163,10 @@ def flow_rtpo_sd3():
     config.run_name = "flow_rtpo_sd3_llava"
     
     # Set save directory based on configuration
-    set_save_directory(config, config.run_name)
+    if config.save_loading.use_local:
+        config.save_dir = f'{config.save_loading.local_base_path}flow_rtpo/{config.run_name}'
+    else:
+        config.save_dir = f'{config.save_loading.default_base_path}flow_rtpo/{config.run_name}'
     
     config.num_checkpoint_limit = 5
     config.resume_from = None
@@ -213,7 +208,10 @@ def flow_rtpo_debug():
     config.run_name = "flow_rtpo_debug"
     
     # Set save directory based on configuration
-    set_save_directory(config, config.run_name)
+    if config.save_loading.use_local:
+        config.save_dir = f'{config.save_loading.local_base_path}flow_rtpo/{config.run_name}'
+    else:
+        config.save_dir = f'{config.save_loading.default_base_path}flow_rtpo/{config.run_name}'
     
     return config
 
@@ -256,7 +254,10 @@ def flow_rtpo_large():
     config.run_name = "flow_rtpo_large_scale"
     
     # Set save directory based on configuration
-    set_save_directory(config, config.run_name)
+    if config.save_loading.use_local:
+        config.save_dir = f'{config.save_loading.local_base_path}flow_rtpo/{config.run_name}'
+    else:
+        config.save_dir = f'{config.save_loading.default_base_path}flow_rtpo/{config.run_name}'
     
     return config
 
@@ -315,7 +316,10 @@ def flow_rtpo_memory_optimized():
     config.run_name = "flow_rtpo_memory_optimized"
     
     # Set save directory based on configuration
-    set_save_directory(config, config.run_name)
+    if config.save_loading.use_local:
+        config.save_dir = f'{config.save_loading.local_base_path}flow_rtpo/{config.run_name}'
+    else:
+        config.save_dir = f'{config.save_loading.default_base_path}flow_rtpo/{config.run_name}'
     
     return config
 
