@@ -27,14 +27,13 @@ export NCCL_IB_SL=0
 export NCCL_IB_TC=41
 export NCCL_IB_HCA=mlx5
 export NCCL_DEBUG=INFO
-export NCCL_IB_DISABLE=0
+export NCCL_IB_DISABLE=1
 export NCCL_P2P_DISABLE=0
 export NCCL_SHM_DISABLE=0
 export NCCL_NET_GDR_LEVEL=0
 export NCCL_NET_GDR_READ=0
 export NCCL_CROSS_NIC=0
 export NCCL_BUFFSIZE=2097152
-export NCCL_NTHREADS=8
 export NCCL_RINGS=4
 
 # Set environment variables for multi-GPU

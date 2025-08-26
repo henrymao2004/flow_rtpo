@@ -24,12 +24,15 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue):
         from transformers import LlavaNextForConditionalGeneration, LlavaNextProcessor
         import pickle
         
-        print(f"[SUBPROCESS] Loading model: {model_path}", flush=True)
+        # Get current device ID for this subprocess
+        gpu_id = torch.cuda.current_device() if torch.cuda.is_available() else 0
+        
+        print(f"[SUBPROCESS] Loading model: {model_path} on GPU {gpu_id}", flush=True)
         processor = LlavaNextProcessor.from_pretrained(model_path)
         model = LlavaNextForConditionalGeneration.from_pretrained(
             model_path,
             torch_dtype=torch.float16,
-            device_map={"": f"cuda:{gpu_id}"},  # 每个 worker 用不同的 GPU
+            device_map={"": f"cuda:{gpu_id}"},  # Use current GPU for this worker
             low_cpu_mem_usage=True,
             attn_implementation="sdpa",
         )
