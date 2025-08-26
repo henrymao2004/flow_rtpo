@@ -68,4 +68,4 @@ openai
 # pytest==8.2.0
 
 # Additional dependencies for specific features
-# flash-attn==2.7.4.post1  # Uncomment if needed for Flash Attention 
+flash-attn # Uncomment if needed for Flash Attention 
