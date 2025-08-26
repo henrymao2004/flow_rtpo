@@ -1,5 +1,6 @@
 #!/bin/bash
 # Common part for all nodes
+export PYTHONPATH="//mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo"
 export NCCL_IB_DISABLE=0
 export NCCL_IB_HCA=mlx5
 export NCCL_DEBUG=WARN
