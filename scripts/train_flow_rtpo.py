@@ -136,57 +136,29 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
             print(f"[TEST EVAL] Generating image for test prompt {start_idx + prompt_idx + 1}/{len(test_prompts)}")
             
             # Encode prompt for SD3
-            if accelerator.num_processes > 1:
-                # 关键修复：在测试评估时禁用DDP同步
-                with pipeline.text_encoder.no_sync(), pipeline.text_encoder_2.no_sync(), pipeline.text_encoder_3.no_sync():
-                    prompt_embeds, pooled_prompt_embeds = encode_prompt(
-                        text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
-                        tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
-                        prompt=prompt,
-                        max_sequence_length=256,
-                        device=accelerator.device,
-                        num_images_per_prompt=1
-                    )
-            else:
-                prompt_embeds, pooled_prompt_embeds = encode_prompt(
-                    text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
-                    tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
-                    prompt=prompt,
-                    max_sequence_length=256,
-                    device=accelerator.device,
-                    num_images_per_prompt=1
-                )
+            prompt_embeds, pooled_prompt_embeds = encode_prompt(
+                text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
+                tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
+                prompt=prompt,
+                max_sequence_length=256,
+                device=accelerator.device,
+                num_images_per_prompt=1
+            )
             
             # Generate single image per test prompt
             with torch.no_grad():
-                if accelerator.num_processes > 1:
-                    # 关键修复：在测试评估时禁用DDP同步
-                    with pipeline.no_sync():
-                        final_images, latents_list, log_probs = pipeline_with_logprob(
-                            pipeline,
-                            prompt=prompt,
-                            height=config.height,
-                            width=config.width,
-                            num_inference_steps=config.sample.num_steps,
-                            guidance_scale=config.sample.guidance_scale,
-                            num_images_per_prompt=1,
-                            generator=torch.Generator(device=accelerator.device).manual_seed(
-                                random.randint(0, 2**32 - 1)
-                            ),
-                        )
-                else:
-                    final_images, latents_list, log_probs = pipeline_with_logprob(
-                        pipeline,
-                        prompt=prompt,
-                        height=config.height,
-                        width=config.width,
-                        num_inference_steps=config.sample.num_steps,
-                        guidance_scale=config.sample.guidance_scale,
-                        num_images_per_prompt=1,
-                        generator=torch.Generator(device=accelerator.device).manual_seed(
-                            random.randint(0, 2**32 - 1)
-                        ),
-                    )
+                final_images, latents_list, log_probs = pipeline_with_logprob(
+                    pipeline,
+                    prompt=prompt,
+                    height=config.height,
+                    width=config.width,
+                    num_inference_steps=config.sample.num_steps,
+                    guidance_scale=config.sample.guidance_scale,
+                    num_images_per_prompt=1,
+                    generator=torch.Generator(device=accelerator.device).manual_seed(
+                        random.randint(0, 2**32 - 1)
+                    ),
+                )
             
             # Extract the first (and only) image
             final_image = final_images[0] if isinstance(final_images, list) else final_images
@@ -405,23 +377,27 @@ def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, em
 def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled_embeds, config):
     """Compute log probability for a single timestep using the flow controller."""
     with torch.autocast("cuda", dtype=torch.bfloat16):
-        # scalar timestep with batch dim -> [1]
         timesteps = sample["timesteps"][timestep_idx].view(1)
-
-        # current latent is [C, H, W]; add batch -> [1, C, H, W]
         latents = sample["latents"][timestep_idx].unsqueeze(0)
 
-        # DEBUG (optional)
-        # print(f"[DEBUG] latents[t={timestep_idx}] shape (batched):", latents.shape)  # [1, C, H, W]
-        # print(f"[DEBUG] timesteps shape:", timesteps.shape)  # [1]
-
-        noise_pred = transformer(
-            hidden_states=latents,
-            timestep=timesteps,
-            encoder_hidden_states=embeds,
-            pooled_projections=pooled_embeds,
-            return_dict=False,
-        )[0]
+        # Fix: Only transformer is DDP-wrapped and needs no_sync
+        if hasattr(transformer, 'no_sync'):
+            with transformer.no_sync():
+                noise_pred = transformer(
+                    hidden_states=latents,
+                    timestep=timesteps,
+                    encoder_hidden_states=embeds,
+                    pooled_projections=pooled_embeds,
+                    return_dict=False,
+                )[0]
+        else:
+            noise_pred = transformer(
+                hidden_states=latents,
+                timestep=timesteps,
+                encoder_hidden_states=embeds,
+                pooled_projections=pooled_embeds,
+                return_dict=False,
+            )[0]
 
         # previous latent (if any) should also be [1, C, H, W]
         prev_latent = sample["latents"][timestep_idx - 1].unsqueeze(0) if timestep_idx > 0 else None
@@ -469,12 +445,10 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
     print(f"[DEBUG] Expanded to {len(prompts_expanded)} prompt modifications")
     print(f"[DEBUG] Starting prompt editor with reward_variance={reward_variance}...")
     
-    # 关键修复：在采样时禁用DDP同步
+    # Fix prompt_editor DDP synchronization
     if accelerator.num_processes > 1:
-        accelerator.wait_for_everyone()
-        # 使用no_sync()禁用DDP同步，避免NCCL超时问题
-        with torch.no_grad():
-            with prompt_editor.no_sync():  # 关键修复：禁用DDP同步
+        with prompt_editor.no_sync():  # prompt_editor is DDP-wrapped
+            with torch.no_grad():
                 modified_prompts, prompt_deltas, original_embeddings, policy_info = prompt_editor(prompts_expanded, reward_variance)
     else:
         # Single GPU - use regular prompt_editor
@@ -513,26 +487,14 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
         print(f"  Modified: \"{modified_prompt[:80]}{'...' if len(modified_prompt) > 80 else ''}\"")
         
         # Encode prompts for SD3
-        if accelerator.num_processes > 1:
-            # 关键修复：在编码时禁用DDP同步
-            with pipeline.text_encoder.no_sync(), pipeline.text_encoder_2.no_sync(), pipeline.text_encoder_3.no_sync():
-                prompt_embeds, pooled_prompt_embeds = encode_prompt(
-                    text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
-                    tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
-                    prompt=modified_prompt,
-                    max_sequence_length=256,
-                    device=accelerator.device,
-                    num_images_per_prompt=1
-                )
-        else:
-            prompt_embeds, pooled_prompt_embeds = encode_prompt(
-                text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
-                tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
-                prompt=modified_prompt,
-                max_sequence_length=256,
-                device=accelerator.device,
-                num_images_per_prompt=1
-            )
+        prompt_embeds, pooled_prompt_embeds = encode_prompt(
+            text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
+            tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
+            prompt=modified_prompt,
+            max_sequence_length=256,
+            device=accelerator.device,
+            num_images_per_prompt=1
+        )
         
         # Low-level: Flow sampling with controller
         samples_for_prompt = []
@@ -544,36 +506,19 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
             
             start_time = time.time()
             with torch.no_grad():
-                # 关键修复：在采样时禁用DDP同步
-                if accelerator.num_processes > 1:
-                    with pipeline.no_sync():  # 禁用pipeline的DDP同步
-                        # Sample using pipeline with log probabilities
-                        final_images, latents_list, log_probs = pipeline_with_logprob(
-                            pipeline,
-                            prompt=modified_prompt,
-                            height=config.height,
-                            width=config.width,
-                            num_inference_steps=config.sample.num_steps,
-                            guidance_scale=config.sample.guidance_scale,
-                            num_images_per_prompt=1,
-                            generator=torch.Generator(device=accelerator.device).manual_seed(
-                                random.randint(0, 2**32 - 1)
-                            ),
-                        )
-                else:
-                    # Sample using pipeline with log probabilities
-                    final_images, latents_list, log_probs = pipeline_with_logprob(
-                        pipeline,
-                        prompt=modified_prompt,
-                        height=config.height,
-                        width=config.width,
-                        num_inference_steps=config.sample.num_steps,
-                        guidance_scale=config.sample.guidance_scale,
-                        num_images_per_prompt=1,
-                        generator=torch.Generator(device=accelerator.device).manual_seed(
-                            random.randint(0, 2**32 - 1)
-                        ),
-                    )
+                # Sample using pipeline with log probabilities
+                final_images, latents_list, log_probs = pipeline_with_logprob(
+                    pipeline,
+                    prompt=modified_prompt,
+                    height=config.height,
+                    width=config.width,
+                    num_inference_steps=config.sample.num_steps,
+                    guidance_scale=config.sample.guidance_scale,
+                    num_images_per_prompt=1,
+                    generator=torch.Generator(device=accelerator.device).manual_seed(
+                        random.randint(0, 2**32 - 1)
+                    ),
+                )
                 
                 # Debug: Check shapes of latents from pipeline
                 if latents_list:
