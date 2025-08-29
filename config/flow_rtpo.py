@@ -22,15 +22,15 @@ def flow_rtpo_sd3():
     config.model_loading.use_local = False  # Default to HuggingFace
     config.model_loading.local_base_path = "/mnt/data/group/zhaoliangjie/ICLR-work/"
     
-    # Local model paths (when use_local=True)
+    # Local model paths (when use_local=True) - absolute paths
     config.model_loading.local_models = ml_collections.ConfigDict()
-    config.model_loading.local_models.sd3 = "stable-diffusion-3.5-medium"
-    config.model_loading.local_models.llava = "llava-v1.6-mistral-7b-hf"
-    config.model_loading.local_models.clip = "clip-vit-large-patch14"
-    config.model_loading.local_models.sbert = "all-MiniLM-L6-v2"
-    config.model_loading.local_models.gtr = "gtr-t5-base"
-    config.model_loading.local_models.vec2text = "gtr-base"
-    config.model_loading.local_models.detoxify = "original"
+    config.model_loading.local_models.sd3 = "/mnt/data/group/zhaoliangjie/ICLR-work/stable-diffusion-3.5-medium"
+    config.model_loading.local_models.llava = "/mnt/data/group/zhaoliangjie/ICLR-work/llava-v1.6-mistral-7b-hf"
+    config.model_loading.local_models.clip = "/mnt/data/group/zhaoliangjie/ICLR-work/clip-vit-large-patch14"
+    config.model_loading.local_models.sbert = "/mnt/data/group/zhaoliangjie/ICLR-work/all-MiniLM-L6-v2"
+    config.model_loading.local_models.gtr = "/mnt/data/group/zhaoliangjie/ICLR-work/gtr-t5-base"
+    config.model_loading.local_models.vec2text = "/mnt/data/group/zhaoliangjie/ICLR-work/gtr-base"
+    config.model_loading.local_models.detoxify = "/mnt/data/group/zhaoliangjie/ICLR-work/original"
     
     # HuggingFace model names (when use_local=False)
     config.model_loading.hf_models = ml_collections.ConfigDict()
@@ -47,7 +47,7 @@ def flow_rtpo_sd3():
     config.dataset_loading.use_local = False  # Default to HuggingFace
     config.dataset_loading.local_base_path = "/mnt/data/group/zhaoliangjie/ICLR-work/"
     config.dataset_loading.local_datasets = ml_collections.ConfigDict()
-    config.dataset_loading.local_datasets.rtp = "real-toxicity-prompts"
+    config.dataset_loading.local_datasets.rtp = "/mnt/data/group/zhaoliangjie/ICLR-work/real-toxicity-prompts"
     config.dataset_loading.hf_datasets = ml_collections.ConfigDict()
     config.dataset_loading.hf_datasets.rtp = "allenai/real-toxicity-prompts"
     
