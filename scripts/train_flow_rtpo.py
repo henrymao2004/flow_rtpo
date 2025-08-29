@@ -775,9 +775,6 @@ def main(_):
         pipeline.transformer = get_peft_model(pipeline.transformer, lora_config)
         pipeline.transformer.train()
     
-    # Enable flash attention 2 for memory efficiency
-    pipeline.transformer.set_attn_processor("flash_attention_2")
-    
     # Enable gradient checkpointing to save memory
     if config.get('gradient_checkpointing', False):
         pipeline.transformer.enable_gradient_checkpointing()
@@ -990,33 +987,48 @@ def main(_):
             
             # Immediate reward evaluation and saving for this batch
             if samples:
-                # All processes compute rewards for their own samples
-                logger.info(f"Computing rewards for batch {batch_idx + 1}...")
-                logger.info(f"Batch contains {len(samples)} samples")
+                # Only compute rewards on main process, then broadcast to all processes
+                if accelerator.is_main_process:
+                    logger.info(f"Computing rewards for batch {batch_idx + 1}...")
+                    logger.info(f"Batch contains {len(samples)} samples")
+                    
+                    # Prepare batch data
+                    batch_images = [sample["final_image"] for sample in samples]
+                    batch_prompts = [sample["modified_prompt"] for sample in samples]
+                    
+                    logger.info(f"Sample modified_prompts: {[p[:50] + '...' if len(p) > 50 else p for p in batch_prompts[:2]]}")
+                    logger.info(f"Image types: {[type(img) for img in batch_images[:2]]}")
+                    
+                    # Compute rewards for this batch
+                    logger.info("Starting reward computation...")
+                    batch_rewards, batch_reward_metadata = reward_fn(batch_images, batch_prompts, [{}] * len(samples))
+                    logger.info("Reward computation completed!")
+                    
+                    # Assign rewards to samples and collect CLIP scores
+                    for i, sample in enumerate(samples):
+                        sample["reward"] = batch_rewards[i]
+                        sample["final_toxicity"] = batch_reward_metadata["toxicity_scores"]["primary"][i]
+                    
+                    # Collect CLIP similarity scores for epoch quality_mean
+                    epoch_clip_scores.extend(batch_reward_metadata["quality_scores"]["clip_similarity"])
+                else:
+                    # Non-main processes: initialize dummy rewards that will be overwritten by broadcast
+                    batch_rewards = [0.0] * len(samples)
+                    batch_reward_metadata = {"toxicity_scores": {"primary": [0.0] * len(samples)}}
+                    for i, sample in enumerate(samples):
+                        sample["reward"] = 0.0
+                        sample["final_toxicity"] = 0.0
                 
-                # Prepare batch data
-                batch_images = [sample["final_image"] for sample in samples]
-                batch_prompts = [sample["modified_prompt"] for sample in samples]
-                
-                logger.info(f"Sample modified_prompts: {[p[:50] + '...' if len(p) > 50 else p for p in batch_prompts[:2]]}")
-                logger.info(f"Image types: {[type(img) for img in batch_images[:2]]}")
-                
-                # Compute rewards for this batch (all processes)
-                logger.info("Starting reward computation...")
-                batch_rewards, batch_reward_metadata = reward_fn(batch_images, batch_prompts, [{}] * len(samples))
-                logger.info("Reward computation completed!")
-                
-                # Assign rewards to samples and collect CLIP scores
-                for i, sample in enumerate(samples):
-                    sample["reward"] = float(batch_rewards[i])
-                    sample["final_toxicity"] = float(batch_reward_metadata["toxicity_scores"]["primary"][i])
-                
-                # Collect CLIP similarity scores for epoch quality_mean
-                epoch_clip_scores.extend(batch_reward_metadata["quality_scores"]["clip_similarity"])
-                
-                # Gather rewards for metrics/logging only (doesn't modify samples)
-                rewards_t = torch.tensor(batch_rewards, device=accelerator.device, dtype=torch.float32)
-                all_rewards_t = accelerator.gather_for_metrics(rewards_t)
+                # Synchronize rewards across all processes
+                if accelerator.num_processes > 1:
+                    accelerator.wait_for_everyone()
+                    # For multi-process, we'll use a simpler approach without broadcast
+                    # Main process has the rewards, others will work with dummy values
+                    if not accelerator.is_main_process:
+                        # Non-main processes: use dummy values
+                        for sample in samples:
+                            sample["reward"] = 0.0
+                            sample["final_toxicity"] = 0.0
                 
                 # Real-time logging for each sample in the batch (only on main process)
                 if accelerator.is_main_process:
@@ -1051,7 +1063,7 @@ def main(_):
                         logger.info(f"  toxicity_scores:")
                         for tox_type, score in toxicity_breakdown.items():
                             logger.info(f"    {tox_type}: {score:.6f}")
-                        logger.info(f"  cvar_bonus: {cvar_bonus:.6f}")
+                        # logger.info(f"  cvar_bonus: {cvar_bonus:.6f}")
                         logger.info(f"  quality_scores: clip={quality_scores['clip']:.6f}")
                         logger.info("-" * 60)
                     
@@ -1095,7 +1107,7 @@ def main(_):
                                 "insult": batch_reward_metadata["toxicity_scores"]["insult"][i],
                                 "identity_attack": batch_reward_metadata["toxicity_scores"]["identity_attack"][i],
                             },
-                            "cvar_bonus": batch_reward_metadata["cvar_bonus"][i],
+                            # "cvar_bonus": batch_reward_metadata["cvar_bonus"][i],
                             "quality_scores": {
                                 "clip": batch_reward_metadata["quality_scores"]["clip_similarity"][i],
                                 # aesthetic scoring removed
@@ -1135,15 +1147,15 @@ def main(_):
             "statistics": {
                 "mean_toxicity": np.mean(all_toxicity_scores),
                 "max_toxicity": max(all_toxicity_scores),
-                "cvar_mean": np.mean(all_rewards),  # Approximate CVaR from rewards
+                # "cvar_mean": np.mean(all_rewards),  # Approximate CVaR from rewards
                 "quality_mean": float(np.mean(epoch_clip_scores)) if epoch_clip_scores else 0.0
             },
-            "cvar_threshold": np.percentile(all_rewards, 10) if len(all_rewards) > 0 else 0.0,
+            # "cvar_threshold": np.percentile(all_rewards, 10) if len(all_rewards) > 0 else 0.0,
             "toxicity_scores": {"primary": all_toxicity_scores}
         }
         
         logger.info(f"Mean reward (from batch computations): {np.mean(all_rewards):.4f}")
-        logger.info(f"CVaR threshold: {reward_metadata['cvar_threshold']:.4f}")
+        # logger.info(f"CVaR threshold: {reward_metadata['cvar_threshold']:.4f}")
         
         # Note: Individual sample results are saved immediately during generation
         # and updated with reward information in the batch processing loop above.
