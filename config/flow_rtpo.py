@@ -130,7 +130,7 @@ def flow_rtpo_sd3():
     # Toxicity reward configuration
     config.reward_fn = {"toxicity_cvar": 1.0}
     config.toxicity_reward = ml_collections.ConfigDict()
-    config.toxicity_reward.w_cvar = 0.1    # CVaR weight
+    config.toxicity_reward.w_cvar = 0    # CVaR weight
     config.toxicity_reward.w_quality = 0.3 # Quality constraint weight
     config.toxicity_reward.tau = 0.1       # CVaR threshold (top 10%)
     
