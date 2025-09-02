@@ -49,6 +49,25 @@ config_flags.DEFINE_config_file("config", "config/flow_rtpo.py", "Training confi
 logger = get_logger(__name__)
 
 
+def setup_json_logger(save_dir, run_name):
+    """Setup JSON logger for detailed training logs."""
+    json_log_dir = os.path.join(save_dir, "json_logs")
+    os.makedirs(json_log_dir, exist_ok=True)
+    
+    # Create log files
+    step_log_path = os.path.join(json_log_dir, f"{run_name}_step_logs.jsonl")
+    hour_log_path = os.path.join(json_log_dir, f"{run_name}_hour_logs.jsonl")
+    
+    return step_log_path, hour_log_path
+
+
+def log_json_entry(log_path, entry):
+    """Append a JSON entry to the log file."""
+    with open(log_path, 'a', encoding='utf-8') as f:
+        json.dump(entry, f, ensure_ascii=False)
+        f.write('\n')
+
+
 def create_train_test_datasets(max_prompts=132, test_ratio=0.2, seed=42, config=None):
     """Create train and test datasets from the RTP dataset."""
     # Load full dataset with loading configuration
@@ -726,6 +745,25 @@ def main(_):
         os.makedirs(config.save_dir, exist_ok=True)
         logger.info(f"Save directory created: {config.save_dir}")
     
+    # Initialize JSON logging
+    step_log_path = None
+    hour_log_path = None
+    training_start_time = time.time()
+    last_hour_log_time = training_start_time
+    
+    if accelerator.is_main_process:
+        step_log_path, hour_log_path = setup_json_logger(config.save_dir, config.run_name)
+        logger.info(f"JSON logs initialized: {step_log_path}, {hour_log_path}")
+        
+        # Log training start
+        start_log_entry = {
+            "event_type": "training_start",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "config": config.to_dict(),
+            "training_start_time": training_start_time
+        }
+        log_json_entry(step_log_path, start_log_entry)
+    
     if accelerator.is_main_process:
         swanlab.init(
             project="flow_rtpo", 
@@ -956,7 +994,7 @@ def main(_):
                 config, accelerator, epoch, current_reward_variance
             )
             
-            # Log test results to swanlab
+            # Log test results to swanlab and JSON
             if accelerator.is_main_process and test_results:
                 swanlab.log({
                     "test_attack_success_rate": test_results["attack_success_rate"],
@@ -964,6 +1002,33 @@ def main(_):
                     "test_set_size": test_results["test_set_size"],
                     **{f"test_avg_{metric}": score for metric, score in test_results["metric_averages"].items()}
                 })
+                
+                # JSON logging for test evaluation
+                if step_log_path:
+                    current_time = time.time()
+                    test_log_entry = {
+                        "event_type": "test_evaluation",
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "epoch": epoch,
+                        "global_step": global_step,
+                        "training_time_elapsed": current_time - training_start_time,
+                        "test_results": {
+                            "attack_success_rate": test_results["attack_success_rate"],
+                            "avg_clip_score": test_results["avg_clip_score"],
+                            "test_set_size": test_results["test_set_size"],
+                            "metric_averages": test_results["metric_averages"]
+                        },
+                        "test_summary": {
+                            "num_successful_attacks": sum(sample["is_attack_success"] for sample in test_results.get("individual_scores", [])),
+                            "total_samples": len(test_results.get("individual_scores", [])),
+                            "evaluation_config": {
+                                "reward_variance": current_reward_variance,
+                                "eval_frequency": config.get('eval_freq', 5)
+                            }
+                        }
+                    }
+                    log_json_entry(step_log_path, test_log_entry)
+                    logger.info(f"Test evaluation results logged to JSON at epoch {epoch}")
         
         #################### SAMPLING ####################
         pipeline.transformer.eval()
@@ -1284,6 +1349,36 @@ def main(_):
                     }
                     swanlab.log(flow_log_data)
                     logger.info(f"Flow Controller Step {global_step}: {flow_log_data}")
+                    
+                    # JSON step logging for flow controller
+                    if step_log_path:
+                        current_time = time.time()
+                        step_log_entry = {
+                            "event_type": "flow_controller_step",
+                            "timestamp": datetime.datetime.now().isoformat(),
+                            "global_step": global_step,
+                            "epoch": epoch,
+                            "inner_epoch": inner_epoch,
+                            "batch_idx": i,
+                            "training_time_elapsed": current_time - training_start_time,
+                            "losses": {
+                                "flow_policy_loss": float(np.mean(train_info.get("flow_policy_loss", [0]))),
+                                "kl_loss": float(np.mean(train_info.get("kl_loss", [0])))
+                            },
+                            "rewards": {
+                                "mean": float(np.mean(current_rewards)),
+                                "std": float(np.std(current_rewards)),
+                                "min": float(np.min(current_rewards)) if current_rewards else 0.0,
+                                "max": float(np.max(current_rewards)) if current_rewards else 0.0
+                            },
+                            "toxicity": {
+                                "mean": float(np.mean(current_toxicity)),
+                                "max": float(np.max(current_toxicity)) if current_toxicity else 0.0,
+                                "min": float(np.min(current_toxicity)) if current_toxicity else 0.0
+                            },
+                            "num_samples": len(current_rewards)
+                        }
+                        log_json_entry(step_log_path, step_log_entry)
                 
                 # Reset flow controller metrics for next batch
                 train_info["flow_policy_loss"] = []
@@ -1398,6 +1493,53 @@ def main(_):
                     }
                     swanlab.log(prompt_log_data)
                     logger.info(f"Prompt Editor Step {global_step}: {prompt_log_data}")
+                    
+                    # JSON step logging for prompt editor
+                    if step_log_path:
+                        current_time = time.time()
+                        step_log_entry = {
+                            "event_type": "prompt_editor_step",
+                            "timestamp": datetime.datetime.now().isoformat(),
+                            "global_step": global_step,
+                            "epoch": epoch,
+                            "inner_epoch": inner_epoch,
+                            "training_time_elapsed": current_time - training_start_time,
+                            "losses": {
+                                "prompt_policy_loss": float(np.mean(train_info.get("prompt_policy_loss", [0]))),
+                                "prompt_reg_loss": float(np.mean(train_info.get("prompt_reg_loss", [0]))),
+                                "total_prompt_loss": float(np.mean(train_info.get("total_prompt_loss", [0])))
+                            },
+                            "advantages": {
+                                "mean_advantage": float(np.mean(train_info.get("prompt_mean_advantage", [0]))),
+                                "baseline_value": float(np.mean(train_info.get("prompt_baseline_value", [0])))
+                            },
+                            "regularization": {
+                                "reward_variance": float(np.mean(train_info.get("reward_variance", [0]))),
+                                "epsilon_adaptive": float(np.mean(train_info.get("epsilon_adaptive", [0]))),
+                                "proximity_reg": float(np.mean(train_info.get("reg_proximity_reg", [0]))),
+                                "semantic_reg": float(np.mean(train_info.get("reg_semantic_reg", [0]))),
+                                "reconstruction": float(np.mean(train_info.get("reg_reconstruction", [0]))),
+                                "epsilon_current": float(np.mean(train_info.get("reg_epsilon_current", [0]))),
+                                "mean_semantic_sim": float(np.mean(train_info.get("reg_mean_semantic_sim", [0])))
+                            },
+                            "grpo": {
+                                "num_groups": int(np.mean(train_info.get("num_groups", [0]))),
+                                "warmup_factor": float(np.mean(train_info.get("prompt_warmup_factor", [1])))
+                            },
+                            "rewards": {
+                                "mean": float(np.mean(current_rewards)),
+                                "std": float(np.std(current_rewards)),
+                                "min": float(np.min(current_rewards)) if current_rewards else 0.0,
+                                "max": float(np.max(current_rewards)) if current_rewards else 0.0
+                            },
+                            "toxicity": {
+                                "mean": float(np.mean(current_toxicity)),
+                                "max": float(np.max(current_toxicity)) if current_toxicity else 0.0,
+                                "min": float(np.min(current_toxicity)) if current_toxicity else 0.0
+                            },
+                            "num_samples": len(current_rewards)
+                        }
+                        log_json_entry(step_log_path, step_log_entry)
                 
                 # Reset prompt editor metrics for next inner epoch
                 train_info["prompt_policy_loss"] = []
@@ -1461,8 +1603,6 @@ def main(_):
                 "reward_std": gathered_reward_std.float().mean().item(),
                 "toxicity_mean": reward_metadata["statistics"]["mean_toxicity"],
                 "toxicity_max": reward_metadata["statistics"]["max_toxicity"],
-                "cvar_mean": reward_metadata["statistics"]["cvar_mean"],
-                "cvar_threshold": reward_metadata["cvar_threshold"],
                 "quality_mean": reward_metadata["statistics"]["quality_mean"],
                 # Convergence monitoring metrics
                 **convergence_metrics,
@@ -1470,6 +1610,42 @@ def main(_):
             
             swanlab.log(epoch_summary_data)
             logger.info(f"Epoch {epoch} Summary: {epoch_summary_data}")
+            
+            # Check for hourly logging
+            if hour_log_path:
+                current_time = time.time()
+                time_since_last_hour_log = current_time - last_hour_log_time
+                
+                # Log every hour (3600 seconds) or at the end of each epoch
+                if time_since_last_hour_log >= 3600 or epoch == 0:
+                    hour_log_entry = {
+                        "event_type": "hourly_progress",
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "training_time_elapsed": current_time - training_start_time,
+                        "epoch": epoch,
+                        "global_step": global_step,
+                        "epoch_time": epoch_time,
+                        "performance": {
+                            "reward_mean": gathered_reward_mean.float().mean().item(),
+                            "reward_std": gathered_reward_std.float().mean().item(),
+                            "toxicity_mean": reward_metadata["statistics"]["mean_toxicity"],
+                            "toxicity_max": reward_metadata["statistics"]["max_toxicity"],
+                            "quality_mean": reward_metadata["statistics"]["quality_mean"],
+                            "num_samples": gathered_num_samples.float().mean().item()
+                        },
+                        "losses": {
+                            "flow_policy_loss": gathered_flow_policy_loss.float().mean().item(),
+                            "kl_loss": gathered_kl_loss.float().mean().item(),
+                            "prompt_policy_loss": gathered_prompt_policy_loss.float().mean().item(),
+                            "prompt_reg_loss": gathered_prompt_reg_loss.float().mean().item(),
+                            "total_prompt_loss": gathered_total_prompt_loss.float().mean().item()
+                        },
+                        "convergence_metrics": convergence_metrics,
+                        "hours_elapsed": (current_time - training_start_time) / 3600
+                    }
+                    log_json_entry(hour_log_path, hour_log_entry)
+                    last_hour_log_time = current_time
+                    logger.info(f"Hourly progress logged at {hour_log_entry['hours_elapsed']:.2f} hours")
         
         # Save results for each processed prompt
         if accelerator.is_main_process:
@@ -1540,6 +1716,28 @@ def main(_):
         reason_text = convergence_monitor.get_convergence_reason_text()
         logger.info(f"Final convergence summary: {final_summary}")
         logger.info(f"Final convergence reason: {reason_text}")
+    
+    # Log training completion to JSON
+    if accelerator.is_main_process and step_log_path:
+        final_time = time.time()
+        completion_log_entry = {
+            "event_type": "training_completed",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "total_training_time": final_time - training_start_time,
+            "total_training_hours": (final_time - training_start_time) / 3600,
+            "final_epoch": config.num_epochs - 1,
+            "final_global_step": global_step,
+            "convergence_summary": convergence_monitor.get_convergence_summary() if convergence_monitor else {},
+            "convergence_reason": convergence_monitor.get_convergence_reason_text() if convergence_monitor else "Training completed normally",
+            "config_summary": {
+                "num_epochs": config.num_epochs,
+                "learning_rate": config.train.learning_rate,
+                "batch_size": config.sample.batch_size,
+                "max_prompts": config.max_prompts
+            }
+        }
+        log_json_entry(step_log_path, completion_log_entry)
+        logger.info(f"Training completion logged to JSON after {completion_log_entry['total_training_hours']:.2f} hours")
     
     logger.info("Training completed!")
 
