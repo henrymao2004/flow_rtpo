@@ -740,6 +740,11 @@ def main(_):
     
     logger.info(f"\n{config}")
     
+    # Validate gradient accumulation configuration
+    logger.info(f"Gradient accumulation steps: {config.train.gradient_accumulation_steps}")
+    logger.info(f"Num batches per epoch: {config.sample.num_batches_per_epoch}")
+    logger.info(f"Expected sync frequency: every {config.train.gradient_accumulation_steps} micro-batches")
+    
     # Set seed (device_specific is very important to get different prompts on different devices)
     set_seed(config.seed, device_specific=True)
     
@@ -1248,6 +1253,10 @@ def main(_):
                     
                     # Increment global_step after flow controller optimization
                     global_step += 1
+                    
+                    # Debug: Confirm sync_gradients is working
+                    if accelerator.is_local_main_process:
+                        logger.info(f"[SYNC] Gradient synchronization at epoch {epoch}, batch {i}, timestep {j}, global_step {global_step}")
                     
                     # Aggregate and reduce metrics across processes
                     flow_info_aggregated = {k: torch.mean(torch.stack(v)) for k, v in train_info.items() if v}
