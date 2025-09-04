@@ -1681,16 +1681,6 @@ def main(_):
             with open(results_path, 'w') as f:
                 json.dump(epoch_results, f, indent=2)
         
-        # Check for early stopping
-        if (convergence_monitor is not None and 
-            config.convergence.early_stopping and 
-            convergence_monitor.should_early_stop()):
-            logger.info(f"Early stopping triggered at epoch {epoch}")
-            summary = convergence_monitor.get_convergence_summary()
-            reason_text = convergence_monitor.get_convergence_reason_text()
-            logger.info(f"Convergence summary: {summary}")
-            logger.info(f"Convergence reason: {reason_text}")
-            break
         
         # Save best model based on EMA reward
         if (convergence_monitor is not None and 
