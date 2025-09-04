@@ -573,39 +573,6 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
                 "generation_time": generation_time,
             }
             
-            # IMMEDIATE SAVING: Save image and basic info right after generation
-            if accelerator.is_main_process:
-                # Create directory for immediate saves
-                immediate_save_dir = os.path.join(config.save_dir, "immediate_saves", f"epoch_{epoch}", f"batch_{batch_idx}")
-                os.makedirs(immediate_save_dir, exist_ok=True)
-                
-                # Save image immediately
-                image_path = os.path.join(immediate_save_dir, f"{sample_id}.png")
-                final_image.save(image_path)
-                
-                # Save basic sample data immediately (without reward info)
-                basic_sample_data = {
-                    "sample_id": sample_id,
-                    "epoch": epoch,
-                    "batch": batch_idx,
-                    "prompt_idx": original_idx,  # Fix: use original_idx instead of undefined prompt_idx
-                    "img_idx": img_idx,
-                    "original_prompt": sample["original_prompt"],
-                    "modified_prompt": sample["modified_prompt"],
-                    "generation_time": generation_time,
-                    "timestamp_generated": datetime.datetime.now().isoformat(),
-                    "image_path": image_path,
-                    "status": "generated_awaiting_reward"  # Status indicator
-                }
-                
-                # Save basic JSON data immediately
-                json_path = os.path.join(immediate_save_dir, f"{sample_id}_basic.json")
-                with open(json_path, 'w', encoding='utf-8') as f:
-                    json.dump(basic_sample_data, f, indent=2, ensure_ascii=False)
-                
-                print(f"[IMMEDIATE SAVE] Image and basic data saved: {image_path}")
-                print(f"[IMMEDIATE SAVE] Sample ID: {sample_id}")
-            
             samples_for_prompt.append(sample)
             sample_counter += 1
             
@@ -1145,55 +1112,6 @@ def main(_):
                     logger.info(f"  toxicity_max: {batch_toxicity_max:.6f}")
                     logger.info("=" * 80)
                     
-                    # Update the immediately saved files with reward information
-                    immediate_save_dir = os.path.join(config.save_dir, "immediate_saves", f"epoch_{epoch}", f"batch_{batch_idx}")
-                    
-                    for i, sample in enumerate(samples):
-                        sample_id = sample["sample_id"]  # Use the sample_id from the sample
-                        
-                        # Read the existing basic data
-                        basic_json_path = os.path.join(immediate_save_dir, f"{sample_id}_basic.json")
-                        if os.path.exists(basic_json_path):
-                            with open(basic_json_path, 'r', encoding='utf-8') as f:
-                                existing_data = json.load(f)
-                        else:
-                            existing_data = {}
-                        
-                        # Update with reward information
-                        reward_data = {
-                            "reward": sample["reward"],
-                            "toxicity": sample["final_toxicity"],
-                            "vlm_response": batch_reward_metadata["vlm_responses"][i],
-                            "toxicity_breakdown": {
-                                "toxicity": batch_reward_metadata["toxicity_scores"]["primary"][i],
-                                "severe_toxicity": batch_reward_metadata["toxicity_scores"]["severe_toxicity"][i],
-                                "obscene": batch_reward_metadata["toxicity_scores"]["obscene"][i],
-                                "threat": batch_reward_metadata["toxicity_scores"]["threat"][i],
-                                "insult": batch_reward_metadata["toxicity_scores"]["insult"][i],
-                                "identity_attack": batch_reward_metadata["toxicity_scores"]["identity_attack"][i],
-                            },
-                            # "cvar_bonus": batch_reward_metadata["cvar_bonus"][i],
-                            "quality_scores": {
-                                "clip": batch_reward_metadata["quality_scores"]["clip_similarity"][i],
-                                # aesthetic scoring removed
-                            },
-                            "timestamp_reward_computed": datetime.datetime.now().isoformat(),
-                            "status": "completed_with_reward"  # Update status
-                        }
-                        
-                        # Merge existing data with reward data
-                        complete_sample_data = {**existing_data, **reward_data}
-                        
-                        # Save complete data (replace the basic file)
-                        complete_json_path = os.path.join(immediate_save_dir, f"{sample_id}_complete.json")
-                        with open(complete_json_path, 'w', encoding='utf-8') as f:
-                            json.dump(complete_sample_data, f, indent=2, ensure_ascii=False)
-                        
-                        # Optionally remove the basic file now that we have complete data
-                        if os.path.exists(basic_json_path):
-                            os.remove(basic_json_path)
-                    
-                    logger.info(f"Batch {batch_idx + 1} reward data updated in: {immediate_save_dir}")
                     logger.info(f"Batch {batch_idx + 1} mean reward: {np.mean(batch_rewards):.4f}")
             
             epoch_samples.extend(samples)
