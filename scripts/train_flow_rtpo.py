@@ -671,7 +671,10 @@ def main(_):
     accelerator = Accelerator(
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
-        gradient_accumulation_steps=config.train.gradient_accumulation_steps,
+        # We accumulate gradients across timesteps; we want config.train.gradient_accumulation_steps to be the
+        # number of *samples* we accumulate across, so we need to multiply by the number of training timesteps to get
+        # the total number of optimizer steps to accumulate across.
+        gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
         kwargs_handlers=[ddp_kwargs],
     )
     
@@ -741,9 +744,11 @@ def main(_):
     logger.info(f"\n{config}")
     
     # Validate gradient accumulation configuration
-    logger.info(f"Gradient accumulation steps: {config.train.gradient_accumulation_steps}")
+    logger.info(f"Base gradient accumulation steps: {config.train.gradient_accumulation_steps}")
+    logger.info(f"Number of training timesteps: {num_train_timesteps}")
+    logger.info(f"Total gradient accumulation steps (with timesteps): {config.train.gradient_accumulation_steps * num_train_timesteps}")
     logger.info(f"Num batches per epoch: {config.sample.num_batches_per_epoch}")
-    logger.info(f"Expected sync frequency: every {config.train.gradient_accumulation_steps} micro-batches")
+    logger.info(f"Expected sync frequency: every {config.train.gradient_accumulation_steps * num_train_timesteps} micro-batches")
     
     # Set seed (device_specific is very important to get different prompts on different devices)
     set_seed(config.seed, device_specific=True)
@@ -1241,81 +1246,83 @@ def main(_):
                             
                             train_info["flow_policy_loss"].append(policy_loss.item())
                             train_info["kl_loss"].append(kl_loss.item())
-                
-                # Optimizer step
-                optimizer.step()
-                optimizer.zero_grad()
-                
-                # Only log when gradients are actually synchronized (actual optimization step)
-                if accelerator.sync_gradients:
-                    if config.train.ema:
-                        ema.step(transformer_trainable_parameters, global_step)
                     
-                    # Increment global_step after flow controller optimization
-                    global_step += 1
+                    # Optimizer step after each timestep
+                    optimizer.step()
+                    optimizer.zero_grad()
                     
-                    # Debug: Confirm sync_gradients is working
-                    if accelerator.is_local_main_process:
-                        logger.info(f"[SYNC] Gradient synchronization at epoch {epoch}, batch {i}, timestep {j}, global_step {global_step}")
-                    
-                    # Aggregate and reduce metrics across processes
-                    flow_info_aggregated = {k: torch.mean(torch.stack(v)) for k, v in train_info.items() if v}
-                    flow_info_aggregated = accelerator.reduce(flow_info_aggregated, reduction="mean")
-                    
-                    # Log flow controller metrics after actual optimization step
-                    if accelerator.is_main_process:
-                        # Calculate current reward metrics from epoch_samples
-                        current_rewards = [sample["reward"] for sample in epoch_samples] if epoch_samples else [0]
-                        current_toxicity = [sample["final_toxicity"] for sample in epoch_samples] if epoch_samples else [0]
+                    # Only log when gradients are actually synchronized (actual optimization step)
+                    if accelerator.sync_gradients:
+                        if config.train.ema:
+                            ema.step(transformer_trainable_parameters, global_step)
                         
-                        flow_log_data = {
-                            "epoch": epoch,
-                            "global_step": global_step,
-                            "flow_policy_loss": flow_info_aggregated.get("flow_policy_loss", torch.tensor(0.0)).item(),
-                            "kl_loss": flow_info_aggregated.get("kl_loss", torch.tensor(0.0)).item(),
-                            "batch_idx": i,
-                            "inner_epoch": inner_epoch,
-                            "reward_mean": np.mean(current_rewards),
-                            "reward_std": np.std(current_rewards),
-                            "toxicity_mean": np.mean(current_toxicity),
-                            "toxicity_max": np.max(current_toxicity) if current_toxicity else 0,
-                        }
-                        swanlab.log(flow_log_data)
-                        logger.info(f"Flow Controller Step {global_step}: {flow_log_data}")
+                        # Increment global_step after flow controller optimization
+                        global_step += 1
                         
-                        # JSON step logging for flow controller
-                        if step_log_path:
-                            current_time = time.time()
-                            step_log_entry = {
-                                "event_type": "flow_controller_step",
-                                "timestamp": datetime.datetime.now().isoformat(),
-                                "global_step": global_step,
+                        # Debug: Confirm sync_gradients is working
+                        if accelerator.is_local_main_process:
+                            logger.info(f"[SYNC] Gradient synchronization at epoch {epoch}, batch {i}, timestep {j}, global_step {global_step}")
+                        
+                        # Aggregate and reduce metrics across processes
+                        flow_info_aggregated = {k: torch.mean(torch.stack(v)) for k, v in train_info.items() if v}
+                        flow_info_aggregated = accelerator.reduce(flow_info_aggregated, reduction="mean")
+                        
+                        # Log flow controller metrics after actual optimization step
+                        if accelerator.is_main_process:
+                            # Calculate current reward metrics from epoch_samples
+                            current_rewards = [sample["reward"] for sample in epoch_samples] if epoch_samples else [0]
+                            current_toxicity = [sample["final_toxicity"] for sample in epoch_samples] if epoch_samples else [0]
+                            
+                            flow_log_data = {
                                 "epoch": epoch,
-                                "inner_epoch": inner_epoch,
+                                "global_step": global_step,
+                                "flow_policy_loss": flow_info_aggregated.get("flow_policy_loss", torch.tensor(0.0)).item(),
+                                "kl_loss": flow_info_aggregated.get("kl_loss", torch.tensor(0.0)).item(),
                                 "batch_idx": i,
-                                "training_time_elapsed": current_time - training_start_time,
-                                "losses": {
-                                    "flow_policy_loss": float(flow_info_aggregated.get("flow_policy_loss", torch.tensor(0.0)).item()),
-                                    "kl_loss": float(flow_info_aggregated.get("kl_loss", torch.tensor(0.0)).item())
-                                },
-                                "rewards": {
-                                    "mean": float(np.mean(current_rewards)),
-                                    "std": float(np.std(current_rewards)),
-                                    "min": float(np.min(current_rewards)) if current_rewards else 0.0,
-                                    "max": float(np.max(current_rewards)) if current_rewards else 0.0
-                                },
-                                "toxicity": {
-                                    "mean": float(np.mean(current_toxicity)),
-                                    "max": float(np.max(current_toxicity)) if current_toxicity else 0.0,
-                                    "min": float(np.min(current_toxicity)) if current_toxicity else 0.0
-                                },
-                                "num_samples": len(current_rewards)
+                                "timestep_idx": j,
+                                "inner_epoch": inner_epoch,
+                                "reward_mean": np.mean(current_rewards),
+                                "reward_std": np.std(current_rewards),
+                                "toxicity_mean": np.mean(current_toxicity),
+                                "toxicity_max": np.max(current_toxicity) if current_toxicity else 0,
                             }
-                            log_json_entry(step_log_path, step_log_entry)
-                    
-                    # Reset flow controller metrics for next actual optimization step
-                    train_info["flow_policy_loss"] = []
-                    train_info["kl_loss"] = []
+                            swanlab.log(flow_log_data)
+                            logger.info(f"Flow Controller Step {global_step}: {flow_log_data}")
+                            
+                            # JSON step logging for flow controller
+                            if step_log_path:
+                                current_time = time.time()
+                                step_log_entry = {
+                                    "event_type": "flow_controller_step",
+                                    "timestamp": datetime.datetime.now().isoformat(),
+                                    "global_step": global_step,
+                                    "epoch": epoch,
+                                    "inner_epoch": inner_epoch,
+                                    "batch_idx": i,
+                                    "timestep_idx": j,
+                                    "training_time_elapsed": current_time - training_start_time,
+                                    "losses": {
+                                        "flow_policy_loss": float(flow_info_aggregated.get("flow_policy_loss", torch.tensor(0.0)).item()),
+                                        "kl_loss": float(flow_info_aggregated.get("kl_loss", torch.tensor(0.0)).item())
+                                    },
+                                    "rewards": {
+                                        "mean": float(np.mean(current_rewards)),
+                                        "std": float(np.std(current_rewards)),
+                                        "min": float(np.min(current_rewards)) if current_rewards else 0.0,
+                                        "max": float(np.max(current_rewards)) if current_rewards else 0.0
+                                    },
+                                    "toxicity": {
+                                        "mean": float(np.mean(current_toxicity)),
+                                        "max": float(np.max(current_toxicity)) if current_toxicity else 0.0,
+                                        "min": float(np.min(current_toxicity)) if current_toxicity else 0.0
+                                    },
+                                    "num_samples": len(current_rewards)
+                                }
+                                log_json_entry(step_log_path, step_log_entry)
+                        
+                        # Reset flow controller metrics for next actual optimization step
+                        train_info["flow_policy_loss"] = []
+                        train_info["kl_loss"] = []
             
             # Training for Prompt Editor 
             if len(epoch_samples) > 0:
