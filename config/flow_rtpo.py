@@ -197,13 +197,15 @@ def flow_rtpo_debug():
     # Smaller settings for debugging
     config.max_prompts = 4
     config.sample.batch_size = 4  # Changed to 2 as requested
-    config.sample.num_batches_per_epoch = 1  # For 8 GPUs: 8 prompts / (8 GPUs * 2 batch_size / 4 images_per_prompt) = 8 / 4 = 2
     config.sample.num_image_per_prompt = 2  # Multiple samples per prompt for ranking
     config.sample.num_steps = 20
-    config.train.gradient_accumulation_steps = 1  # 2 // 2 = 1 for gradient updates
     config.num_epochs = 100
     config.save_freq = 2
     config.eval_freq = 2
+    
+    # ON-POLICY CONSISTENCY: Enforce purely on-policy setup
+    config.sample.num_batches_per_epoch = 1  # Single batch per epoch for on-policy
+    config.train.gradient_accumulation_steps = 1  # No gradient accumulation for on-policy
     
     config.run_name = "flow_rtpo_debug"
     
@@ -234,7 +236,7 @@ def flow_rtpo_large():
     # Calculate proper num_batches_per_epoch for 32 GPUs
     # Following GRPO pattern: int(132/(gpu_number*batch_size/num_image_per_prompt))
     gpu_number = 32
-    config.sample.num_batches_per_epoch = int(132/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
+    config.sample.num_batches_per_epoch = int(105/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
     # This gives: 132/(32*2/4) = 132/16 = 8.25 -> int(8.25) = 8
     config.sample.num_batches_per_epoch = max(2, config.sample.num_batches_per_epoch) 
     
