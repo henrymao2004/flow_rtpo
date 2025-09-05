@@ -1303,9 +1303,20 @@ def main(_):
                         
                         # Log flow controller metrics before incrementing global_step (DPO style)
                         if accelerator.is_main_process:
-                            # Calculate current reward metrics from epoch_samples
-                            current_rewards = [sample["reward"] for sample in epoch_samples] if epoch_samples else [0]
-                            current_toxicity = [sample["final_toxicity"] for sample in epoch_samples] if epoch_samples else [0]
+                            # Calculate current reward metrics from current samples_batch
+                            current_rewards = [sample["reward"] for sample in samples_batch if "reward" in sample] 
+                            current_toxicity = [sample["final_toxicity"] for sample in samples_batch if "final_toxicity" in sample]
+                            
+                            # Fallback to epoch_samples if current batch doesn't have rewards yet
+                            if not current_rewards and epoch_samples:
+                                current_rewards = [sample["reward"] for sample in epoch_samples if "reward" in sample]
+                                current_toxicity = [sample["final_toxicity"] for sample in epoch_samples if "final_toxicity" in sample]
+                            
+                            # Ensure we have some data to log
+                            if not current_rewards:
+                                current_rewards = [0]
+                            if not current_toxicity:
+                                current_toxicity = [0]
                             
                             flow_log_data = {
                                 "epoch": epoch,
@@ -1319,6 +1330,7 @@ def main(_):
                                 "reward_std": np.std(current_rewards),
                                 "toxicity_mean": np.mean(current_toxicity),
                                 "toxicity_max": np.max(current_toxicity) if current_toxicity else 0,
+                                "num_samples_logged": len(current_rewards),
                             }
                             swanlab.log(flow_log_data, step=global_step)
                             logger.info(f"Flow Controller Step {global_step}: {flow_log_data}")
