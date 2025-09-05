@@ -202,7 +202,7 @@ def flow_rtpo_debug():
     config.num_epochs = 100
     config.save_freq = 2
     config.eval_freq = 2
-    
+    config.sample.train_batch_size = config.sample.batch_size
     # ON-POLICY CONSISTENCY: Enforce purely on-policy setup
     config.sample.num_batches_per_epoch = 3 # Process all batches (16 prompts / 4 batch_size = 4 batches)
     config.train.gradient_accumulation_steps = 1  # No gradient accumulation for on-policy
@@ -243,7 +243,7 @@ def flow_rtpo_large():
     # Set gradient accumulation steps to half of num_batches_per_epoch
     # This ensures gradients are updated twice per epoch for stability
     config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch // 2
-    
+    config.train.batch_size = config.sample.batch_size
     # Extended training
     config.num_epochs = 200
     config.save_freq = 20

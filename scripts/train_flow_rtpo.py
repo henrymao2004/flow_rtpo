@@ -899,6 +899,19 @@ def main(_):
         logger.info(f"Train set: {len(train_prompts)} prompts")
         logger.info(f"Test set: {len(test_prompts)} prompts")
         logger.info(f"Test ratio: {len(test_prompts) / (len(train_prompts) + len(test_prompts)):.2f}")
+        
+        # Debug: Expected total samples calculation
+        expected_samples_per_gpu = (len(train_prompts) // accelerator.num_processes) * config.prompt_editor.k_samples * config.sample.num_image_per_prompt
+        expected_total_samples = expected_samples_per_gpu * accelerator.num_processes
+        logger.info(f"[🔧 SAMPLING DEBUG]")
+        logger.info(f"  Total train prompts: {len(train_prompts)}")
+        logger.info(f"  GPUs: {accelerator.num_processes}")
+        logger.info(f"  Prompts per GPU: {len(train_prompts) // accelerator.num_processes}")
+        logger.info(f"  k_samples: {config.prompt_editor.k_samples}")
+        logger.info(f"  images_per_prompt: {config.sample.num_image_per_prompt}")
+        logger.info(f"  Expected samples per GPU: {expected_samples_per_gpu}")
+        logger.info(f"  Expected total samples: {expected_total_samples}")
+        logger.info(f"[🔧 END SAMPLING DEBUG]")
     
     # Create a simple dataset wrapper for training
     class SimplePromptDataset:
@@ -915,15 +928,33 @@ def main(_):
     # Create training dataset
     train_dataset = SimplePromptDataset(train_prompts, train_metadata)
     
-    # Create training dataloader
-    from torch.utils.data import DataLoader
-    train_dataloader = DataLoader(
-        train_dataset,
-        batch_size=config.sample.batch_size,
-        shuffle=True,
-        num_workers=0,
-        collate_fn=lambda x: (list(zip(*x))[0], list(zip(*x))[1])
-    )
+    # Create training dataloader with distributed sampling
+    from torch.utils.data import DataLoader, DistributedSampler
+    
+    # Use DistributedSampler to ensure each GPU gets different data
+    if accelerator.num_processes > 1:
+        train_sampler = DistributedSampler(
+            train_dataset,
+            num_replicas=accelerator.num_processes,
+            rank=accelerator.process_index,
+            shuffle=True
+        )
+        train_dataloader = DataLoader(
+            train_dataset,
+            batch_size=config.sample.batch_size,
+            sampler=train_sampler,
+            num_workers=0,
+            collate_fn=lambda x: (list(zip(*x))[0], list(zip(*x))[1])
+        )
+    else:
+        # Single GPU setup
+        train_dataloader = DataLoader(
+            train_dataset,
+            batch_size=config.sample.batch_size,
+            shuffle=True,
+            num_workers=0,
+            collate_fn=lambda x: (list(zip(*x))[0], list(zip(*x))[1])
+        )
     
     # Per-prompt stat tracking for GRPO
     if config.per_prompt_stat_tracking:
