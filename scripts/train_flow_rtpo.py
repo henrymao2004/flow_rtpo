@@ -1253,6 +1253,17 @@ def main(_):
         else:
             advantages = (np.array(all_rewards) - np.mean(all_rewards)) / (np.std(all_rewards) + 1e-4)
         
+        # Debug: 打印 advantage 计算过程
+        if accelerator.is_main_process:
+            print(f"[DEBUG ADVANTAGES] Reward statistics:")
+            print(f"  all_rewards length: {len(all_rewards)}")
+            print(f"  all_rewards values: {all_rewards}")
+            print(f"  reward mean: {np.mean(all_rewards):.6f}")
+            print(f"  reward std: {np.std(all_rewards):.6f}")
+            print(f"  computed advantages: {advantages}")
+            print(f"  advantages mean: {np.mean(advantages):.6f}")
+            print(f"  advantages std: {np.std(advantages):.6f}")
+        
         # Assign advantages to samples (broadcast to timesteps)
         for i, sample in enumerate(epoch_samples):
             sample["advantages"] = torch.tensor(advantages[i]).repeat(len(sample["timesteps"])).to(accelerator.device)
@@ -1309,6 +1320,16 @@ def main(_):
                                 config.train.adv_clip_max,
                             )
                             
+                            # Debug: 添加详细调试信息
+                            if j == 0 and accelerator.is_main_process:  # 只在第一个 timestep 和主进程打印
+                                print(f"[DEBUG LOSS] timestep {j}:")
+                                print(f"  sample advantages shape: {sample['advantages'].shape}")
+                                print(f"  sample advantages values: {sample['advantages']}")
+                                print(f"  clamped advantages: {advantages}")
+                                print(f"  log_prob: {log_prob}")
+                                print(f"  sample log_probs[{j}]: {sample['log_probs'][j]}")
+                                print(f"  ratio: {torch.exp(log_prob - sample['log_probs'][j])}")
+                            
                             ratio = torch.exp(log_prob - sample["log_probs"][j])
                             unclipped_loss = -advantages * ratio
                             clipped_loss = -advantages * torch.clamp(
@@ -1317,6 +1338,13 @@ def main(_):
                                 1.0 + config.train.clip_range,
                             )
                             policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+                            
+                            # Debug: 打印 loss 值
+                            if j == 0 and accelerator.is_main_process:
+                                print(f"  unclipped_loss: {unclipped_loss}")
+                                print(f"  clipped_loss: {clipped_loss}")
+                                print(f"  policy_loss: {policy_loss}")
+                                print(f"  config.train.beta: {config.train.beta}")
                             
                             # KL regularization with fixed beta
                             if config.train.beta > 0:
