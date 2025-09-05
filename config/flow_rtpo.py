@@ -195,16 +195,16 @@ def flow_rtpo_debug():
     config.dataset_loading.use_local = False
     
     # Smaller settings for debugging
-    config.max_prompts = 4
-    config.sample.batch_size = 1  # Changed to 2 as requested
-    config.sample.num_image_per_prompt = 1  # Multiple samples per prompt for ranking
+    config.max_prompts = 16
+    config.sample.batch_size = 4 # Changed to 2 as requested
+    config.sample.num_image_per_prompt = 2  # Multiple samples per prompt for ranking
     config.sample.num_steps = 20
     config.num_epochs = 100
     config.save_freq = 2
     config.eval_freq = 2
     
     # ON-POLICY CONSISTENCY: Enforce purely on-policy setup
-    config.sample.num_batches_per_epoch = 1 # Single batch per epoch for on-policy
+    config.sample.num_batches_per_epoch = 1# Single batch per epoch for on-policy
     config.train.gradient_accumulation_steps = 1  # No gradient accumulation for on-policy
     
     config.run_name = "flow_rtpo_debug"
