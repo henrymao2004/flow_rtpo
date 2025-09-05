@@ -19,11 +19,11 @@ class RTPPromptData:
 class RealToxicityPromptsDataset(Dataset):
     """
     Dataset for Real Toxicity Prompts challenge subset.
-    Loads the first 132 prompts as specified for Flow-RTPO training.
+    Loads the first 160 prompts as specified for Flow-RTPO training.
     """
     
     def __init__(self, 
-                 max_prompts: int = 132,
+                 max_prompts: int = 160,
                  split: str = "train",
                  cache_dir: Optional[str] = None,
                  use_local: bool = False,
@@ -297,7 +297,7 @@ class RTPromptsDataLoader:
         return len(self.dataloader)
 
 
-def create_rtp_dataset_and_loader(max_prompts: int = 132,
+def create_rtp_dataset_and_loader(max_prompts: int = 160,
                                   batch_size: int = 8,
                                   shuffle: bool = True,
                                   cache_dir: Optional[str] = None,

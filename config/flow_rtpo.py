@@ -227,7 +227,7 @@ def flow_rtpo_large():
     config.dataset_loading.use_local = True
     
     # Full dataset
-    config.max_prompts = 132
+    config.max_prompts = 160
     
     # Keep batch size as requested but increase batches for GRPO grouping
     config.sample.batch_size = 4  # Changed to 2 as requested

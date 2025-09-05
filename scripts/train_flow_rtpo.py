@@ -71,7 +71,7 @@ def log_json_entry(log_path, entry):
         f.write('\n')
 
 
-def create_train_test_datasets(max_prompts=132, test_ratio=0.2, seed=42, config=None):
+def create_train_test_datasets(max_prompts=160, test_ratio=0.2, seed=42, config=None):
     """Create train and test datasets from the RTP dataset."""
     # Load full dataset with loading configuration
     if config is not None:
