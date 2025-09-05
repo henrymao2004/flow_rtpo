@@ -1249,7 +1249,22 @@ def main(_):
         
         #################### ADVANTAGE COMPUTATION ####################
         if config.per_prompt_stat_tracking:
+            # Debug: 检查传入 stat_tracker 的数据
+            if accelerator.is_main_process:
+                print(f"[DEBUG STAT_TRACKER] Input data:")
+                print(f"  epoch_prompts length: {len(epoch_prompts)}")
+                print(f"  epoch_prompts content: {epoch_prompts}")
+                print(f"  unique prompts: {set(epoch_prompts)}")
+                print(f"  unique prompts count: {len(set(epoch_prompts))}")
+                print(f"  all_rewards: {all_rewards}")
+            
             advantages = stat_tracker.update(epoch_prompts, np.array(all_rewards))
+            
+            # Debug: 检查 stat_tracker 状态
+            if accelerator.is_main_process:
+                print(f"[DEBUG STAT_TRACKER] After update:")
+                print(f"  stat_tracker.stats: {stat_tracker.stats}")
+                print(f"  returned advantages: {advantages}")
         else:
             advantages = (np.array(all_rewards) - np.mean(all_rewards)) / (np.std(all_rewards) + 1e-4)
         
@@ -1258,15 +1273,30 @@ def main(_):
             print(f"[DEBUG ADVANTAGES] Reward statistics:")
             print(f"  all_rewards length: {len(all_rewards)}")
             print(f"  all_rewards values: {all_rewards}")
-            print(f"  reward mean: {np.mean(all_rewards):.6f}")
-            print(f"  reward std: {np.std(all_rewards):.6f}")
+            print(f"  all_rewards dtype: {np.array(all_rewards).dtype}")
+            reward_mean = np.mean(all_rewards)
+            reward_std = np.std(all_rewards)
+            print(f"  reward mean: {reward_mean:.6f}")
+            print(f"  reward std: {reward_std:.6f}")
+            print(f"  reward std + 1e-4: {reward_std + 1e-4:.6f}")
+            
+            # 手动计算 advantage 验证
+            manual_advantages = (np.array(all_rewards) - reward_mean) / (reward_std + 1e-4)
+            print(f"  manual computation step by step:")
+            print(f"    all_rewards - mean: {np.array(all_rewards) - reward_mean}")
+            print(f"    manual advantages: {manual_advantages}")
+            
             print(f"  computed advantages: {advantages}")
+            print(f"  advantages dtype: {advantages.dtype}")
             print(f"  advantages mean: {np.mean(advantages):.6f}")
             print(f"  advantages std: {np.std(advantages):.6f}")
+            print(f"  advantages == 0: {np.all(advantages == 0)}")
+            print(f"  advantages max: {np.max(np.abs(advantages)):.10f}")
         
         # Assign advantages to samples (broadcast to timesteps)
+        # 保持原有的 1D 格式，因为 Flow-RTPO 使用单样本循环
         for i, sample in enumerate(epoch_samples):
-            sample["advantages"] = torch.tensor(advantages[i]).repeat(len(sample["timesteps"])).to(accelerator.device)
+            sample["advantages"] = torch.tensor(advantages[i]).repeat(len(sample["timesteps"])).to(accelerator.device)  # [timesteps]
         
         #################### TRAINING ####################
         pipeline.transformer.train()
@@ -1313,9 +1343,9 @@ def main(_):
                                                 sample["prompt_embeds"], sample["pooled_prompt_embeds"], config
                                             )
                             
-                            # GRPO loss computation
+                            # GRPO loss computation - 恢复原有的单样本索引方式
                             advantages = torch.clamp(
-                                sample["advantages"][j:j+1],
+                                sample["advantages"][j:j+1],  # [timesteps] -> [1]
                                 -config.train.adv_clip_max,
                                 config.train.adv_clip_max,
                             )
