@@ -911,6 +911,14 @@ def main(_):
         logger.info(f"  images_per_prompt: {config.sample.num_image_per_prompt}")
         logger.info(f"  Expected samples per GPU: {expected_samples_per_gpu}")
         logger.info(f"  Expected total samples: {expected_total_samples}")
+        logger.info(f"  ")
+        logger.info(f"  DataLoader Configuration:")
+        logger.info(f"    Sampler type: {type(train_dataloader.sampler).__name__}")
+        logger.info(f"    Dataset length: {len(train_dataloader.dataset)}")
+        logger.info(f"    Batch size: {train_dataloader.batch_size}")
+        if hasattr(train_dataloader.sampler, 'num_replicas'):
+            logger.info(f"    DistributedSampler num_replicas: {train_dataloader.sampler.num_replicas}")
+            logger.info(f"    DistributedSampler rank: {train_dataloader.sampler.rank}")
         logger.info(f"[🔧 END SAMPLING DEBUG]")
     
     # Create a simple dataset wrapper for training
@@ -962,12 +970,21 @@ def main(_):
             global_std=config.sample.global_std
         )
     
-    # Prepare models with accelerator
-    (pipeline.transformer, prompt_editor, optimizer, prompt_optimizer, 
-     train_dataloader) = accelerator.prepare(
-        pipeline.transformer, prompt_editor, optimizer, prompt_optimizer,
-        train_dataloader
-    )
+    # Prepare models with accelerator (excluding train_dataloader if using custom DistributedSampler)
+    if accelerator.num_processes > 1:
+        # For multi-GPU, don't prepare the dataloader to preserve our DistributedSampler
+        (pipeline.transformer, prompt_editor, optimizer, prompt_optimizer) = accelerator.prepare(
+            pipeline.transformer, prompt_editor, optimizer, prompt_optimizer
+        )
+        if accelerator.is_main_process:
+            logger.info("Multi-GPU setup: train_dataloader not prepared to preserve DistributedSampler")
+    else:
+        # For single GPU, prepare everything including dataloader
+        (pipeline.transformer, prompt_editor, optimizer, prompt_optimizer, 
+         train_dataloader) = accelerator.prepare(
+            pipeline.transformer, prompt_editor, optimizer, prompt_optimizer,
+            train_dataloader
+        )
     
     # Move pipeline components to device
     pipeline.vae.to(accelerator.device)
@@ -1047,6 +1064,12 @@ def main(_):
         #################### SAMPLING ####################
         pipeline.transformer.eval()
         prompt_editor.eval()
+        
+        # Set epoch for DistributedSampler
+        if accelerator.num_processes > 1 and hasattr(train_dataloader.sampler, 'set_epoch'):
+            train_dataloader.sampler.set_epoch(epoch)
+            if accelerator.is_main_process:
+                logger.info(f"DistributedSampler epoch set to {epoch}")
         
         # Log GPU assignment at start of epoch
         print(f"\n{'='*80}")
