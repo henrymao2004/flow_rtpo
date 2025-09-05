@@ -1035,7 +1035,7 @@ def main(_):
                     "test_avg_clip_score": test_results["avg_clip_score"],
                     "test_set_size": test_results["test_set_size"],
                     **{f"test_avg_{metric}": score for metric, score in test_results["metric_averages"].items()}
-                })
+                }, step=global_step)  # Use current global_step for test evaluation
                 
                 # JSON logging for test evaluation
                 if step_log_path:
@@ -1338,8 +1338,13 @@ def main(_):
                             # Backward pass
                             accelerator.backward(flow_loss)
                             
-                            # Gradient clipping
-                            torch.nn.utils.clip_grad_norm_(transformer_trainable_parameters, 1.0)
+                            # Gradient clipping - only when syncing gradients
+                            if accelerator.sync_gradients:
+                                torch.nn.utils.clip_grad_norm_(transformer_trainable_parameters, 1.0)
+                            
+                            # Optimizer step - inside accumulate context for proper gradient accumulation
+                            optimizer.step()
+                            optimizer.zero_grad()
                             
                             # Track KL divergence for logging
                             if config.train.beta > 0:
@@ -1347,10 +1352,6 @@ def main(_):
                             
                             train_info["flow_policy_loss"].append(policy_loss.item())
                             train_info["kl_loss"].append(kl_loss.item())
-                    
-                    # Optimizer step after each timestep
-                    optimizer.step()
-                    optimizer.zero_grad()
                     
                     # Only log when gradients are actually synchronized (actual optimization step)
                     if accelerator.sync_gradients:
@@ -1544,8 +1545,9 @@ def main(_):
                     swanlab.log(prompt_log_data, step=global_step)
                     logger.info(f"Prompt Editor Step {global_step}: {prompt_log_data}")
                 
-                # Increment global_step after logging (DPO style)
-                global_step += 1
+                # Note: global_step is now only incremented in Flow Controller when accelerator.sync_gradients is True
+                # This ensures consistent training step counting with train_sd3.py
+                # Prompt Editor logging uses the same global_step value as the latest Flow Controller step
                 
                 # JSON step logging for prompt editor
                 if accelerator.is_main_process and step_log_path:
@@ -1553,7 +1555,7 @@ def main(_):
                     step_log_entry = {
                         "event_type": "prompt_editor_step",
                         "timestamp": datetime.datetime.now().isoformat(),
-                        "global_step": global_step,
+                        "global_step": global_step,  # Uses same global_step as Flow Controller
                         "epoch": epoch,
                         "inner_epoch": inner_epoch,
                         "training_time_elapsed": current_time - training_start_time,
@@ -1661,7 +1663,7 @@ def main(_):
                 **convergence_metrics,
             }
             
-            swanlab.log(epoch_summary_data)
+            swanlab.log(epoch_summary_data, step=global_step)  # Use current global_step for epoch summary
             logger.info(f"Epoch {epoch} Summary: {epoch_summary_data}")
             
             # Check for hourly logging

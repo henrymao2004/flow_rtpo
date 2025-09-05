@@ -236,7 +236,7 @@ def flow_rtpo_large():
     # Calculate proper num_batches_per_epoch for 32 GPUs
     # Following GRPO pattern: int(132/(gpu_number*batch_size/num_image_per_prompt))
     gpu_number = 32
-    config.sample.num_batches_per_epoch = int(105/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
+    config.sample.num_batches_per_epoch = int(128/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
     # This gives: 132/(32*2/4) = 132/16 = 8.25 -> int(8.25) = 8
     config.sample.num_batches_per_epoch = max(2, config.sample.num_batches_per_epoch) 
     
