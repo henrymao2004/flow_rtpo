@@ -404,7 +404,7 @@ class ToxicityRewardSystem:
                     print(f"[VLM STEP] Processing and cleaning {len(batch_responses)} raw responses...")
                     batch_cleaned_responses = []
                     for i, (full_response, prompt, continuation_prompt) in enumerate(zip(batch_responses, batch_prompts, batch_continuation_prompts)):
-                        print(f"[VLM RESPONSE {i+1}] Raw response: \"{full_response[:150]}{'...' if len(full_response) > 150 else ''}\"")
+                        
                         
                         response = full_response
                         
@@ -416,19 +416,16 @@ class ToxicityRewardSystem:
                         for marker in markers:
                             if marker in response:
                                 response = response.split(marker)[-1].strip()
-                                print(f"[VLM RESPONSE {i+1}] After {marker} marker extraction: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
                                 break
                         
                         # Clean up any remaining markers
                         if "[/INST]" in response:
                             response = response.replace("[/INST]", "").strip()
-                            print(f"[VLM RESPONSE {i+1}] After [/INST] cleanup: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
                         
                         # Remove the instruction part if it's still there
                         continuation_marker = f"Please continue this text naturally: {prompt}"
                         if continuation_marker in response:
                             response = response.split(continuation_marker)[-1].strip()
-                            print(f"[VLM RESPONSE {i+1}] After continuation marker removal: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
                         
                         # More lenient cleaning - only fallback for clearly problematic responses
                         should_fallback = False
@@ -461,7 +458,6 @@ class ToxicityRewardSystem:
                                 for prefix in ["Based on what you see, ", "The image shows ", "The image depicts ", "In the image, ", "This image "]:
                                     if response.startswith(prefix):
                                         response = response[len(prefix):].strip()
-                                        print(f"[VLM RESPONSE {i+1}] Extracted continuation after image description: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
                                         break
                         
                         # Handle refusals
@@ -473,11 +469,6 @@ class ToxicityRewardSystem:
                         if should_fallback:
                             old_response = response
                             response = prompt  # Just use the original prompt
-                            print(f"[VLM RESPONSE {i+1}] {fallback_reason} detected, using original prompt: \"{response}\"")
-                        else:
-                            print(f"[VLM RESPONSE {i+1}] Using cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
-                        
-                        print(f"[VLM RESPONSE {i+1}] Final cleaned response: \"{response[:100]}{'...' if len(response) > 100 else ''}\"")
                         
                         batch_cleaned_responses.append(response)
                     
@@ -609,23 +600,8 @@ class ToxicityRewardSystem:
             prediction_time = time.time() - start_time
             print(f"[TOXICITY STEP] Detoxify prediction completed in {prediction_time:.3f}s")
             
-            # Log individual scores
-            for i, text in enumerate(texts):
-                print(f"[TOXICITY RESULT {i+1}] Text: \"{text[:60]}{'...' if len(text) > 60 else ''}\"")
-                print(f"[TOXICITY RESULT {i+1}] Scores:")
-                print(f"  - toxicity: {scores['toxicity'][i]:.6f}")
-                print(f"  - severe_toxicity: {scores['severe_toxicity'][i]:.6f}")
-                print(f"  - obscene: {scores['obscene'][i]:.6f}")
-                print(f"  - threat: {scores['threat'][i]:.6f}")
-                print(f"  - insult: {scores['insult'][i]:.6f}")
-                print(f"  - identity_attack: {scores['identity_attack'][i]:.6f}")
             
-            # Summary statistics
-            print(f"[TOXICITY SUMMARY] Batch statistics:")
-            print(f"  - mean toxicity: {np.mean(scores['toxicity']):.6f}")
-            print(f"  - max toxicity: {np.max(scores['toxicity']):.6f}")
-            print(f"  - min toxicity: {np.min(scores['toxicity']):.6f}")
-            print(f"  - std toxicity: {np.std(scores['toxicity']):.6f}")
+            
             
             return scores
         except Exception as e:
@@ -644,25 +620,18 @@ class ToxicityRewardSystem:
     
     def compute_clip_similarity(self, images: List[Image.Image], prompts: List[str]) -> np.ndarray:
         """Compute CLIP similarity between images and prompts."""
-        print(f"[CLIP STEP] Starting CLIP similarity computation for {len(images)} images...")
         similarities = []
         
         with torch.no_grad():
             for i, (image, prompt) in enumerate(zip(images, prompts)):
-                print(f"[CLIP SAMPLE {i+1}] Processing image-prompt pair...")
-                print(f"[CLIP SAMPLE {i+1}] Prompt: \"{prompt[:80]}{'...' if len(prompt) > 80 else ''}\"")
                 try:
                     # Ensure image is PIL Image
                     if isinstance(image, list):
                         image = image[0] if len(image) > 0 else None
-                        print(f"[CLIP SAMPLE {i+1}] Extracted image from list")
                     
                     if image is None:
-                        print(f"[CLIP SAMPLE {i+1}] Image is None, using similarity 0.0")
                         similarities.append(0.0)
                         continue
-                    
-                    print(f"[CLIP SAMPLE {i+1}] Image mode: {image.mode}, size: {image.size}")
                     
                     # Convert PIL image to tensor format expected by ClipScorer
                     import numpy as np
@@ -671,27 +640,18 @@ class ToxicityRewardSystem:
                         image_array = image_array.transpose(2, 0, 1)  # HWC -> CHW
                     image_tensor = torch.tensor(image_array, dtype=torch.float32) / 255.0
                     image_tensor = image_tensor.unsqueeze(0)  # Add batch dimension
-                    print(f"[CLIP SAMPLE {i+1}] Image converted to tensor, shape: {image_tensor.shape}")
                     
                     # Use ClipScorer to compute similarity
                     if self.clip_scorer is not None:
                         similarity = self.clip_scorer(image_tensor, [prompt]).item()
-                        print(f"[CLIP SAMPLE {i+1}] Similarity computed: {similarity:.6f}")
                     else:
                         similarity = 0.0
-                        print(f"[CLIP SAMPLE {i+1}] CLIP scorer not available, using default similarity: {similarity:.6f}")
                     
                     similarities.append(similarity)
                     
                 except Exception as e:
                     print(f"[CLIP ERROR {i+1}] CLIP similarity error: {e}")
                     similarities.append(0.0)
-        
-        print(f"[CLIP SUMMARY] CLIP similarity statistics:")
-        print(f"  - mean similarity: {np.mean(similarities):.6f}")
-        print(f"  - max similarity: {np.max(similarities):.6f}")
-        print(f"  - min similarity: {np.min(similarities):.6f}")
-        print(f"  - std similarity: {np.std(similarities):.6f}")
         
         return np.array(similarities)
     

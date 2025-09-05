@@ -505,10 +505,7 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
         # Low-level: Flow sampling with controller
         samples_for_prompt = []
         
-        print(f"[GPU {accelerator.process_index}] Generating {config.sample.num_image_per_prompt} images for expanded prompt {expanded_idx+1}")
         for img_idx in range(config.sample.num_image_per_prompt):
-            print(f"[GPU {accelerator.process_index}] Generating image {img_idx+1}/{config.sample.num_image_per_prompt} for expanded prompt {expanded_idx+1} (group {group_key})")
-            print(f"[GPU {accelerator.process_index}] Modified prompt: \"{modified_prompt[:100]}{'...' if len(modified_prompt) > 100 else ''}\"")
             
             start_time = time.time()
             with torch.no_grad():
@@ -529,11 +526,6 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
                 # Clear CUDA cache after image generation to prevent memory buildup
                 torch.cuda.empty_cache()
                 
-                # Debug: Check shapes of latents from pipeline
-                if latents_list:
-                    print(f"[DEBUG] Number of latents in list: {len(latents_list)}")
-                    print(f"[DEBUG] Individual latent shape: {latents_list[0].shape}")
-                    print(f"[DEBUG] Shape after stacking: {torch.stack(latents_list).shape}")
             generation_time = time.time() - start_time
             print(f"[GPU {accelerator.process_index}] Image {img_idx+1} generated in {generation_time:.2f}s")
             
@@ -1287,12 +1279,12 @@ def main(_):
             for i, samples_batch in enumerate(samples_batched):
                 train_timesteps = list(range(num_train_timesteps))
                 
-                for j in tqdm(
-                    train_timesteps,
-                    desc=f"Timestep (Batch {i+1}/{len(samples_batched)})",
-                    disable=not accelerator.is_local_main_process,
-                ):
-                    for sample in samples_batch:
+                for sample in samples_batch:
+                    for j in tqdm(
+                        train_timesteps,
+                        desc=f"Sample (Batch {i+1}/{len(samples_batched)})",
+                        disable=not accelerator.is_local_main_process,
+                    ):
                         with accelerator.accumulate(pipeline.transformer):
                             # Compute log probabilities
                             prev_sample, log_prob, prev_sample_mean, std_dev_t = compute_log_prob(
