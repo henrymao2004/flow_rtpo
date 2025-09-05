@@ -1178,7 +1178,9 @@ def main(_):
                     logger.info(f"Batch {batch_idx + 1} mean reward: {np.mean(batch_rewards):.4f}")
             
             epoch_samples.extend(samples)
-            epoch_prompts.extend([s["modified_prompt"] for s in samples])
+            # 修复：使用 original_prompt 而不是 modified_prompt 来进行 GRPO 分组
+            # 这样每个原始 prompt 的多个 k_samples 会被正确分组计算 advantage
+            epoch_prompts.extend([s["original_prompt"] for s in samples])
             epoch_metadata.extend([{} for _ in samples])
             
             # Log batch completion
