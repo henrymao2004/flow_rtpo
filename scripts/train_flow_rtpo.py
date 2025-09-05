@@ -911,14 +911,6 @@ def main(_):
         logger.info(f"  images_per_prompt: {config.sample.num_image_per_prompt}")
         logger.info(f"  Expected samples per GPU: {expected_samples_per_gpu}")
         logger.info(f"  Expected total samples: {expected_total_samples}")
-        logger.info(f"  ")
-        logger.info(f"  DataLoader Configuration:")
-        logger.info(f"    Sampler type: {type(train_dataloader.sampler).__name__}")
-        logger.info(f"    Dataset length: {len(train_dataloader.dataset)}")
-        logger.info(f"    Batch size: {train_dataloader.batch_size}")
-        if hasattr(train_dataloader.sampler, 'num_replicas'):
-            logger.info(f"    DistributedSampler num_replicas: {train_dataloader.sampler.num_replicas}")
-            logger.info(f"    DistributedSampler rank: {train_dataloader.sampler.rank}")
         logger.info(f"[🔧 END SAMPLING DEBUG]")
     
     # Create a simple dataset wrapper for training
@@ -963,6 +955,17 @@ def main(_):
             num_workers=0,
             collate_fn=lambda x: (list(zip(*x))[0], list(zip(*x))[1])
         )
+    
+    # Debug: DataLoader Configuration (after creation)
+    if accelerator.is_main_process:
+        logger.info(f"[🔧 DATALOADER DEBUG]")
+        logger.info(f"  Sampler type: {type(train_dataloader.sampler).__name__}")
+        logger.info(f"  Dataset length: {len(train_dataloader.dataset)}")
+        logger.info(f"  Batch size: {train_dataloader.batch_size}")
+        if hasattr(train_dataloader.sampler, 'num_replicas'):
+            logger.info(f"  DistributedSampler num_replicas: {train_dataloader.sampler.num_replicas}")
+            logger.info(f"  DistributedSampler rank: {train_dataloader.sampler.rank}")
+        logger.info(f"[🔧 END DATALOADER DEBUG]")
     
     # Per-prompt stat tracking for GRPO
     if config.per_prompt_stat_tracking:
