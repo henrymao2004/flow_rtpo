@@ -427,10 +427,10 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
     batch_size = len(prompts)
     k_samples = config.prompt_editor.get('k_samples', 4)  # k samples per prompt for GRPO
     
-    print(f"[DEBUG] Starting sample_batch with {batch_size} prompts, k={k_samples} samples per prompt")
-    print(f"[DEBUG] config.sample.num_image_per_prompt = {config.sample.num_image_per_prompt}")
-    print(f"[DEBUG] Expected total prompt modifications = {batch_size} * {k_samples} = {batch_size * k_samples}")
-    print(f"[DEBUG] Expected total images = {batch_size * k_samples} * {config.sample.num_image_per_prompt} = {batch_size * k_samples * config.sample.num_image_per_prompt}")
+    print(f"[GPU {accelerator.process_index}] Starting sample_batch with {batch_size} prompts, k={k_samples} samples per prompt")
+    print(f"[GPU {accelerator.process_index}] config.sample.num_image_per_prompt = {config.sample.num_image_per_prompt}")
+    print(f"[GPU {accelerator.process_index}] Expected total prompt modifications = {batch_size} * {k_samples} = {batch_size * k_samples}")
+    print(f"[GPU {accelerator.process_index}] Expected total images = {batch_size * k_samples} * {config.sample.num_image_per_prompt} = {batch_size * k_samples * config.sample.num_image_per_prompt}")
     
     # High-level: Generate k prompt modifications per original prompt for GRPO
     # Convert tuple to list if necessary
@@ -451,15 +451,15 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
                 'k_idx': k_idx
             }
     
-    print(f"[DEBUG] Expanded to {len(prompts_expanded)} prompt modifications")
-    print(f"[DEBUG] Starting prompt editor with reward_variance={reward_variance}...")
+    print(f"[GPU {accelerator.process_index}] Expanded to {len(prompts_expanded)} prompt modifications")
+    print(f"[GPU {accelerator.process_index}] Starting prompt editor with reward_variance={reward_variance}...")
     
     # Use prompt_editor (buffer broadcasting disabled at DDP level)
     with torch.no_grad():
         modified_prompts, prompt_deltas, original_embeddings, policy_info = prompt_editor(prompts_expanded, reward_variance)
     
-    print(f"[DEBUG] Prompt editor completed. Modified prompts: {[p[:50] + '...' if len(p) > 50 else p for p in modified_prompts[:2]]}")
-    print(f"[DEBUG] Length mismatch check: prompts_expanded={len(prompts_expanded)}, modified_prompts={len(modified_prompts)}")
+    print(f"[GPU {accelerator.process_index}] Prompt editor completed. Modified prompts: {[p[:50] + '...' if len(p) > 50 else p for p in modified_prompts[:2]]}")
+    print(f"[GPU {accelerator.process_index}] Length mismatch check: prompts_expanded={len(prompts_expanded)}, modified_prompts={len(modified_prompts)}")
     
     # Safety check: ensure modified_prompts has the same length as prompts_expanded
     if len(modified_prompts) != len(prompts_expanded):
@@ -502,10 +502,10 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
         # Low-level: Flow sampling with controller
         samples_for_prompt = []
         
-        print(f"[DEBUG] Generating {config.sample.num_image_per_prompt} images for expanded prompt {expanded_idx+1}")
+        print(f"[GPU {accelerator.process_index}] Generating {config.sample.num_image_per_prompt} images for expanded prompt {expanded_idx+1}")
         for img_idx in range(config.sample.num_image_per_prompt):
-            print(f"[REALTIME] Generating image {img_idx+1}/{config.sample.num_image_per_prompt} for expanded prompt {expanded_idx+1} (group {group_key})")
-            print(f"[REALTIME] Modified prompt: \"{modified_prompt[:100]}{'...' if len(modified_prompt) > 100 else ''}\"")
+            print(f"[GPU {accelerator.process_index}] Generating image {img_idx+1}/{config.sample.num_image_per_prompt} for expanded prompt {expanded_idx+1} (group {group_key})")
+            print(f"[GPU {accelerator.process_index}] Modified prompt: \"{modified_prompt[:100]}{'...' if len(modified_prompt) > 100 else ''}\"")
             
             start_time = time.time()
             with torch.no_grad():
@@ -529,7 +529,7 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
                     print(f"[DEBUG] Individual latent shape: {latents_list[0].shape}")
                     print(f"[DEBUG] Shape after stacking: {torch.stack(latents_list).shape}")
             generation_time = time.time() - start_time
-            print(f"[REALTIME] Image {img_idx+1} generated in {generation_time:.2f}s")
+            print(f"[GPU {accelerator.process_index}] Image {img_idx+1} generated in {generation_time:.2f}s")
             
             # Extract the first (and only) image from the list
             final_image = final_images[0] if isinstance(final_images, list) else final_images
@@ -1011,6 +1011,14 @@ def main(_):
         pipeline.transformer.eval()
         prompt_editor.eval()
         
+        # Log GPU assignment at start of epoch
+        print(f"\n{'='*80}")
+        print(f"[GPU {accelerator.process_index}] EPOCH {epoch} STARTING")
+        print(f"[GPU {accelerator.process_index}] Device: {accelerator.device}")
+        print(f"[GPU {accelerator.process_index}] Process Index: {accelerator.process_index}/{accelerator.num_processes}")
+        print(f"[GPU {accelerator.process_index}] Is Main Process: {accelerator.is_main_process}")
+        print(f"{'='*80}\n")
+        
         epoch_samples = []
         epoch_prompts = []
         epoch_metadata = []
@@ -1018,8 +1026,8 @@ def main(_):
         
         # Training loop
         for batch_idx, (prompts, metadatas) in enumerate(train_dataloader):
-            print(f"[DEBUG] Epoch {epoch}, Batch {batch_idx}: Processing {len(prompts)} prompts")
-            print(f"[DEBUG] Prompts: {[p[:50] + '...' if len(p) > 50 else p for p in prompts]}")
+            print(f"[GPU {accelerator.process_index}] Epoch {epoch}, Batch {batch_idx}: Processing {len(prompts)} prompts")
+            print(f"[GPU {accelerator.process_index}] Prompts: {[p[:50] + '...' if len(p) > 50 else p for p in prompts]}")
             
             # Sample batch using hierarchical policies
             samples = sample_batch(
@@ -1114,7 +1122,13 @@ def main(_):
             epoch_samples.extend(samples)
             epoch_prompts.extend([s["modified_prompt"] for s in samples])
             epoch_metadata.extend([{} for _ in samples])
+            
+            # Log batch completion
+            print(f"[GPU {accelerator.process_index}] Batch {batch_idx} completed: {len(samples)} samples generated")
         
+        print(f"\n[GPU {accelerator.process_index}] EPOCH {epoch} SAMPLING COMPLETED")
+        print(f"[GPU {accelerator.process_index}] Total samples generated: {len(epoch_samples)}")
+        print(f"[GPU {accelerator.process_index}] Moving to reward aggregation phase...\n")
         logger.info(f"Generated {len(epoch_samples)} samples for epoch {epoch}")
         
         #################### REWARD AGGREGATION ####################
