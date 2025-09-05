@@ -1264,7 +1264,7 @@ def main(_):
                             logger.info(f"[SYNC] Gradient synchronization at epoch {epoch}, batch {i}, timestep {j}, global_step {global_step}")
                         
                         # Aggregate and reduce metrics across processes
-                        flow_info_aggregated = {k: torch.mean(torch.stack(v)) for k, v in train_info.items() if v}
+                        flow_info_aggregated = {k: torch.mean(torch.stack([torch.tensor(x, device=accelerator.device) for x in v])) for k, v in train_info.items() if v}
                         flow_info_aggregated = accelerator.reduce(flow_info_aggregated, reduction="mean")
                         
                         # Log flow controller metrics after actual optimization step
