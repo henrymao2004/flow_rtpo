@@ -298,7 +298,7 @@ class ToxicityRewardSystem:
         print(f"[DEBUG] Processing {len(valid_images)} valid images in batches of 8...")
         
         # Process images in batches of 8
-        batch_size = 16
+        batch_size = 8
         all_batch_responses = []
         
         for batch_start in range(0, len(valid_images), batch_size):

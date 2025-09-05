@@ -1297,21 +1297,11 @@ def main(_):
                     
                     # Only log when gradients are actually synchronized (actual optimization step)
                     if accelerator.sync_gradients:
-                        if config.train.ema:
-                            ema.step(transformer_trainable_parameters, global_step)
-                        
-                        # Increment global_step after flow controller optimization
-                        global_step += 1
-                        
-                        # Debug: Confirm sync_gradients is working
-                        if accelerator.is_local_main_process:
-                            logger.info(f"[SYNC] Gradient synchronization at epoch {epoch}, batch {i}, timestep {j}, global_step {global_step}")
-                        
                         # Aggregate and reduce metrics across processes
                         flow_info_aggregated = {k: torch.mean(torch.stack([torch.tensor(x, device=accelerator.device) for x in v])) for k, v in train_info.items() if v}
                         flow_info_aggregated = accelerator.reduce(flow_info_aggregated, reduction="mean")
                         
-                        # Log flow controller metrics after actual optimization step
+                        # Log flow controller metrics before incrementing global_step (DPO style)
                         if accelerator.is_main_process:
                             # Calculate current reward metrics from epoch_samples
                             current_rewards = [sample["reward"] for sample in epoch_samples] if epoch_samples else [0]
@@ -1330,8 +1320,18 @@ def main(_):
                                 "toxicity_mean": np.mean(current_toxicity),
                                 "toxicity_max": np.max(current_toxicity) if current_toxicity else 0,
                             }
-                            swanlab.log(flow_log_data)
+                            swanlab.log(flow_log_data, step=global_step)
                             logger.info(f"Flow Controller Step {global_step}: {flow_log_data}")
+                        
+                        # Increment global_step after logging (DPO style)
+                        global_step += 1
+                        
+                        # Debug: Confirm sync_gradients is working
+                        if accelerator.is_local_main_process:
+                            logger.info(f"[SYNC] Gradient synchronization at epoch {epoch}, batch {i}, timestep {j}, new global_step {global_step}")
+                        
+                        if config.train.ema:
+                            ema.step(transformer_trainable_parameters, global_step)
                             
                             # JSON step logging for flow controller
                             if step_log_path:
@@ -1443,10 +1443,7 @@ def main(_):
                     sample_policy_info = epoch_samples[0]['policy_info']
                     train_info["prompt_warmup_factor"].append(sample_policy_info.get('warmup_factor', 1.0))
                 
-                # Increment global_step after prompt editor optimization
-                global_step += 1
-                
-                # Log prompt editor metrics after each optimizer step
+                # Log prompt editor metrics before incrementing global_step (DPO style)
                 if accelerator.is_main_process:
                     # Calculate current reward metrics from epoch_samples
                     current_rewards = [sample["reward"] for sample in epoch_samples] if epoch_samples else [0]
@@ -1475,55 +1472,58 @@ def main(_):
                         "toxicity_mean": np.mean(current_toxicity),
                         "toxicity_max": np.max(current_toxicity) if current_toxicity else 0,
                     }
-                    swanlab.log(prompt_log_data)
+                    swanlab.log(prompt_log_data, step=global_step)
                     logger.info(f"Prompt Editor Step {global_step}: {prompt_log_data}")
-                    
-                    # JSON step logging for prompt editor
-                    if step_log_path:
-                        current_time = time.time()
-                        step_log_entry = {
-                            "event_type": "prompt_editor_step",
-                            "timestamp": datetime.datetime.now().isoformat(),
-                            "global_step": global_step,
-                            "epoch": epoch,
-                            "inner_epoch": inner_epoch,
-                            "training_time_elapsed": current_time - training_start_time,
-                            "losses": {
-                                "prompt_policy_loss": float(np.mean(train_info.get("prompt_policy_loss", [0]))),
-                                "prompt_reg_loss": float(np.mean(train_info.get("prompt_reg_loss", [0]))),
-                                "total_prompt_loss": float(np.mean(train_info.get("total_prompt_loss", [0])))
-                            },
-                            "advantages": {
-                                "mean_advantage": float(np.mean(train_info.get("prompt_mean_advantage", [0]))),
-                                "baseline_value": float(np.mean(train_info.get("prompt_baseline_value", [0])))
-                            },
-                            "regularization": {
-                                "reward_variance": float(np.mean(train_info.get("reward_variance", [0]))),
-                                "epsilon_adaptive": float(np.mean(train_info.get("epsilon_adaptive", [0]))),
-                                "proximity_reg": float(np.mean(train_info.get("reg_proximity_reg", [0]))),
-                                "semantic_reg": float(np.mean(train_info.get("reg_semantic_reg", [0]))),
-                                "reconstruction": float(np.mean(train_info.get("reg_reconstruction", [0]))),
-                                "epsilon_current": float(np.mean(train_info.get("reg_epsilon_current", [0]))),
-                                "mean_semantic_sim": float(np.mean(train_info.get("reg_mean_semantic_sim", [0])))
-                            },
-                            "grpo": {
-                                "num_groups": int(np.mean(train_info.get("num_groups", [0]))),
-                                "warmup_factor": float(np.mean(train_info.get("prompt_warmup_factor", [1])))
-                            },
-                            "rewards": {
-                                "mean": float(np.mean(current_rewards)),
-                                "std": float(np.std(current_rewards)),
-                                "min": float(np.min(current_rewards)) if current_rewards else 0.0,
-                                "max": float(np.max(current_rewards)) if current_rewards else 0.0
-                            },
-                            "toxicity": {
-                                "mean": float(np.mean(current_toxicity)),
-                                "max": float(np.max(current_toxicity)) if current_toxicity else 0.0,
-                                "min": float(np.min(current_toxicity)) if current_toxicity else 0.0
-                            },
-                            "num_samples": len(current_rewards)
-                        }
-                        log_json_entry(step_log_path, step_log_entry)
+                
+                # Increment global_step after logging (DPO style)
+                global_step += 1
+                
+                # JSON step logging for prompt editor
+                if accelerator.is_main_process and step_log_path:
+                    current_time = time.time()
+                    step_log_entry = {
+                        "event_type": "prompt_editor_step",
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "global_step": global_step,
+                        "epoch": epoch,
+                        "inner_epoch": inner_epoch,
+                        "training_time_elapsed": current_time - training_start_time,
+                        "losses": {
+                            "prompt_policy_loss": float(np.mean(train_info.get("prompt_policy_loss", [0]))),
+                            "prompt_reg_loss": float(np.mean(train_info.get("prompt_reg_loss", [0]))),
+                            "total_prompt_loss": float(np.mean(train_info.get("total_prompt_loss", [0])))
+                        },
+                        "advantages": {
+                            "mean_advantage": float(np.mean(train_info.get("prompt_mean_advantage", [0]))),
+                            "baseline_value": float(np.mean(train_info.get("prompt_baseline_value", [0])))
+                        },
+                        "regularization": {
+                            "reward_variance": float(np.mean(train_info.get("reward_variance", [0]))),
+                            "epsilon_adaptive": float(np.mean(train_info.get("epsilon_adaptive", [0]))),
+                            "proximity_reg": float(np.mean(train_info.get("reg_proximity_reg", [0]))),
+                            "semantic_reg": float(np.mean(train_info.get("reg_semantic_reg", [0]))),
+                            "reconstruction": float(np.mean(train_info.get("reg_reconstruction", [0]))),
+                            "epsilon_current": float(np.mean(train_info.get("reg_epsilon_current", [0]))),
+                            "mean_semantic_sim": float(np.mean(train_info.get("reg_mean_semantic_sim", [0])))
+                        },
+                        "grpo": {
+                            "num_groups": int(np.mean(train_info.get("num_groups", [0]))),
+                            "warmup_factor": float(np.mean(train_info.get("prompt_warmup_factor", [1])))
+                        },
+                        "rewards": {
+                            "mean": float(np.mean(current_rewards)),
+                            "std": float(np.std(current_rewards)),
+                            "min": float(np.min(current_rewards)) if current_rewards else 0.0,
+                            "max": float(np.max(current_rewards)) if current_rewards else 0.0
+                        },
+                        "toxicity": {
+                            "mean": float(np.mean(current_toxicity)),
+                            "max": float(np.max(current_toxicity)) if current_toxicity else 0.0,
+                            "min": float(np.min(current_toxicity)) if current_toxicity else 0.0
+                        },
+                        "num_samples": len(current_rewards)
+                    }
+                    log_json_entry(step_log_path, step_log_entry)
                 
                 # Reset prompt editor metrics for next inner epoch
                 train_info["prompt_policy_loss"] = []
