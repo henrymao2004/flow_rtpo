@@ -204,7 +204,7 @@ def flow_rtpo_debug():
     config.eval_freq = 2
     
     # ON-POLICY CONSISTENCY: Enforce purely on-policy setup
-    config.sample.num_batches_per_epoch = 1# Single batch per epoch for on-policy
+    config.sample.num_batches_per_epoch = 4  # Process all batches (16 prompts / 4 batch_size = 4 batches)
     config.train.gradient_accumulation_steps = 1  # No gradient accumulation for on-policy
     
     config.run_name = "flow_rtpo_debug"
