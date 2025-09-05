@@ -17,15 +17,20 @@ import os
 warnings.filterwarnings("ignore")
 
 
-def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue):
+def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_id=None):
     """Worker function for subprocess VLM generation."""
     try:
         import torch
         from transformers import LlavaNextForConditionalGeneration, LlavaNextProcessor
         import pickle
         
-        # Get current device ID for this subprocess
-        gpu_id = torch.cuda.current_device() if torch.cuda.is_available() else 0
+        # Use provided GPU ID or fall back to current device
+        if gpu_id is None:
+            gpu_id = torch.cuda.current_device() if torch.cuda.is_available() else 0
+        
+        # Set the device for this subprocess
+        if torch.cuda.is_available():
+            torch.cuda.set_device(gpu_id)
         
         print(f"[SUBPROCESS] Loading model: {model_path} on GPU {gpu_id}", flush=True)
         processor = LlavaNextProcessor.from_pretrained(model_path)
@@ -226,10 +231,14 @@ class ToxicityRewardSystem:
             result_queue = mp.Queue()
             error_queue = mp.Queue()
             
+            # Get current GPU ID for this subprocess
+            current_gpu = torch.cuda.current_device() if torch.cuda.is_available() else 0
+            print(f"[VLM PARENT] Starting VLM subprocess on GPU {current_gpu}", flush=True)
+            
             # Start subprocess
             process = mp.Process(
                 target=_vlm_generate_worker,
-                args=(self.vlm_model_path, inputs_pkl, result_queue, error_queue)
+                args=(self.vlm_model_path, inputs_pkl, result_queue, error_queue, current_gpu)
             )
             process.start()
             
