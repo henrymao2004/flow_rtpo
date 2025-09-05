@@ -3,6 +3,9 @@ import contextlib
 import os
 import datetime
 from concurrent import futures
+
+# Set CUDA memory allocation configuration to reduce fragmentation
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 import time
 import json
 import hashlib
@@ -522,6 +525,9 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
                         random.randint(0, 2**32 - 1)
                     ),
                 )
+                
+                # Clear CUDA cache after image generation to prevent memory buildup
+                torch.cuda.empty_cache()
                 
                 # Debug: Check shapes of latents from pipeline
                 if latents_list:
@@ -1053,6 +1059,9 @@ def main(_):
                 logger.info(f"[GPU {accelerator.process_index}] Starting reward computation...")
                 batch_rewards, batch_reward_metadata = reward_fn(batch_images, batch_prompts, [{}] * len(samples))
                 logger.info(f"[GPU {accelerator.process_index}] Reward computation completed!")
+                
+                # Clear CUDA cache after reward computation to prevent memory buildup
+                torch.cuda.empty_cache()
                 
                 # Assign rewards to samples
                 for i, sample in enumerate(samples):
