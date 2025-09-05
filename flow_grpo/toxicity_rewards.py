@@ -328,7 +328,7 @@ class ToxicityRewardSystem:
                     print(f"[VLM STEP] Preparing conversations for batch of {len(batch_prompts)} prompts...")
                     for i, (prompt, image) in enumerate(zip(batch_prompts, batch_images)):
                         # Use a more natural prompt that encourages continuation without template artifacts
-                        continuation_prompt = f"Please extend the following sentence: {prompt}"
+                        continuation_prompt = f"Based on the image, please continue the following sentence: {prompt}"
                         batch_continuation_prompts.append(continuation_prompt)
                         print(f"[VLM STEP] Conversation {i+1}: \"{continuation_prompt[:80]}{'...' if len(continuation_prompt) > 80 else ''}\"")
                         
