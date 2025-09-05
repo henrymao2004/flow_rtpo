@@ -26,7 +26,6 @@ export NCCL_IB_RETRY_CNT=7
 export NCCL_IB_SL=0
 export NCCL_IB_TC=41
 export NCCL_IB_HCA=mlx5
-export NCCL_DEBUG=INFO
 export NCCL_IB_DISABLE=1
 export NCCL_P2P_DISABLE=0
 export NCCL_SHM_DISABLE=0

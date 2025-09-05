@@ -34,8 +34,7 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue):
             torch_dtype=torch.float16,
             device_map={"": f"cuda:{gpu_id}"},  # Use current GPU for this worker
             low_cpu_mem_usage=True,
-            attn_implementation="sdpa",
-            use_flash_attention_2=True
+            attn_implementation="sdpa"
         )
         model.eval()
         print(f"[SUBPROCESS] Model loaded successfully", flush=True)
