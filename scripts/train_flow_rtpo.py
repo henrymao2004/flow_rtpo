@@ -1029,48 +1029,35 @@ def main(_):
             
             # Immediate reward evaluation and saving for this batch
             if samples:
-                # Only compute rewards on main process, then broadcast to all processes
+                # Each GPU computes rewards for its own batch
+                logger.info(f"[GPU {accelerator.process_index}] Computing rewards for batch {batch_idx + 1}...")
+                logger.info(f"[GPU {accelerator.process_index}] Batch contains {len(samples)} samples")
+                
+                # Prepare batch data
+                batch_images = [sample["final_image"] for sample in samples]
+                batch_prompts = [sample["modified_prompt"] for sample in samples]
+                
                 if accelerator.is_main_process:
-                    logger.info(f"Computing rewards for batch {batch_idx + 1}...")
-                    logger.info(f"Batch contains {len(samples)} samples")
-                    
-                    # Prepare batch data
-                    batch_images = [sample["final_image"] for sample in samples]
-                    batch_prompts = [sample["modified_prompt"] for sample in samples]
-                    
                     logger.info(f"Sample modified_prompts: {[p[:50] + '...' if len(p) > 50 else p for p in batch_prompts[:2]]}")
                     logger.info(f"Image types: {[type(img) for img in batch_images[:2]]}")
-                    
-                    # Compute rewards for this batch
-                    logger.info("Starting reward computation...")
-                    batch_rewards, batch_reward_metadata = reward_fn(batch_images, batch_prompts, [{}] * len(samples))
-                    logger.info("Reward computation completed!")
-                    
-                    # Assign rewards to samples and collect CLIP scores
-                    for i, sample in enumerate(samples):
-                        sample["reward"] = batch_rewards[i]
-                        sample["final_toxicity"] = batch_reward_metadata["toxicity_scores"]["primary"][i]
-                    
-                    # Collect CLIP similarity scores for epoch quality_mean
-                    epoch_clip_scores.extend(batch_reward_metadata["quality_scores"]["clip_similarity"])
-                else:
-                    # Non-main processes: initialize dummy rewards that will be overwritten by broadcast
-                    batch_rewards = [0.0] * len(samples)
-                    batch_reward_metadata = {"toxicity_scores": {"primary": [0.0] * len(samples)}}
-                    for i, sample in enumerate(samples):
-                        sample["reward"] = 0.0
-                        sample["final_toxicity"] = 0.0
                 
-                # Synchronize rewards across all processes
+                # Compute rewards for this batch on each GPU
+                logger.info(f"[GPU {accelerator.process_index}] Starting reward computation...")
+                batch_rewards, batch_reward_metadata = reward_fn(batch_images, batch_prompts, [{}] * len(samples))
+                logger.info(f"[GPU {accelerator.process_index}] Reward computation completed!")
+                
+                # Assign rewards to samples
+                for i, sample in enumerate(samples):
+                    sample["reward"] = batch_rewards[i]
+                    sample["final_toxicity"] = batch_reward_metadata["toxicity_scores"]["primary"][i]
+                
+                # Collect CLIP similarity scores for epoch quality_mean (only on main process to avoid duplication)
+                if accelerator.is_main_process:
+                    epoch_clip_scores.extend(batch_reward_metadata["quality_scores"]["clip_similarity"])
+                
+                # Synchronize across all processes
                 if accelerator.num_processes > 1:
                     accelerator.wait_for_everyone()
-                    # For multi-process, we'll use a simpler approach without broadcast
-                    # Main process has the rewards, others will work with dummy values
-                    if not accelerator.is_main_process:
-                        # Non-main processes: use dummy values
-                        for sample in samples:
-                            sample["reward"] = 0.0
-                            sample["final_toxicity"] = 0.0
                 
                 # Real-time logging for each sample in the batch (only on main process)
                 if accelerator.is_main_process:
@@ -1135,19 +1122,53 @@ def main(_):
         all_rewards = [sample["reward"] for sample in epoch_samples]
         all_toxicity_scores = [sample["final_toxicity"] for sample in epoch_samples]
         
-        # Create reward metadata from aggregated batch results
-        reward_metadata = {
-            "statistics": {
-                "mean_toxicity": np.mean(all_toxicity_scores),
-                "max_toxicity": max(all_toxicity_scores),
-                # "cvar_mean": np.mean(all_rewards),  # Approximate CVaR from rewards
-                "quality_mean": float(np.mean(epoch_clip_scores)) if epoch_clip_scores else 0.0
-            },
-            # "cvar_threshold": np.percentile(all_rewards, 10) if len(all_rewards) > 0 else 0.0,
-            "toxicity_scores": {"primary": all_toxicity_scores}
-        }
+        # Gather rewards from all GPUs for comprehensive statistics
+        if accelerator.num_processes > 1:
+            # Convert to tensors for gathering
+            rewards_tensor = torch.tensor(all_rewards, device=accelerator.device)
+            toxicity_tensor = torch.tensor(all_toxicity_scores, device=accelerator.device)
+            
+            # Gather from all processes
+            gathered_rewards = accelerator.gather(rewards_tensor)
+            gathered_toxicity = accelerator.gather(toxicity_tensor)
+            
+            if accelerator.is_main_process:
+                # Convert back to lists for statistics computation
+                all_rewards_global = gathered_rewards.cpu().numpy().tolist()
+                all_toxicity_global = gathered_toxicity.cpu().numpy().tolist()
+                logger.info(f"[DISTRIBUTED] Gathered {len(all_rewards_global)} total rewards from {accelerator.num_processes} GPUs")
+                logger.info(f"[DISTRIBUTED] Local samples: {len(all_rewards)}, Global samples: {len(all_rewards_global)}")
+            else:
+                all_rewards_global = all_rewards  # Use local data for non-main processes
+                all_toxicity_global = all_toxicity_scores
+        else:
+            all_rewards_global = all_rewards
+            all_toxicity_global = all_toxicity_scores
         
-        logger.info(f"Mean reward (from batch computations): {np.mean(all_rewards):.4f}")
+        # Create reward metadata from aggregated batch results (use global data for main process)
+        if accelerator.is_main_process:
+            reward_metadata = {
+                "statistics": {
+                    "mean_toxicity": np.mean(all_toxicity_global),
+                    "max_toxicity": max(all_toxicity_global),
+                    # "cvar_mean": np.mean(all_rewards_global),  # Approximate CVaR from rewards
+                    "quality_mean": float(np.mean(epoch_clip_scores)) if epoch_clip_scores else 0.0
+                },
+                # "cvar_threshold": np.percentile(all_rewards_global, 10) if len(all_rewards_global) > 0 else 0.0,
+                "toxicity_scores": {"primary": all_toxicity_global}
+            }
+            logger.info(f"[GLOBAL] Mean reward (from {len(all_rewards_global)} samples): {np.mean(all_rewards_global):.4f}")
+        else:
+            # Use local data for statistics on non-main processes
+            reward_metadata = {
+                "statistics": {
+                    "mean_toxicity": np.mean(all_toxicity_scores),
+                    "max_toxicity": max(all_toxicity_scores),
+                    "quality_mean": 0.0  # Only main process collects CLIP scores
+                },
+                "toxicity_scores": {"primary": all_toxicity_scores}
+            }
+            logger.info(f"[LOCAL GPU {accelerator.process_index}] Mean reward (from {len(all_rewards)} samples): {np.mean(all_rewards):.4f}")
         # logger.info(f"CVaR threshold: {reward_metadata['cvar_threshold']:.4f}")
         
         # Note: Individual sample results are saved immediately during generation
