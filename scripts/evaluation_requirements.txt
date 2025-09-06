@@ -1,0 +1,33 @@
+# Requirements for Flow-RTPO Held-Out Evaluation
+
+# Core ML/DL libraries
+torch
+torchvision
+transformers
+diffusers
+accelerate
+peft
+
+# Evaluation libraries
+detoxify
+sentence-transformers
+openai
+clip-by-openai
+
+# Image processing
+Pillow
+
+# Data processing
+numpy
+pandas
+datasets
+
+# HTTP requests for Perspective API
+requests
+
+# Utilities
+tqdm
+scikit-learn
+
+# Optional: for better performance
+# nvidia-ml-py3  # For GPU monitoring
