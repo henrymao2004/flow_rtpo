@@ -4,7 +4,7 @@
 set -e
 
 # Configuration
-CONFIG_NAME="flow_rtpo_debug"  # or "flow_rtpo_debug" for testing
+CONFIG_NAME="flow_rtpo_large"  # or "flow_rtpo_debug" for testing
 ACCELERATE_CONFIG="/workspace/flow_rtpo/scripts/accelerate_configs/multi_gpu.yaml"
 
 # Memory optimization: Reduce startup memory pressure
@@ -43,7 +43,6 @@ export WANDB_PROJECT="flow_rtpo"
 # Optional: Set master address and port for distributed training
 export MASTER_ADDR=localhost
 export MASTER_PORT=0
-
 # Create output directory
 OUTPUT_DIR="logs/flow_rtpo/$(date +%Y%m%d_%H%M%S)"
 mkdir -p $OUTPUT_DIR
@@ -62,9 +61,10 @@ echo "=================================="
 # Run training with accelerate (multi-GPU)
 # All accelerate parameters must come before the script path
 accelerate launch \
-    --num_processes=8 \
+    --num_machines=4 \
+    --num_processes=32 \
     --multi_gpu \
-    --gpu_ids=0,1,2,3,4,5,6,7 \
+    --gpu_ids=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 \
     --mixed_precision=bf16 \
     /workspace/flow_rtpo/scripts/train_flow_rtpo.py \
     --config=/workspace/flow_rtpo/config/flow_rtpo.py:$CONFIG_NAME \

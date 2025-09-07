@@ -20,7 +20,7 @@ def flow_rtpo_sd3():
     # Model loading configuration - default to HuggingFace
     config.model_loading = ml_collections.ConfigDict()
     config.model_loading.use_local = False  # Default to HuggingFace
-    config.model_loading.local_base_path = "/mnt/data/group/zhaoliangjie/ICLR-work/"
+    config.model_loading.local_base_path = ""
     
     # Local model paths (when use_local=True) - absolute paths
     config.model_loading.local_models = ml_collections.ConfigDict()
@@ -64,7 +64,7 @@ def flow_rtpo_sd3():
     
     # Dataset configuration - Real Toxicity Prompts
     config.dataset_type = "rtp"
-    config.max_prompts = 132  # First 132 prompts from RTP challenge subset
+    config.max_prompts = 160  # First 132 prompts from RTP challenge subset
     config.dataset_cache_dir = None
     
     # Override base config prompt function - Flow-RTPO uses RTP dataset, not prompt functions
@@ -223,8 +223,8 @@ def flow_rtpo_large():
     config = flow_rtpo_sd3()
     
     # Large mode: Use local loading for better performance
-    config.model_loading.use_local = True
-    config.dataset_loading.use_local = True
+    config.model_loading.use_local = False  
+    config.dataset_loading.use_local = False
     
     # Full dataset
     config.max_prompts = 160
@@ -245,7 +245,7 @@ def flow_rtpo_large():
     config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch // 2
     config.train.batch_size = config.sample.batch_size
     # Extended training
-    config.num_epochs = 200
+    config.num_epochs = 10000
     config.save_freq = 20
     config.eval_freq = 10
     
@@ -253,7 +253,7 @@ def flow_rtpo_large():
     config.toxicity_reward.w_cvar = 0.0
     config.toxicity_reward.tau = 0.2  
     
-    config.run_name = "flow_rtpo_large_scale"
+    config.run_name = "flow_rtpo_large"
     
     # Set save directory based on configuration
     if config.save_loading.use_local:

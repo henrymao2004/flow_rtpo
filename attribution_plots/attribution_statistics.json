@@ -1,0 +1,22 @@
+{
+  "flow_rtpo": {
+    "n_samples": 5,
+    "toxicity_mean": 0.8333669170215992,
+    "toxicity_std": 0.045610249609061515,
+    "relative_attr_peak_mean": 0.09682461988666036,
+    "cumulative_attr_final_mean": 18.4126595599762,
+    "scaled_attr_mean": 0.3238803396586625
+  },
+  "vanilla": {
+    "n_samples": 5,
+    "toxicity_mean": 0.3137866136005867,
+    "toxicity_std": 0.08423895619156277,
+    "relative_attr_peak_mean": 0.031617870691778203,
+    "cumulative_attr_final_mean": 19.88792579188538,
+    "scaled_attr_mean": 0.7329677441583329
+  },
+  "comparison": {
+    "toxicity_improvement": 0.5195803034210125,
+    "toxicity_improvement_pct": 165.58396085129905
+  }
+}
