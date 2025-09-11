@@ -223,8 +223,8 @@ def flow_rtpo_large():
     config = flow_rtpo_sd3()
     
     # Large mode: Use local loading for better performance
-    config.model_loading.use_local = False  
-    config.dataset_loading.use_local = False
+    config.model_loading.use_local = True
+    config.dataset_loading.use_local = True
     
     # Full dataset
     config.max_prompts = 180
