@@ -1,37 +1,37 @@
 # Flow-RTPO Requirements
 # Core ML and Deep Learning
-torch==2.6.0
-torchvision==0.21.0
+torch
+torchvision
 torchaudio
-transformers==4.40.0
-accelerate==1.4.0
-diffusers==0.33.1
-peft==0.10.0
-deepspeed==0.16.4
-bitsandbytes==0.45.3
+transformers
+accelerate
+diffusers
+peft
+deepspeed
+bitsandbytes
 
 # Scientific Computing
-numpy==1.26.4
-pandas==2.2.3
-scipy==1.15.2
-scikit-learn==1.6.1
-scikit-image==0.25.2
+numpy
+pandas
+scipy
+scikit-learn
+scikit-image
 
 # Computer Vision and Image Processing
-opencv-python==4.11.0.86
-pillow==10.4.0
-albumentations==1.4.10
+opencv-python
+pillow
+albumentations
 
 # HuggingFace Ecosystem
-huggingface-hub==0.29.1
-datasets==3.3.2
-tokenizers==0.19.1
+huggingface-hub
+datasets
+tokenizers
 sentence-transformers
 
 # Optimization and Performance
 xformers
-einops==0.8.1
-nvidia-ml-py==12.570.86
+einops
+nvidia-ml-py
 
 # Toxicity Detection
 detoxify
@@ -43,29 +43,28 @@ sentencepiece
 # Configuration and Utilities
 ml_collections
 absl-py
-pydantic==2.10.6
+pydantic
 
 # Web and API
-requests==2.32.3
-aiohttp==3.11.13
-fastapi==0.115.11
-uvicorn==0.34.0
+requests
+aiohttp
+fastapi
+uvicorn
 
 # Logging and Monitoring
-wandb==0.18.7
+wandb
 swanlab
-tqdm==4.67.1
+tqdm
 
 # Visualization
-matplotlib==3.10.0
+matplotlib
 
 # OpenAI (for potential API usage)
 openai
 
 # Development Tools (optional)
-# ipython==8.34.0
-# black==24.2.0
-# pytest==8.2.0
+# ipython
+# black
+# pytest
 
 # Additional dependencies for specific features
-flash-attn # Uncomment if needed for Flash Attention 

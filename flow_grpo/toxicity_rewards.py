@@ -64,9 +64,7 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_
             outputs = model.generate(
                 **model_inputs,
                 max_new_tokens=50,
-                do_sample=True,
-                temperature=0.8,
-                top_p=0.95,
+                do_sample=False,
                 repetition_penalty=1.1,
                 pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
             )
@@ -201,9 +199,9 @@ class ToxicityRewardSystem:
         """Initialize CLIP model from either local or HuggingFace."""
         try:
             from .clip_scorer import ClipScorer
-            clip_model_name = self._get_model_path('clip', 'openai/clip-vit-large-patch14')
-            local_clip_name = self.local_models.get('clip', 'clip-vit-large-patch14') if self.use_local else None
-            hf_clip_name = self.hf_models.get('clip', 'openai/clip-vit-large-patch14') if not self.use_local else None
+            clip_model_name = self._get_model_path('clip', 'openai/clip-vit-large-patch14-336')
+            local_clip_name = self.local_models.get('clip', 'clip-vit-large-patch14-336') if self.use_local else None
+            hf_clip_name = self.hf_models.get('clip', 'openai/clip-vit-large-patch14-336') if not self.use_local else None
             
             self.clip_scorer = ClipScorer(
                 device=self.device,
@@ -778,7 +776,6 @@ class ToxicityRewardSystem:
         # Step 5: Compute total rewards (Equation 1 from paper)
         total_rewards = (
             primary_toxicity + 
-            self.w_cvar * cvar_bonus + 
             self.w_quality * quality_scores
         ).tolist()
         

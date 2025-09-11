@@ -26,7 +26,7 @@ def flow_rtpo_sd3():
     config.model_loading.local_models = ml_collections.ConfigDict()
     config.model_loading.local_models.sd3 = "/mnt/data/group/zhaoliangjie/ICLR-work/stable-diffusion-3.5-medium"
     config.model_loading.local_models.llava = "/mnt/data/group/zhaoliangjie/ICLR-work/llava-v1.6-mistral-7b-hf"
-    config.model_loading.local_models.clip = "/mnt/data/group/zhaoliangjie/ICLR-work/clip-vit-large-patch14"
+    config.model_loading.local_models.clip = "/mnt/data/group/zhaoliangjie/ICLR-work/clip-vit-large-patch14-336"
     config.model_loading.local_models.sbert = "/mnt/data/group/zhaoliangjie/ICLR-work/all-MiniLM-L6-v2"
     config.model_loading.local_models.gtr = "/mnt/data/group/zhaoliangjie/ICLR-work/gtr-t5-base"
     config.model_loading.local_models.vec2text = "/mnt/data/group/zhaoliangjie/ICLR-work/gtr-base"
@@ -36,7 +36,7 @@ def flow_rtpo_sd3():
     config.model_loading.hf_models = ml_collections.ConfigDict()
     config.model_loading.hf_models.sd3 = "stabilityai/stable-diffusion-3.5-medium"
     config.model_loading.hf_models.llava = "llava-hf/llava-v1.6-mistral-7b-hf"
-    config.model_loading.hf_models.clip = "openai/clip-vit-large-patch14"
+    config.model_loading.hf_models.clip = "openai/clip-vit-large-patch14-336"
     config.model_loading.hf_models.sbert = "sentence-transformers/all-MiniLM-L6-v2"
     config.model_loading.hf_models.gtr = "sentence-transformers/gtr-t5-base"
     config.model_loading.hf_models.vec2text = "gtr-base"
