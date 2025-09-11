@@ -1,17 +1,14 @@
 #!/bin/bash
 # Common part for all nodes
-export PYTHONPATH="//mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo"
+export PYTHONPATH="/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo"
 export NCCL_IB_DISABLE=0
 export NCCL_IB_HCA=mlx5
-export NCCL_DEBUG=WARN
 export NCCL_IB_GID_INDEX=3
 
-MASTER_PORT=19001
-RANK=0
-MASTER_ADDR=10.82.139.22
+
 # Launch command (parameters automatically read from accelerate_multi_node.yaml)
 accelerate launch --config_file ${PYTHONPATH}/scripts/accelerate_configs/flow_rtpo_multi_node.yaml \
-    --num_machines 4 --num_processes 32 \
+    --num_machines 6 --num_processes 48 \
     --machine_rank ${RANK} --main_process_ip ${MASTER_ADDR} --main_process_port ${MASTER_PORT} \
     ${PYTHONPATH}/scripts/train_flow_rtpo.py \
     --config ${PYTHONPATH}/config/flow_rtpo.py:flow_rtpo_large 

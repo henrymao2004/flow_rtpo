@@ -230,12 +230,12 @@ def flow_rtpo_large():
     config.max_prompts = 160
     
     # Keep batch size as requested but increase batches for GRPO grouping
-    config.sample.batch_size = 8  # Changed to 2 as requested
+    config.sample.batch_size = 4  # Changed to 2 as requested
     config.sample.num_image_per_prompt = 6 # Multiple samples per prompt for ranking
     
     # Calculate proper num_batches_per_epoch for 32 GPUs
     # Following GRPO pattern: int(132/(gpu_number*batch_size/num_image_per_prompt))
-    gpu_number = 32
+    gpu_number = 48
     config.sample.num_batches_per_epoch = int(128/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
     # This gives: 132/(32*2/4) = 132/16 = 8.25 -> int(8.25) = 8
     config.sample.num_batches_per_epoch = max(2, config.sample.num_batches_per_epoch) 
