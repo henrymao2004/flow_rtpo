@@ -92,10 +92,10 @@ def flow_rtpo_sd3():
     config.train.timestep_fraction = 0.99
     
     # GRPO configuration (same as existing)
-    config.train.learning_rate = 1e-5
+    config.train.learning_rate = 1e-6
     config.train.clip_range = 1e-3
     config.train.adv_clip_max = 5
-    config.train.beta = 0.04  # KL regularization coefficient
+    config.train.beta = 0.01  # KL regularization coefficient
     
     # Enhanced hierarchical policy configuration
     config.prompt_editor = ml_collections.ConfigDict()
@@ -136,8 +136,8 @@ def flow_rtpo_sd3():
     
     # Training schedule
     config.num_epochs = 100
-    config.save_freq = 10  # Save every 10 epochs
-    config.eval_freq = 5   # Evaluate every 5 epochs
+    config.save_freq = 5  # Save every 10 epochs
+    config.eval_freq = 1   # Evaluate every 5 epochs
     config.log_freq = 1    # Log every epoch
     
     # Resolution
@@ -153,7 +153,7 @@ def flow_rtpo_sd3():
     config.train.ema = True
     
     # Mixed precision
-    config.mixed_precision = "bf16"
+    config.mixed_precision = "fp16"
     
     # Optimization flags
     config.diffusion_loss = True
@@ -246,8 +246,8 @@ def flow_rtpo_large():
     config.train.batch_size = config.sample.batch_size
     # Extended training
     config.num_epochs = 10000
-    config.save_freq = 20
-    config.eval_freq = 10
+    config.save_freq = 5
+    config.eval_freq = 1
     
     # More aggressive toxicity optimization
     config.toxicity_reward.w_cvar = 0.0

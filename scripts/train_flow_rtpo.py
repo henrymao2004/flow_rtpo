@@ -111,6 +111,15 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
     print(f"[TEST EVAL] Starting test evaluation for epoch {epoch}")
     print(f"[TEST EVAL] Test set size: {len(test_prompts)}")
     
+    # Use fixed, deterministic noise during evaluation for stability across epochs/runs
+    def _deterministic_seed_from_prompt(prompt: str, base_seed: int) -> int:
+        import hashlib
+        digest = hashlib.sha256(prompt.encode()).digest()
+        prompt_hash_int = int.from_bytes(digest[:4], "big")
+        return int((base_seed + prompt_hash_int) % (2**31))
+    
+    eval_base_seed = int(getattr(config, "eval_seed", getattr(config, "seed", 42)))
+    
     # Initialize CLIP scorer with loading configuration
     clip_scorer = ClipScorer(
         device=accelerator.device,
@@ -152,16 +161,21 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
         
         print(f"[TEST EVAL] Processing batch {batch_idx + 1}/{num_batches} ({len(batch_prompts)} prompts)")
         
+        # Use prompt editor to modify prompts during evaluation (one edit per prompt)
+        with torch.no_grad():
+            eval_modified_prompts, eval_prompt_deltas, eval_original_embeddings, eval_policy_info = prompt_editor(batch_prompts, reward_variance)
+        
         # Generate images for test prompts (no prompt editing for evaluation)
         batch_samples = []
         for prompt_idx, (prompt, metadata) in enumerate(zip(batch_prompts, batch_metadata)):
             print(f"[TEST EVAL] Generating image for test prompt {start_idx + prompt_idx + 1}/{len(test_prompts)}")
+            modified_prompt = eval_modified_prompts[prompt_idx]
             
             # Encode prompt for SD3
             prompt_embeds, pooled_prompt_embeds = encode_prompt(
                 text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
                 tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
-                prompt=prompt,
+                prompt=modified_prompt,
                 max_sequence_length=256,
                 device=accelerator.device,
                 num_images_per_prompt=1
@@ -169,17 +183,17 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
             
             # Generate single image per test prompt
             with torch.no_grad():
+                # Fixed generator per prompt for deterministic evaluation
+                _seed = _deterministic_seed_from_prompt(modified_prompt, eval_base_seed)
                 final_images, latents_list, log_probs = pipeline_with_logprob(
                     pipeline,
-                    prompt=prompt,
+                    prompt=modified_prompt,
                     height=config.height,
                     width=config.width,
                     num_inference_steps=config.sample.num_steps,
                     guidance_scale=config.sample.guidance_scale,
                     num_images_per_prompt=1,
-                    generator=torch.Generator(device=accelerator.device).manual_seed(
-                        random.randint(0, 2**32 - 1)
-                    ),
+                    generator=torch.Generator(device=accelerator.device).manual_seed(_seed),
                 )
             
             # Extract the first (and only) image
@@ -194,7 +208,7 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
             # Create sample for evaluation
             sample = {
                 "original_prompt": prompt,
-                "modified_prompt": prompt,  # No modification for test evaluation
+                "modified_prompt": modified_prompt,
                 "final_image": final_image,
                 "prompt_embeds": prompt_embeds,
                 "pooled_prompt_embeds": pooled_prompt_embeds,
@@ -207,7 +221,8 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
         # Compute rewards and toxicity scores for this batch
         if accelerator.is_main_process:
             batch_images = [sample["final_image"] for sample in batch_samples]
-            batch_prompts = [sample["original_prompt"] for sample in batch_samples]
+            # Use modified prompts for evaluation to align with training scoring
+            batch_prompts = [sample["modified_prompt"] for sample in batch_samples]
             
             # Compute toxicity scores using the reward function
             batch_rewards, batch_reward_metadata = eval_reward_fn(batch_images, batch_prompts, [{}] * len(batch_samples))
@@ -238,7 +253,8 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                         image_tensor = image
                     
                     # Use __call__ method instead of score method
-                    clip_score = clip_scorer(image_tensor, [prompt])
+                    # Use modified prompt for CLIP quality scoring
+                    clip_score = clip_scorer(image_tensor, [sample["modified_prompt"]])
                     clip_scores.append(clip_score.item() if hasattr(clip_score, 'item') else float(clip_score))
                 except Exception as e:
                     print(f"[TEST EVAL] CLIP scoring failed for prompt: {e}")
@@ -488,9 +504,7 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
         original_idx = mapping_info['original_idx']
         k_idx = mapping_info['k_idx']
         
-        print(f"[DEBUG] Processing expanded prompt {expanded_idx+1}/{len(prompts_expanded)} (group {group_key}, k={k_idx}):")
-        print(f"  Original: \"{original_prompt[:80]}{'...' if len(original_prompt) > 80 else ''}\"")
-        print(f"  Modified: \"{modified_prompt[:80]}{'...' if len(modified_prompt) > 80 else ''}\"")
+        # Process expanded prompt (group {group_key}, k={k_idx})
         
         # Encode prompts for SD3
         prompt_embeds, pooled_prompt_embeds = encode_prompt(
@@ -532,20 +546,12 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
             # Extract the first (and only) image from the list
             final_image = final_images[0] if isinstance(final_images, list) else final_images
             
-            # Debug: Check image type
-            print(f"[DEBUG] final_image type: {type(final_image)}")
-            if hasattr(final_image, 'mode'):
-                print(f"[DEBUG] final_image mode: {final_image.mode}")
-            elif isinstance(final_image, torch.Tensor):
-                print(f"[DEBUG] final_image shape: {final_image.shape}")
-            
             # Ensure final_image is PIL for VLM evaluation
             if isinstance(final_image, torch.Tensor):
                 # Convert tensor to PIL
                 import torchvision.transforms as T
                 to_pil = T.ToPILImage()
                 final_image = to_pil(final_image.cpu())
-                print(f"[DEBUG] Converted tensor to PIL: {type(final_image)}")
             
             # Create sample ID for immediate saving
             sample_id = f"epoch_{epoch}_batch_{batch_idx}_expanded_{expanded_idx}_img_{img_idx}"
@@ -1013,7 +1019,7 @@ def main(_):
                 current_reward_variance = 0.01
         
         #################### TEST EVALUATION ####################
-        if epoch > 0 and epoch % config.get('eval_freq', 5) == 0:
+        if epoch % config.get('eval_freq', 1) == 0:
             logger.info(f"Starting test evaluation for epoch {epoch}")
             test_results = evaluate_test_set(
                 pipeline, prompt_editor, test_prompts, test_metadata, 
@@ -1245,55 +1251,35 @@ def main(_):
             logger.info(f"[LOCAL GPU {accelerator.process_index}] Mean reward (from {len(all_rewards)} samples): {np.mean(all_rewards):.4f}")
         # logger.info(f"CVaR threshold: {reward_metadata['cvar_threshold']:.4f}")
         
+        # Log rewards after sampling phase (similar to train_sd3.py pattern)
+        if accelerator.is_main_process:
+            swanlab.log(
+                {
+                    "epoch": epoch,
+                    "reward_mean": np.mean(all_rewards_global),
+                    "reward_std": np.std(all_rewards_global),
+                    "toxicity_mean": reward_metadata["statistics"]["mean_toxicity"],
+                    "toxicity_max": reward_metadata["statistics"]["max_toxicity"],
+                    "quality_mean": reward_metadata["statistics"]["quality_mean"],
+                    "num_samples": len(all_rewards_global),
+                },
+                step=global_step,
+            )
+            logger.info(f"Epoch {epoch} sampling completed - reward_mean: {np.mean(all_rewards_global):.4f}")
+        
         # Note: Individual sample results are saved immediately during generation
         # and updated with reward information in the batch processing loop above.
         # This avoids duplicate reward computation while maintaining real-time visibility.
         
         #################### ADVANTAGE COMPUTATION ####################
         if config.per_prompt_stat_tracking:
-            # Debug: 检查传入 stat_tracker 的数据
-            if accelerator.is_main_process:
-                print(f"[DEBUG STAT_TRACKER] Input data:")
-                print(f"  epoch_prompts length: {len(epoch_prompts)}")
-                print(f"  epoch_prompts content: {epoch_prompts}")
-                print(f"  unique prompts: {set(epoch_prompts)}")
-                print(f"  unique prompts count: {len(set(epoch_prompts))}")
-                print(f"  all_rewards: {all_rewards}")
-            
             advantages = stat_tracker.update(epoch_prompts, np.array(all_rewards))
-            
-            # Debug: 检查 stat_tracker 状态
-            if accelerator.is_main_process:
-                print(f"[DEBUG STAT_TRACKER] After update:")
-                print(f"  stat_tracker.stats: {stat_tracker.stats}")
-                print(f"  returned advantages: {advantages}")
         else:
             advantages = (np.array(all_rewards) - np.mean(all_rewards)) / (np.std(all_rewards) + 1e-4)
         
-        # Debug: 打印 advantage 计算过程
+        # Log advantage statistics (condensed)
         if accelerator.is_main_process:
-            print(f"[DEBUG ADVANTAGES] Reward statistics:")
-            print(f"  all_rewards length: {len(all_rewards)}")
-            print(f"  all_rewards values: {all_rewards}")
-            print(f"  all_rewards dtype: {np.array(all_rewards).dtype}")
-            reward_mean = np.mean(all_rewards)
-            reward_std = np.std(all_rewards)
-            print(f"  reward mean: {reward_mean:.6f}")
-            print(f"  reward std: {reward_std:.6f}")
-            print(f"  reward std + 1e-4: {reward_std + 1e-4:.6f}")
-            
-            # 手动计算 advantage 验证
-            manual_advantages = (np.array(all_rewards) - reward_mean) / (reward_std + 1e-4)
-            print(f"  manual computation step by step:")
-            print(f"    all_rewards - mean: {np.array(all_rewards) - reward_mean}")
-            print(f"    manual advantages: {manual_advantages}")
-            
-            print(f"  computed advantages: {advantages}")
-            print(f"  advantages dtype: {advantages.dtype}")
-            print(f"  advantages mean: {np.mean(advantages):.6f}")
-            print(f"  advantages std: {np.std(advantages):.6f}")
-            print(f"  advantages == 0: {np.all(advantages == 0)}")
-            print(f"  advantages max: {np.max(np.abs(advantages)):.10f}")
+            logger.info(f"Advantage computation: mean={np.mean(advantages):.6f}, std={np.std(advantages):.6f}, max_abs={np.max(np.abs(advantages)):.6f}")
         
         # Assign advantages to samples (broadcast to timesteps)
         # 保持原有的 1D 格式，因为 Flow-RTPO 使用单样本循环
@@ -1352,16 +1338,6 @@ def main(_):
                                 config.train.adv_clip_max,
                             )
                             
-                            # Debug: 添加详细调试信息
-                            if j == 0 and accelerator.is_main_process:  # 只在第一个 timestep 和主进程打印
-                                print(f"[DEBUG LOSS] timestep {j}:")
-                                print(f"  sample advantages shape: {sample['advantages'].shape}")
-                                print(f"  sample advantages values: {sample['advantages']}")
-                                print(f"  clamped advantages: {advantages}")
-                                print(f"  log_prob: {log_prob}")
-                                print(f"  sample log_probs[{j}]: {sample['log_probs'][j]}")
-                                print(f"  ratio: {torch.exp(log_prob - sample['log_probs'][j])}")
-                            
                             ratio = torch.exp(log_prob - sample["log_probs"][j])
                             unclipped_loss = -advantages * ratio
                             clipped_loss = -advantages * torch.clamp(
@@ -1370,13 +1346,6 @@ def main(_):
                                 1.0 + config.train.clip_range,
                             )
                             policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
-                            
-                            # Debug: 打印 loss 值
-                            if j == 0 and accelerator.is_main_process:
-                                print(f"  unclipped_loss: {unclipped_loss}")
-                                print(f"  clipped_loss: {clipped_loss}")
-                                print(f"  policy_loss: {policy_loss}")
-                                print(f"  config.train.beta: {config.train.beta}")
                             
                             # KL regularization with fixed beta
                             if config.train.beta > 0:
@@ -1413,21 +1382,6 @@ def main(_):
                         
                         # Log flow controller metrics before incrementing global_step (DPO style)
                         if accelerator.is_main_process:
-                            # Calculate current reward metrics from current samples_batch
-                            current_rewards = [sample["reward"] for sample in samples_batch if "reward" in sample] 
-                            current_toxicity = [sample["final_toxicity"] for sample in samples_batch if "final_toxicity" in sample]
-                            
-                            # Fallback to epoch_samples if current batch doesn't have rewards yet
-                            if not current_rewards and epoch_samples:
-                                current_rewards = [sample["reward"] for sample in epoch_samples if "reward" in sample]
-                                current_toxicity = [sample["final_toxicity"] for sample in epoch_samples if "final_toxicity" in sample]
-                            
-                            # Ensure we have some data to log
-                            if not current_rewards:
-                                current_rewards = [0]
-                            if not current_toxicity:
-                                current_toxicity = [0]
-                            
                             flow_log_data = {
                                 "epoch": epoch,
                                 "global_step": global_step,
@@ -1436,11 +1390,7 @@ def main(_):
                                 "batch_idx": i,
                                 "timestep_idx": j,
                                 "inner_epoch": inner_epoch,
-                                "reward_mean": np.mean(current_rewards),
-                                "reward_std": np.std(current_rewards),
-                                "toxicity_mean": np.mean(current_toxicity),
-                                "toxicity_max": np.max(current_toxicity) if current_toxicity else 0,
-                                "num_samples_logged": len(current_rewards),
+                                # Rewards are logged after sampling phase, not during training
                             }
                             swanlab.log(flow_log_data, step=global_step)
                             logger.info(f"Flow Controller Step {global_step}: {flow_log_data}")
@@ -1448,9 +1398,9 @@ def main(_):
                         # Increment global_step after logging (DPO style)
                         global_step += 1
                         
-                        # Debug: Confirm sync_gradients is working
-                        if accelerator.is_local_main_process:
-                            logger.info(f"[SYNC] Gradient synchronization at epoch {epoch}, batch {i}, timestep {j}, new global_step {global_step}")
+                        # Log sync_gradients confirmation (reduced frequency)
+                        if accelerator.is_local_main_process and global_step % 100 == 0:
+                            logger.info(f"[SYNC] Gradient synchronization at global_step {global_step}")
                         
                         if config.train.ema:
                             ema.step(transformer_trainable_parameters, global_step)
@@ -1471,18 +1421,7 @@ def main(_):
                                         "flow_policy_loss": float(flow_info_aggregated.get("flow_policy_loss", torch.tensor(0.0)).item()),
                                         "kl_loss": float(flow_info_aggregated.get("kl_loss", torch.tensor(0.0)).item())
                                     },
-                                    "rewards": {
-                                        "mean": float(np.mean(current_rewards)),
-                                        "std": float(np.std(current_rewards)),
-                                        "min": float(np.min(current_rewards)) if current_rewards else 0.0,
-                                        "max": float(np.max(current_rewards)) if current_rewards else 0.0
-                                    },
-                                    "toxicity": {
-                                        "mean": float(np.mean(current_toxicity)),
-                                        "max": float(np.max(current_toxicity)) if current_toxicity else 0.0,
-                                        "min": float(np.min(current_toxicity)) if current_toxicity else 0.0
-                                    },
-                                    "num_samples": len(current_rewards)
+                                    # Note: Reward data is logged after sampling phase, not during training
                                 }
                                 log_json_entry(step_log_path, step_log_entry)
                         
@@ -1525,16 +1464,11 @@ def main(_):
                 current_rewards = [sample["reward"] for sample in epoch_samples]
                 baseline_value = np.mean(current_rewards)
                 
-                # Log GRPO grouping info with detailed debugging
+                # Log GRPO grouping info
                 groups = defaultdict(list)
                 for traj in trajectories:
                     groups[traj['group_key']].append(traj)
                 num_groups = len(groups)
-                
-                # Debug: verify grouping details
-                uniq = {t['group_key'] for t in trajectories}
-                group_sizes = {g: sum(1 for t in trajectories if t['group_key']==g) for g in uniq}
-                logger.info(f"[GRPO PRE] groups={len(uniq)} sizes={group_sizes}")
                 logger.info(f"GRPO grouping: {len(trajectories)} trajectories grouped into {num_groups} groups")
                 
                 # Use enhanced policy gradient training method with individual trajectories
@@ -1567,10 +1501,6 @@ def main(_):
                 
                 # Log prompt editor metrics before incrementing global_step (DPO style)
                 if accelerator.is_main_process:
-                    # Calculate current reward metrics from epoch_samples
-                    current_rewards = [sample["reward"] for sample in epoch_samples] if epoch_samples else [0]
-                    current_toxicity = [sample["final_toxicity"] for sample in epoch_samples] if epoch_samples else [0]
-                    
                     prompt_log_data = {
                         "epoch": epoch,
                         "global_step": global_step,
@@ -1589,10 +1519,7 @@ def main(_):
                         "reg_mean_semantic_sim": np.mean(train_info.get("reg_mean_semantic_sim", [0])),
                         "prompt_warmup_factor": np.mean(train_info.get("prompt_warmup_factor", [1])),
                         "inner_epoch": inner_epoch,
-                        "reward_mean": np.mean(current_rewards),
-                        "reward_std": np.std(current_rewards),
-                        "toxicity_mean": np.mean(current_toxicity),
-                        "toxicity_max": np.max(current_toxicity) if current_toxicity else 0,
+                        # Rewards are logged after sampling phase, not during training
                     }
                     swanlab.log(prompt_log_data, step=global_step)
                     logger.info(f"Prompt Editor Step {global_step}: {prompt_log_data}")
@@ -1633,18 +1560,7 @@ def main(_):
                             "num_groups": int(np.mean(train_info.get("num_groups", [0]))),
                             "warmup_factor": float(np.mean(train_info.get("prompt_warmup_factor", [1])))
                         },
-                        "rewards": {
-                            "mean": float(np.mean(current_rewards)),
-                            "std": float(np.std(current_rewards)),
-                            "min": float(np.min(current_rewards)) if current_rewards else 0.0,
-                            "max": float(np.max(current_rewards)) if current_rewards else 0.0
-                        },
-                        "toxicity": {
-                            "mean": float(np.mean(current_toxicity)),
-                            "max": float(np.max(current_toxicity)) if current_toxicity else 0.0,
-                            "min": float(np.min(current_toxicity)) if current_toxicity else 0.0
-                        },
-                        "num_samples": len(current_rewards)
+                        # Note: Reward data is logged after sampling phase, not during training
                     }
                     log_json_entry(step_log_path, step_log_entry)
                 
