@@ -4,7 +4,9 @@ export PYTHONPATH="/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo"
 export NCCL_IB_DISABLE=0
 export NCCL_IB_HCA=mlx5
 export NCCL_IB_GID_INDEX=3
-
+export RANK=0
+export MASTER_ADDR=10.82.139.22
+export MASTER_PORT=19001
 
 # Launch command (parameters automatically read from accelerate_multi_node.yaml)
 accelerate launch --config_file ${PYTHONPATH}/scripts/accelerate_configs/flow_rtpo_multi_node.yaml \

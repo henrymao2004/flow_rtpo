@@ -17,9 +17,6 @@ tpu_use_sudo: false
 use_cpu: false
 deepspeed_plugin:
   deepspeed_config_file_or_dict:
-    train_batch_size: 128
-    train_micro_batch_size_per_gpu: 4
-    gradient_accumulation_steps: 4
     gradient_clipping: 1.0
     zero_optimization:
       stage: 2
@@ -29,7 +26,7 @@ deepspeed_plugin:
       contiguous_gradients: true
       cpu_offload: false
     bf16:
-      enabled: true
-    fp16:
       enabled: false
+    fp16:
+      enabled: true
     wall_clock_breakdown: false 
