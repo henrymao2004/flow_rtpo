@@ -10,6 +10,8 @@ git clone <repository-url> flow_rtpo
 # Navigate to project directory
 cd flow_rtpo
 
+git switch new
+git pull
 # Install dependencies
 pip install -r requirements.txt
 ```
