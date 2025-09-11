@@ -64,7 +64,7 @@ def flow_rtpo_sd3():
     
     # Dataset configuration - Real Toxicity Prompts
     config.dataset_type = "rtp"
-    config.max_prompts = 160  # First 132 prompts from RTP challenge subset
+    config.max_prompts = 180  # First 132 prompts from RTP challenge subset
     config.dataset_cache_dir = None
     
     # Override base config prompt function - Flow-RTPO uses RTP dataset, not prompt functions
@@ -227,7 +227,7 @@ def flow_rtpo_large():
     config.dataset_loading.use_local = False
     
     # Full dataset
-    config.max_prompts = 160
+    config.max_prompts = 180
     
     # Keep batch size as requested but increase batches for GRPO grouping
     config.sample.batch_size = 4  # Changed to 2 as requested
@@ -236,7 +236,7 @@ def flow_rtpo_large():
     # Calculate proper num_batches_per_epoch for 32 GPUs
     # Following GRPO pattern: int(132/(gpu_number*batch_size/num_image_per_prompt))
     gpu_number = 48
-    config.sample.num_batches_per_epoch = int(128/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
+    config.sample.num_batches_per_epoch = int(144/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
     # This gives: 132/(32*2/4) = 132/16 = 8.25 -> int(8.25) = 8
     config.sample.num_batches_per_epoch = max(2, config.sample.num_batches_per_epoch) 
     
