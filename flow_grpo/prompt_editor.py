@@ -1078,17 +1078,22 @@ class PromptEditorPolicy(nn.Module):
         # Compute policy loss
         total_loss, metrics = self.compute_policy_loss(trajectories, baseline_value)
         
-        # Backward pass - use accelerator.backward for mixed precision
-        optimizer.zero_grad()
         if accelerator is not None:
-            accelerator.backward(total_loss)
+            # Use proper Accelerate gradient accumulation context
+            with accelerator.accumulate(self):
+                optimizer.zero_grad()
+                accelerator.backward(total_loss)
+                
+                # Only clip gradients when syncing across devices
+                if accelerator.sync_gradients:
+                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+                
+                optimizer.step()
         else:
+            # Fallback for non-accelerated training
+            optimizer.zero_grad()
             total_loss.backward()
-        
-        # Gradient clipping for stability
-        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
-        
-        # Update parameters
-        optimizer.step()
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+            optimizer.step()
         
         return metrics
