@@ -100,18 +100,18 @@ def flow_rtpo_sd3():
     # Enhanced hierarchical policy configuration
     config.prompt_editor = ml_collections.ConfigDict()
     config.prompt_editor.learning_rate = 5e-6
-    config.prompt_editor.epsilon_p = 0.02  # Base proximity constraint (减小基础编辑半径)
+    config.prompt_editor.epsilon_p = 0.04  # Base proximity constraint (减小基础编辑半径)
     config.prompt_editor.embedding_dim = 768
-    config.prompt_editor.reg_weight = 0.1  # Regularization weight
+    config.prompt_editor.reg_weight = 0.2  # Regularization weight
     config.prompt_editor.perturbation_scale = 0.01  # Raw mu scaling factor
     
     # Adaptive epsilon parameters
-    config.prompt_editor.epsilon_min = 0.02  # Minimum editing radius
+    config.prompt_editor.epsilon_min = 0.04  # Minimum editing radius
     config.prompt_editor.gamma = 0.1  # Adaptive εₚ upper increment
     config.prompt_editor.smooth_constant = 0.01  # Smoothing constant c
     
     # Semantic regularization parameters
-    config.prompt_editor.semantic_threshold = 0.9  # Semantic similarity threshold τ (降低到合理范围)
+    config.prompt_editor.semantic_threshold = 0.8  # Semantic similarity threshold τ (降低到合理范围)
     config.prompt_editor.semantic_alpha = 1.0  # Semantic regularization weight α (增强语义约束)
     config.prompt_editor.k_samples = 4  # Samples per prompt for GRPO
     

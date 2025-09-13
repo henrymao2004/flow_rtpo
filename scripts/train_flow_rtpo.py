@@ -446,10 +446,6 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
     batch_size = len(prompts)
     k_samples = config.prompt_editor.get('k_samples', 4)  # k samples per prompt for GRPO
     
-    print(f"[GPU {accelerator.process_index}] Starting sample_batch with {batch_size} prompts, k={k_samples} samples per prompt")
-    print(f"[GPU {accelerator.process_index}] config.sample.num_image_per_prompt = {config.sample.num_image_per_prompt}")
-    print(f"[GPU {accelerator.process_index}] Expected total prompt modifications = {batch_size} * {k_samples} = {batch_size * k_samples}")
-    print(f"[GPU {accelerator.process_index}] Expected total images = {batch_size * k_samples} * {config.sample.num_image_per_prompt} = {batch_size * k_samples * config.sample.num_image_per_prompt}")
     
     # High-level: Generate k prompt modifications per original prompt for GRPO
     # Convert tuple to list if necessary
@@ -470,15 +466,13 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
                 'k_idx': k_idx
             }
     
-    print(f"[GPU {accelerator.process_index}] Expanded to {len(prompts_expanded)} prompt modifications")
-    print(f"[GPU {accelerator.process_index}] Starting prompt editor with reward_variance={reward_variance}...")
+   
     
     # Use prompt_editor (buffer broadcasting disabled at DDP level)
     with torch.no_grad():
         modified_prompts, prompt_deltas, original_embeddings, policy_info = prompt_editor(prompts_expanded, reward_variance)
     
-    print(f"[GPU {accelerator.process_index}] Prompt editor completed. Modified prompts: {[p[:50] + '...' if len(p) > 50 else p for p in modified_prompts[:2]]}")
-    print(f"[GPU {accelerator.process_index}] Length mismatch check: prompts_expanded={len(prompts_expanded)}, modified_prompts={len(modified_prompts)}")
+   
     
     # Safety check: ensure modified_prompts has the same length as prompts_expanded
     if len(modified_prompts) != len(prompts_expanded):
@@ -541,7 +535,6 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
                 torch.cuda.empty_cache()
                 
             generation_time = time.time() - start_time
-            print(f"[GPU {accelerator.process_index}] Image {img_idx+1} generated in {generation_time:.2f}s")
             
             # Extract the first (and only) image from the list
             final_image = final_images[0] if isinstance(final_images, list) else final_images
@@ -1072,13 +1065,13 @@ def main(_):
             if accelerator.is_main_process:
                 logger.info(f"DistributedSampler epoch set to {epoch}")
         
-        # Log GPU assignment at start of epoch
-        print(f"\n{'='*80}")
-        print(f"[GPU {accelerator.process_index}] EPOCH {epoch} STARTING")
-        print(f"[GPU {accelerator.process_index}] Device: {accelerator.device}")
-        print(f"[GPU {accelerator.process_index}] Process Index: {accelerator.process_index}/{accelerator.num_processes}")
-        print(f"[GPU {accelerator.process_index}] Is Main Process: {accelerator.is_main_process}")
-        print(f"{'='*80}\n")
+        # # Log GPU assignment at start of epoch
+        # print(f"\n{'='*80}")
+        # print(f"[GPU {accelerator.process_index}] EPOCH {epoch} STARTING")
+        # print(f"[GPU {accelerator.process_index}] Device: {accelerator.device}")
+        # print(f"[GPU {accelerator.process_index}] Process Index: {accelerator.process_index}/{accelerator.num_processes}")
+        # print(f"[GPU {accelerator.process_index}] Is Main Process: {accelerator.is_main_process}")
+        # print(f"{'='*80}\n")
         
         epoch_samples = []
         epoch_prompts = []
@@ -1099,21 +1092,21 @@ def main(_):
             # Immediate reward evaluation and saving for this batch
             if samples:
                 # Each GPU computes rewards for its own batch
-                logger.info(f"[GPU {accelerator.process_index}] Computing rewards for batch {batch_idx + 1}...")
-                logger.info(f"[GPU {accelerator.process_index}] Batch contains {len(samples)} samples")
+                # logger.info(f"[GPU {accelerator.process_index}] Computing rewards for batch {batch_idx + 1}...")
+                # logger.info(f"[GPU {accelerator.process_index}] Batch contains {len(samples)} samples")
                 
                 # Prepare batch data
                 batch_images = [sample["final_image"] for sample in samples]
                 batch_prompts = [sample["modified_prompt"] for sample in samples]
                 
                 if accelerator.is_main_process:
-                    logger.info(f"Sample modified_prompts: {[p[:50] + '...' if len(p) > 50 else p for p in batch_prompts[:2]]}")
-                    logger.info(f"Image types: {[type(img) for img in batch_images[:2]]}")
+                    # lsogger.info(f"Sample modified_prompts: {[p[:50] + '...' if len(p) > 50 else p for p in batch_prompts[:2]]}")
+                    # logger.info(f"Image types: {[type(img) for img in batch_images[:2]]}")
                 
                 # Compute rewards for this batch on each GPU
-                logger.info(f"[GPU {accelerator.process_index}] Starting reward computation...")
+                # logger.info(f"[GPU {accelerator.process_index}] Starting reward computation...")
                 batch_rewards, batch_reward_metadata = reward_fn(batch_images, batch_prompts, [{}] * len(samples))
-                logger.info(f"[GPU {accelerator.process_index}] Reward computation completed!")
+                # logger.info(f"[GPU {accelerator.process_index}] Reward computation completed!")
                 
                 # Clear CUDA cache after reward computation to prevent memory buildup
                 torch.cuda.empty_cache()
@@ -1133,9 +1126,9 @@ def main(_):
                 
                 # Real-time logging for each sample in the batch (only on main process)
                 if accelerator.is_main_process:
-                    logger.info("=" * 80)
-                    logger.info(f"BATCH {batch_idx + 1} REAL-TIME RESULTS:")
-                    logger.info("=" * 80)
+                    # logger.info("=" * 80)
+                    # logger.info(f"BATCH {batch_idx + 1} REAL-TIME RESULTS:")
+                    # logger.info("=" * 80)
                     
                     for i, sample in enumerate(samples):
                         vlm_response = batch_reward_metadata["vlm_responses"][i]
@@ -1156,17 +1149,17 @@ def main(_):
                         }
                         cvar_bonus = batch_reward_metadata["cvar_bonus"][i]
                         
-                        logger.info(f"Sample {i+1}/{len(samples)}:")
-                        logger.info(f"  original_prompt: \"{sample['original_prompt'][:80]}{'...' if len(sample['original_prompt']) > 80 else ''}\"")
-                        logger.info(f"  modified_prompt: \"{sample['modified_prompt'][:80]}{'...' if len(sample['modified_prompt']) > 80 else ''}\"")
-                        logger.info(f"  vlm_response: \"{vlm_response[:80]}{'...' if len(vlm_response) > 80 else ''}\"")
-                        logger.info(f"  reward: {sample['reward']:.6f}")
-                        logger.info(f"  toxicity_scores:")
-                        for tox_type, score in toxicity_breakdown.items():
-                            logger.info(f"    {tox_type}: {score:.6f}")
-                        # logger.info(f"  cvar_bonus: {cvar_bonus:.6f}")
-                        logger.info(f"  quality_scores: clip={quality_scores['clip']:.6f}")
-                        logger.info("-" * 60)
+                        # logger.info(f"Sample {i+1}/{len(samples)}:")
+                        # logger.info(f"  original_prompt: \"{sample['original_prompt'][:80]}{'...' if len(sample['original_prompt']) > 80 else ''}\"")
+                        # logger.info(f"  modified_prompt: \"{sample['modified_prompt'][:80]}{'...' if len(sample['modified_prompt']) > 80 else ''}\"")
+                        # logger.info(f"  vlm_response: \"{vlm_response[:80]}{'...' if len(vlm_response) > 80 else ''}\"")
+                        # logger.info(f"  reward: {sample['reward']:.6f}")
+                        # logger.info(f"  toxicity_scores:")
+                        # for tox_type, score in toxicity_breakdown.items():
+                        #     logger.info(f"    {tox_type}: {score:.6f}")
+                        # # logger.info(f"  cvar_bonus: {cvar_bonus:.6f}")
+                        # logger.info(f"  quality_scores: clip={quality_scores['clip']:.6f}")
+                        # logger.info("-" * 60)
                     
                     # Batch statistics and immediate saving (only on main process)
                     batch_reward_mean = np.mean(batch_rewards)
@@ -1174,14 +1167,14 @@ def main(_):
                     batch_toxicity_mean = np.mean([score for score in batch_reward_metadata["toxicity_scores"]["primary"]])
                     batch_toxicity_max = max([score for score in batch_reward_metadata["toxicity_scores"]["primary"]])
                     
-                    logger.info(f"BATCH {batch_idx + 1} STATISTICS:")
-                    logger.info(f"  reward_mean: {batch_reward_mean:.6f}")
-                    logger.info(f"  reward_std: {batch_reward_std:.6f}")
-                    logger.info(f"  toxicity_mean: {batch_toxicity_mean:.6f}")
-                    logger.info(f"  toxicity_max: {batch_toxicity_max:.6f}")
-                    logger.info("=" * 80)
-                    
-                    logger.info(f"Batch {batch_idx + 1} mean reward: {np.mean(batch_rewards):.4f}")
+                        # logger.info(f"BATCH {batch_idx + 1} STATISTICS:")
+                        # logger.info(f"  reward_mean: {batch_reward_mean:.6f}")
+                        # logger.info(f"  reward_std: {batch_reward_std:.6f}")
+                        # logger.info(f"  toxicity_mean: {batch_toxicity_mean:.6f}")
+                        # logger.info(f"  toxicity_max: {batch_toxicity_max:.6f}")
+                        # logger.info("=" * 80)
+                        
+                        # logger.info(f"Batch {batch_idx + 1} mean reward: {np.mean(batch_rewards):.4f}")
             
             epoch_samples.extend(samples)
             # 修复：使用 original_prompt 而不是 modified_prompt 来进行 GRPO 分组
@@ -1190,7 +1183,7 @@ def main(_):
             epoch_metadata.extend([{} for _ in samples])
             
             # Log batch completion
-            print(f"[GPU {accelerator.process_index}] Batch {batch_idx} completed: {len(samples)} samples generated")
+            # print(f"[GPU {accelerator.process_index}] Batch {batch_idx} completed: {len(samples)} samples generated")
         
         print(f"\n[GPU {accelerator.process_index}] EPOCH {epoch} SAMPLING COMPLETED")
         print(f"[GPU {accelerator.process_index}] Total samples generated: {len(epoch_samples)}")
@@ -1474,7 +1467,7 @@ def main(_):
                 # Use enhanced policy gradient training method with individual trajectories
                 # The prompt editor handles GRPO grouping internally
                 prompt_metrics = prompt_editor.module.update_policy(
-                    trajectories, prompt_optimizer, baseline_value
+                    trajectories, prompt_optimizer, accelerator, baseline_value
                 )
                 
                 # Log enhanced metrics

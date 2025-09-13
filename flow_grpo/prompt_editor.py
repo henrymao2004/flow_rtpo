@@ -372,7 +372,7 @@ class PromptEditorPolicy(nn.Module):
                     print(f"[WARNING] Fallback encoder not available, using zero embeddings")
                     return torch.zeros(len(prompts), self.embedding_dim, device=self.device)
             
-            print(f"[DEBUG] Encoding prompts using official vec2text approach...")
+          
             
             # Official vec2text approach for GTR embeddings
             inputs = self.gtr_tokenizer(
@@ -1062,13 +1062,14 @@ class PromptEditorPolicy(nn.Module):
         
         return total_loss_combined, metrics
     
-    def update_policy(self, trajectories: List[dict], optimizer: torch.optim.Optimizer, baseline_value: float = 0.0) -> dict:
+    def update_policy(self, trajectories: List[dict], optimizer: torch.optim.Optimizer, accelerator=None, baseline_value: float = 0.0) -> dict:
         """
         Update policy using policy gradient (REINFORCE).
         
         Args:
             trajectories: List of trajectory dictionaries
             optimizer: Policy optimizer
+            accelerator: Accelerate accelerator for mixed precision training
             baseline_value: Baseline for variance reduction
             
         Returns:
@@ -1077,9 +1078,12 @@ class PromptEditorPolicy(nn.Module):
         # Compute policy loss
         total_loss, metrics = self.compute_policy_loss(trajectories, baseline_value)
         
-        # Backward pass
+        # Backward pass - use accelerator.backward for mixed precision
         optimizer.zero_grad()
-        total_loss.backward()
+        if accelerator is not None:
+            accelerator.backward(total_loss)
+        else:
+            total_loss.backward()
         
         # Gradient clipping for stability
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)

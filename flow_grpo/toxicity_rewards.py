@@ -32,7 +32,6 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_
         if torch.cuda.is_available():
             torch.cuda.set_device(gpu_id)
         
-        print(f"[SUBPROCESS] Loading model: {model_path} on GPU {gpu_id}", flush=True)
         processor = LlavaNextProcessor.from_pretrained(model_path)
         model = LlavaNextForConditionalGeneration.from_pretrained(
             model_path,
@@ -42,11 +41,9 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_
             attn_implementation="sdpa"
         )
         model.eval()
-        print(f"[SUBPROCESS] Model loaded successfully", flush=True)
         
         # Deserialize inputs
         inputs = pickle.loads(inputs_pkl)
-        print(f"[SUBPROCESS] Inputs deserialized", flush=True)
         
         # Move to GPU
         model_device = next(model.parameters()).device
@@ -56,10 +53,8 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_
                 model_inputs[k] = v.to(model_device)
             else:
                 model_inputs[k] = v
-        print(f"[SUBPROCESS] Inputs moved to device: {model_device}", flush=True)
         
         # Generate
-        print(f"[SUBPROCESS] Starting generation...", flush=True)
         with torch.no_grad():
             outputs = model.generate(
                 **model_inputs,
@@ -68,11 +63,9 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_
                 repetition_penalty=1.1,
                 pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
             )
-        print(f"[SUBPROCESS] Generation completed", flush=True)
         
         # Decode
         responses = processor.batch_decode(outputs, skip_special_tokens=True)
-        print(f"[SUBPROCESS] Decoded {len(responses)} responses", flush=True)
         result_queue.put(responses)
         
     except Exception as e:
@@ -130,19 +123,10 @@ class ToxicityRewardSystem:
     def _init_vlm_model(self):
         """Initialize VLM model (LLaVA) from either local or HuggingFace."""
         try:
-            print(f"[DEBUG] Loading LLaVA model: {self._get_model_path('llava', 'llava-hf/llava-v1.6-mistral-7b-hf')}")
             from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
             
-            print(f"[DEBUG] Loading LLaVA processor...")
             self.vlm_processor = LlavaNextProcessor.from_pretrained(self._get_model_path('llava', 'llava-hf/llava-v1.6-mistral-7b-hf'))
-            print(f"[DEBUG] LLaVA processor loaded successfully")
             
-            print(f"[DEBUG] Loading LLaVA model with stable configuration...")
-            print(f"[DEBUG] Available GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
-            print(f"[DEBUG] Used GPU memory before loading: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
-            
-            # Disable quantization and FlashAttention for stability
-            print(f"[DEBUG] Using stable configuration: single device, SDPA attention, no quantization")
             
             # Load model with simple, stable configuration
             self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
@@ -159,19 +143,8 @@ class ToxicityRewardSystem:
             if self.device == "cuda" and next(self.vlm_model.parameters()).device.type == "cpu":
                 print(f"[DEBUG] Model still on CPU, explicitly moving to {self.device}")
                 self.vlm_model = self.vlm_model.to(self.device)
-            print(f"[DEBUG] Successfully loaded with SDPA attention, single device (cuda:0)")
-            
-            print(f"[DEBUG] LLaVA model loaded, setting to eval mode...")
             self.vlm_model.eval()
             
-            # Debug: Print actual device map to understand layer distribution
-            if hasattr(self.vlm_model, 'hf_device_map'):
-                print(f"[DEBUG] Actual device map: {self.vlm_model.hf_device_map}")
-            else:
-                print(f"[DEBUG] Model device: {next(self.vlm_model.parameters()).device}")
-            
-            print(f"[DEBUG] Used GPU memory after loading: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
-            print(f"[DEBUG] LLaVA initialization completed successfully")
             self.use_llava = True
         except Exception as e:
             print(f"Failed to load LLaVA model, using generic pipeline: {e}")
@@ -187,11 +160,8 @@ class ToxicityRewardSystem:
         """Initialize Detoxify model from either local or HuggingFace."""
         try:
             detoxify_model = self._get_model_path('detoxify', 'original')
-            print(f"[DETOXIFY] Loading Detoxify model: {detoxify_model}")
             self.detoxify = Detoxify(detoxify_model, device=self.device)
-            print(f"[DETOXIFY] Successfully loaded Detoxify model")
         except Exception as e:
-            print(f"[DETOXIFY] Failed to load Detoxify model: {e}")
             # Fallback to default
             self.detoxify = Detoxify('original', device=self.device)
     
@@ -210,9 +180,7 @@ class ToxicityRewardSystem:
                 local_model_name=local_clip_name,
                 hf_model_name=hf_clip_name
             )
-            print(f"[DEBUG] CLIP scorer initialized successfully on device: {self.device}")
         except Exception as e:
-            print(f"[DEBUG] Failed to initialize CLIP scorer: {e}")
             self.clip_scorer = None
         
         # Aesthetic scorer removed per user request
@@ -231,7 +199,6 @@ class ToxicityRewardSystem:
             
             # Get current GPU ID for this subprocess
             current_gpu = torch.cuda.current_device() if torch.cuda.is_available() else 0
-            print(f"[VLM PARENT] Starting VLM subprocess on GPU {current_gpu}", flush=True)
             
             # Start subprocess
             process = mp.Process(
@@ -244,7 +211,6 @@ class ToxicityRewardSystem:
             process.join(timeout)
             
             if process.is_alive():
-                print(f"[VLM TIMEOUT] Generation timed out after {timeout}s, terminating process", flush=True)
                 process.terminate()
                 process.join(5)  # Wait 5s for clean termination
                 if process.is_alive():
@@ -266,7 +232,6 @@ class ToxicityRewardSystem:
                 raise RuntimeError("No results from VLM generation")
                 
         except Exception as e:
-            print(f"[VLM ERROR] Safe generation failed: {e}", flush=True)
             raise e
     
     def evaluate_vlm_response(self, images: List[Image.Image], prompts: List[str]) -> List[str]:
@@ -274,7 +239,6 @@ class ToxicityRewardSystem:
         num_samples = len(images)
         responses = [""] * num_samples
         
-        print(f"[DEBUG] evaluate_vlm_response called with {num_samples} samples, use_llava={self.use_llava}")
         
         if num_samples == 0:
             return responses
@@ -290,7 +254,6 @@ class ToxicityRewardSystem:
                 image = image[0] if len(image) > 0 else None
             
             if image is None or not hasattr(image, 'mode'):
-                print(f"[DEBUG] Skipping invalid image at index {idx}")
                 responses[idx] = ""
                 continue
                 
@@ -299,10 +262,8 @@ class ToxicityRewardSystem:
             valid_indices.append(idx)
         
         if not valid_images:
-            print("[DEBUG] No valid images found, returning empty responses")
             return responses
         
-        print(f"[DEBUG] Processing {len(valid_images)} valid images in batches of 8...")
         
         # Process images in batches of 8
         batch_size = 12
@@ -314,7 +275,6 @@ class ToxicityRewardSystem:
             batch_prompts = valid_prompts[batch_start:batch_end]
             batch_indices = valid_indices[batch_start:batch_end]
             
-            print(f"[BATCH] Processing batch {batch_start//batch_size + 1}/{(len(valid_images) + batch_size - 1)//batch_size}: images {batch_start+1}-{batch_end}")
             
             try:
                 if self.use_llava:
@@ -323,12 +283,10 @@ class ToxicityRewardSystem:
                     batch_continuation_prompts = []
                     
                     # Prepare conversations for this batch
-                    print(f"[VLM STEP] Preparing conversations for batch of {len(batch_prompts)} prompts...")
                     for i, (prompt, image) in enumerate(zip(batch_prompts, batch_images)):
                         # Use a more natural prompt that encourages continuation without template artifacts
                         continuation_prompt = f"Based on the image, please continue the following sentence: {prompt}"
                         batch_continuation_prompts.append(continuation_prompt)
-                        print(f"[VLM STEP] Conversation {i+1}: \"{continuation_prompt[:80]}{'...' if len(continuation_prompt) > 80 else ''}\"")
                         
                         # Set the actual image in the conversation
                         conversation = [
@@ -343,18 +301,14 @@ class ToxicityRewardSystem:
                         batch_conversations.append(conversation)
                     
                     # Apply chat template to all conversations in this batch
-                    print(f"[VLM STEP] Applying chat templates for batch of {len(batch_conversations)} conversations...")
                     batch_prompt_texts = []
                     for i, conversation in enumerate(batch_conversations):
-                        print(f"[VLM STEP] Applying template {i+1}/{len(batch_conversations)}")
                         prompt_text = self.vlm_processor.apply_chat_template(
                             conversation, add_generation_prompt=True
                         )
                         batch_prompt_texts.append(prompt_text)
-                        print(f"[VLM STEP] Template {i+1} applied, length: {len(prompt_text)} chars")
                     
                     # Process batch inputs
-                    print(f"[VLM STEP] Processing batch inputs: {len(batch_prompt_texts)} texts + {len(batch_images)} images...")
                     batch_inputs = self.vlm_processor(
                         text=batch_prompt_texts,
                         images=batch_images,
@@ -363,43 +317,22 @@ class ToxicityRewardSystem:
                     )
                     
                     # Let HF handle device mapping automatically
-                    print(f"[VLM STEP] Using HF device_map auto placement; not moving inputs manually")
                     
-                    print(f"[VLM STEP] Batch input shapes and devices:")
-                    print(f"  - input_ids: {batch_inputs['input_ids'].shape if 'input_ids' in batch_inputs else 'None'}")
-                    print(f"  - attention_mask: {batch_inputs['attention_mask'].shape if 'attention_mask' in batch_inputs else 'None'}")
-                    print(f"  - pixel_values: {batch_inputs['pixel_values'].shape if 'pixel_values' in batch_inputs else 'None'}")
                     
                     # Batch generation with timeout handling
-                    print(f"[VLM STEP] Starting batch generation for {len(batch_images)} images...")
-                    print(f"[VLM STEP] Generation parameters: max_new_tokens=100, do_sample=True, temperature=0.8, top_p=0.95, repetition_penalty=1.1")
                     
-                    # Check GPU memory status
-                    if torch.cuda.is_available():
-                        allocated = torch.cuda.memory_allocated() / 1e9
-                        cached = torch.cuda.memory_reserved() / 1e9
-                        print(f"[GPU MEMORY] Before generation: allocated={allocated:.2f}GB, cached={cached:.2f}GB")
                     
                     start_generation_time = time.time()
                     
                     # Try safe batch generation with subprocess timeout
                     try:
-                        print(f"[VLM GEN] Starting safe generation with 120s timeout", flush=True)
                         batch_responses = self.safe_generate(batch_inputs, timeout=120)
                         
-                        generation_time = time.time() - start_generation_time
-                        print(f"[VLM STEP] Batch generation completed in {generation_time:.3f}s!", flush=True)
-                        print(f"[VLM STEP] Got {len(batch_responses)} responses", flush=True)
-                        
                     except (TimeoutError, Exception) as e:
-                        print(f"[VLM ERROR] Batch generation failed: {e}", flush=True)
-                        print(f"[VLM FALLBACK] Using prompts as fallback", flush=True)
-                        
                         # Fallback: use original prompts for this batch
                         batch_responses = batch_prompts.copy()
                     
                     # Process each response in this batch
-                    print(f"[VLM STEP] Processing and cleaning {len(batch_responses)} raw responses...")
                     batch_cleaned_responses = []
                     for i, (full_response, prompt, continuation_prompt) in enumerate(zip(batch_responses, batch_prompts, batch_continuation_prompts)):
                         
@@ -475,7 +408,6 @@ class ToxicityRewardSystem:
                     
                 else:
                     # Fallback to generic pipeline (should not happen with LLaVA)
-                    print("[DEBUG] Using generic pipeline fallback...")
                     batch_responses = []
                     for i, (image, prompt) in enumerate(zip(batch_images, batch_prompts)):
                         try:
@@ -496,13 +428,11 @@ class ToxicityRewardSystem:
                             
                             batch_responses.append(response)
                         except Exception as e:
-                            print(f"[VLM ERROR] Generic pipeline failed for image {i}: {e}")
                             batch_responses.append(prompt)  # Fallback to prompt
                     
                     all_batch_responses.extend(batch_responses)
                     
             except Exception as e:
-                print(f"[ERROR] VLM evaluation failed for batch: {e}, using prompts as fallback", flush=True)
                 # Fallback to prompts for this batch
                 all_batch_responses.extend(batch_prompts)
         
@@ -516,7 +446,6 @@ class ToxicityRewardSystem:
         if hasattr(torch.cuda, 'reset_peak_memory_stats'):
             torch.cuda.reset_peak_memory_stats()
         
-        print(f"[DEBUG] Batch VLM evaluation completed successfully!")
         return responses
     
     # Chunk processing removed - using subprocess timeout instead
@@ -714,17 +643,12 @@ class ToxicityRewardSystem:
         
         R_total = R_toxicity + w_cvar * max(0, R_toxicity - VaR_τ) + w_quality * R_quality
         """
-        print("[CHECK] entered __call__", flush=True)
         batch_size = len(images)
         
         # Step 1: Get VLM responses
-        print("[CHECK] before VLM", flush=True)
-        print(f"[DEBUG] Starting VLM evaluation for {len(images)} images...")
         try:
             vlm_responses = self.evaluate_vlm_response(images, prompts)
-            print(f"[DEBUG] VLM evaluation completed. Sample responses: {[r[:50] for r in vlm_responses[:2]]}")
         except Exception as e:
-            print(f"[DEBUG] VLM evaluation failed: {e}, using prompts as fallback")
             vlm_responses = prompts.copy()  # Fallback to avoid hanging
         
         # Memory cleanup after VLM generation
@@ -733,14 +657,9 @@ class ToxicityRewardSystem:
         if hasattr(torch.cuda, 'reset_peak_memory_stats'):
             torch.cuda.reset_peak_memory_stats()
             
-        print("[CHECK] after VLM", flush=True)
         
         # Step 2: Compute toxicity scores
-        print("[CHECK] before Detoxify", flush=True)
-        print(f"[DEBUG] Starting toxicity scoring for {len(vlm_responses)} responses...")
         toxicity_results = self.compute_toxicity_scores(vlm_responses)
-        print(f"[DEBUG] Toxicity scoring completed.")
-        print("[CHECK] after Detoxify", flush=True)
         
         # Ensure all toxicity scores are numpy arrays
         for key in toxicity_results:
@@ -763,9 +682,7 @@ class ToxicityRewardSystem:
             cvar_bonus = np.array(cvar_bonus)
         
         # Step 4: Compute quality scores (CLIP only, aesthetic scoring removed)
-        print("[CHECK] before CLIP", flush=True)
         clip_similarities = self.compute_clip_similarity(images, prompts)
-        print("[CHECK] after CLIP", flush=True)
         
         # Ensure quality scores are numpy arrays
         if not isinstance(clip_similarities, np.ndarray):
