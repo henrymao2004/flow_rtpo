@@ -1471,17 +1471,17 @@ def main(_):
                             else:
                                 sample_log_prob = sample["policy_info"]['log_prob']
                         else:
-                            sample_log_prob = torch.tensor([sample["policy_info"]['log_prob']], device=accelerator.device, requires_grad=True)
+                            sample_log_prob = torch.tensor([sample["policy_info"]['log_prob']], device=accelerator.device, dtype=torch.float32, requires_grad=True)
                     else:
-                        sample_log_prob = torch.zeros(1, device=accelerator.device, requires_grad=True)
+                        sample_log_prob = torch.zeros(1, device=accelerator.device, dtype=torch.float32, requires_grad=True)
                     
                     trajectory = {
                         'group_key': sample["group_key"],  # GRPO group key
                         'prompts': [sample["original_prompt"]],
-                        'states': sample["original_embedding"].unsqueeze(0),
-                        'actions': sample["prompt_delta"].unsqueeze(0),
-                        'rewards': torch.tensor([sample["reward"]], device=accelerator.device),
-                        'log_probs': sample_log_prob,
+                        'states': sample["original_embedding"].unsqueeze(0).float(),  # Ensure FP32 for prompt editor
+                        'actions': sample["prompt_delta"].unsqueeze(0).float(),  # Ensure FP32 for prompt editor
+                        'rewards': torch.tensor([sample["reward"]], device=accelerator.device, dtype=torch.float32),  # Ensure FP32
+                        'log_probs': sample_log_prob.float() if isinstance(sample_log_prob, torch.Tensor) else sample_log_prob,  # Ensure FP32
                         'modified_prompts': [sample["modified_prompt"]],
                         'policy_info': sample["policy_info"],
                         'reward_metadata': {}
