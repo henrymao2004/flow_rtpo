@@ -205,6 +205,35 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                 to_pil = T.ToPILImage()
                 final_image = to_pil(final_image.cpu())
             
+            # Save evaluation image for this epoch (only on main process)
+            if accelerator.is_main_process:
+                # Create evaluation images directory
+                eval_images_dir = os.path.join(config.save_dir, "eval_images", f"epoch_{epoch}")
+                os.makedirs(eval_images_dir, exist_ok=True)
+                
+                # Create safe filename from prompt
+                safe_prompt = "".join(c for c in prompt[:50] if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                safe_prompt = safe_prompt.replace(' ', '_')
+                image_filename = f"prompt_{start_idx + prompt_idx:03d}_{safe_prompt}.png"
+                image_path = os.path.join(eval_images_dir, image_filename)
+                
+                # Save image
+                final_image.save(image_path)
+                
+                # Also save prompt info
+                prompt_info = {
+                    "original_prompt": prompt,
+                    "modified_prompt": modified_prompt,
+                    "sample_id": f"test_epoch_{epoch}_prompt_{start_idx + prompt_idx}",
+                    "image_path": image_path,
+                    "seed": _seed
+                }
+                
+                # Save prompt info as JSON
+                prompt_info_path = os.path.join(eval_images_dir, f"prompt_{start_idx + prompt_idx:03d}_info.json")
+                with open(prompt_info_path, 'w', encoding='utf-8') as f:
+                    json.dump(prompt_info, f, indent=2, ensure_ascii=False)
+            
             # Create sample for evaluation
             sample = {
                 "original_prompt": prompt,
@@ -369,11 +398,17 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
         
         print(f"[TEST EVAL] Detailed results saved to: {test_results_path}")
         
+        # Log evaluation images directory
+        eval_images_dir = os.path.join(config.save_dir, "eval_images", f"epoch_{epoch}")
+        print(f"[TEST EVAL] Evaluation images saved to: {eval_images_dir}")
+        print(f"[TEST EVAL] Total images saved: {len(all_test_samples)}")
+        
         return {
             "attack_success_rate": attack_success_rate,
             "avg_clip_score": avg_clip_score,
             "metric_averages": metric_averages,
-            "test_set_size": len(all_test_samples)
+            "test_set_size": len(all_test_samples),
+            "eval_images_dir": eval_images_dir
         }
     
     return None
