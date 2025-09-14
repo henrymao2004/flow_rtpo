@@ -1089,16 +1089,27 @@ class PromptEditorPolicy(nn.Module):
             total_loss = total_loss.float()  # Ensure FP32
         
         if accelerator is not None:
-            # Use accelerator.accumulate context for proper gradient scaler handling
-            with accelerator.accumulate(self):
-                accelerator.backward(total_loss)
-                
-                # Gradient clipping - only when syncing gradients
-                if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(self.parameters(), max_norm=1.0)
-                
-                optimizer.step()
-                optimizer.zero_grad()
+            # Temporarily disable scaler for FP32 prompt editor training
+            original_scaler = None
+            if hasattr(accelerator, 'scaler'):
+                original_scaler = accelerator.scaler
+                accelerator.scaler = None
+            
+            try:
+                # Use accelerator.accumulate context for proper gradient accumulation
+                with accelerator.accumulate(self):
+                    accelerator.backward(total_loss)
+                    
+                    # Gradient clipping - only when syncing gradients
+                    if accelerator.sync_gradients:
+                        accelerator.clip_grad_norm_(self.parameters(), max_norm=1.0)
+                    
+                    optimizer.step()
+                    optimizer.zero_grad()
+            finally:
+                # Restore original scaler
+                if original_scaler is not None:
+                    accelerator.scaler = original_scaler
         else:
             # Fallback for non-accelerated training
             optimizer.zero_grad()
