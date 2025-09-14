@@ -1079,16 +1079,16 @@ class PromptEditorPolicy(nn.Module):
         total_loss, metrics = self.compute_policy_loss(trajectories, baseline_value)
         
         if accelerator is not None:
-            # Use proper Accelerate gradient accumulation context
+                        # Use accelerator.accumulate context for proper gradient scaler handling
             with accelerator.accumulate(self):
-                optimizer.zero_grad()
                 accelerator.backward(total_loss)
                 
-                # Only clip gradients when syncing across devices
+                # Gradient clipping - only when syncing gradients
                 if accelerator.sync_gradients:
-                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+                    accelerator.clip_grad_norm_(self.parameters(), max_norm=1.0)
                 
                 optimizer.step()
+                optimizer.zero_grad()
         else:
             # Fallback for non-accelerated training
             optimizer.zero_grad()
