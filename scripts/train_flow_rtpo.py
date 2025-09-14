@@ -1352,7 +1352,9 @@ def main(_):
                             # Reference log probs for KL regularization
                             if config.train.beta > 0:
                                 with torch.no_grad():
-                                    with pipeline.transformer.no_sync():  # 避免DDP同步问题
+                                    # Only use no_sync() if the model has it (i.e., when using DDP)
+                                    sync_context = pipeline.transformer.no_sync() if hasattr(pipeline.transformer, 'no_sync') else contextlib.nullcontext()
+                                    with sync_context:
                                         with pipeline.transformer.module.disable_adapter():
                                             _, _, prev_sample_mean_ref, _ = compute_log_prob(
                                                 pipeline.transformer, pipeline, sample, j,
