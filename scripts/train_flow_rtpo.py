@@ -1134,9 +1134,10 @@ def main(_):
                 batch_images = [sample["final_image"] for sample in samples]
                 batch_prompts = [sample["modified_prompt"] for sample in samples]
                 
-                if accelerator.is_main_process:
-                    # lsogger.info(f"Sample modified_prompts: {[p[:50] + '...' if len(p) > 50 else p for p in batch_prompts[:2]]}")
-                    # logger.info(f"Image types: {[type(img) for img in batch_images[:2]]}")
+                # if accelerator.is_main_process:
+                #     # logger.info(f"Sample modified_prompts: {[p[:50] + '...' if len(p) > 50 else p for p in batch_prompts[:2]]}")
+                #     # logger.info(f"Image types: {[type(img) for img in batch_images[:2]]}")
+                #     pass
                 
                 # Compute rewards for this batch on each GPU
                 # logger.info(f"[GPU {accelerator.process_index}] Starting reward computation...")
@@ -1202,14 +1203,13 @@ def main(_):
                     batch_toxicity_mean = np.mean([score for score in batch_reward_metadata["toxicity_scores"]["primary"]])
                     batch_toxicity_max = max([score for score in batch_reward_metadata["toxicity_scores"]["primary"]])
                     
-                        # logger.info(f"BATCH {batch_idx + 1} STATISTICS:")
-                        # logger.info(f"  reward_mean: {batch_reward_mean:.6f}")
-                        # logger.info(f"  reward_std: {batch_reward_std:.6f}")
-                        # logger.info(f"  toxicity_mean: {batch_toxicity_mean:.6f}")
-                        # logger.info(f"  toxicity_max: {batch_toxicity_max:.6f}")
-                        # logger.info("=" * 80)
-                        
-                        # logger.info(f"Batch {batch_idx + 1} mean reward: {np.mean(batch_rewards):.4f}")
+                    # logger.info(f"BATCH {batch_idx + 1} STATISTICS:")
+                    # logger.info(f"  reward_mean: {batch_reward_mean:.6f}")
+                    # logger.info(f"  reward_std: {batch_reward_std:.6f}")
+                    # logger.info(f"  toxicity_mean: {batch_toxicity_mean:.6f}")
+                    # logger.info(f"  toxicity_max: {batch_toxicity_max:.6f}")
+                    # logger.info("=" * 80)
+                    # logger.info(f"Batch {batch_idx + 1} mean reward: {np.mean(batch_rewards):.4f}")
             
             epoch_samples.extend(samples)
             # 修复：使用 original_prompt 而不是 modified_prompt 来进行 GRPO 分组
