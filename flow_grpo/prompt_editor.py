@@ -650,104 +650,106 @@ class PromptEditorPolicy(nn.Module):
             original_embeddings: Original embeddings (for reconstruction loss)
             policy_info: Dictionary containing policy information including log probabilities
         """
-        # Encode original prompts
-        original_embeddings = self.encode_prompts(prompts)
-        
-        # Apply simple noise injection if enabled (minimal approach for diversity)
-        if self.use_simple_noise:
-            original_embeddings = self._add_simple_noise(original_embeddings)
-       
-        
-        # Generate noise vector μ using encoder-decoder transformer (as described in paper)
-        batch_size = original_embeddings.size(0)
-        
-        # Project to transformer dimension and add positional encoding
-        x = self.input_projection(original_embeddings)  # [batch_size, d_model]
-        x = x.unsqueeze(1).clone()  # [batch_size, 1, d_model] - treat as sequence length 1, clone to avoid memory sharing
-        x = self.pos_encoding(x)
-        
-        # Encoder: process the reference prompt embedding
-        memory = self.transformer_encoder(x)  # [batch_size, 1, d_model]
-        
-        # Decoder: generate noise vector
-        # Initialize target sequence (can be learned parameter or zero)
-        # Create new tensor instead of zeros_like to avoid memory sharing
-        tgt = torch.zeros(x.size(), dtype=x.dtype, device=x.device)  # [batch_size, 1, d_model]
-        tgt = self.pos_encoding(tgt)
-        
-        # Decode to get noise prediction
-        decoded = self.transformer_decoder(tgt, memory)  # [batch_size, 1, d_model]
-        
-        # Project back to embedding dimension
-        raw_mu = self.output_projection(decoded.squeeze(1).clone())  # [batch_size, embedding_dim]
-        
-        # 训练热身：前几个epoch使用更小的扰动
-        warmup_epochs = 3
-        if self.training_step < warmup_epochs * 1000:  # 假设每个epoch约1000步
-            warmup_factor = 0.1 + 0.9 * (self.training_step / (warmup_epochs * 1000))
-        else:
-            warmup_factor = 1.0
-        
-        # Apply scaling and warmup to noise vector μ
-        mu = (raw_mu * self.perturbation_scale * warmup_factor).clone()
-        
-        # 增加训练步数计数
-        self.training_step += 1
-        
-        # Apply adaptive proximity constraint (P1 in paper: ||μ||₂ ≤ ε_p(t))
-        mu_constrained = self.apply_proximity_constraint(mu, reward_variance)
-        
-        # Create modified embeddings: s_t - a_t (transition dynamics in paper)
-        # Here we use addition instead of subtraction for consistency with existing code
-        # Clone to avoid memory sharing issues with DDP
-        modified_embeddings = original_embeddings.clone() + mu_constrained
-        
-        # Add random noise for diversity in each sampling (optional)
-        if hasattr(self, 'use_modification_noise') and self.use_modification_noise:
-            # Random noise strength for each sample between 0 and max_std
-            max_noise_std = getattr(self, 'modification_noise_std', 0.005)
-            # Generate random noise strength for each sample in the batch
-            batch_size = modified_embeddings.size(0)
-            random_noise_stds = torch.rand(batch_size, device=modified_embeddings.device) * max_noise_std
+        # Use FP32 for all prompt editor operations to ensure numerical stability
+        with torch.autocast(device_type="cuda", enabled=False):
+            # Encode original prompts
+            original_embeddings = self.encode_prompts(prompts).float()
             
-            # Generate base noise and scale it per sample
-            base_noise = torch.randn_like(modified_embeddings)
-            # Broadcast noise strength to match embedding dimensions [batch_size, 1] -> [batch_size, embedding_dim]
-            noise_scales = random_noise_stds.unsqueeze(1).expand_as(modified_embeddings)
-            modification_noise = base_noise * noise_scales
+            # Apply simple noise injection if enabled (minimal approach for diversity)
+            if self.use_simple_noise:
+                original_embeddings = self._add_simple_noise(original_embeddings)
+           
             
-            modified_embeddings = modified_embeddings + modification_noise
+            # Generate noise vector μ using encoder-decoder transformer (as described in paper)
+            batch_size = original_embeddings.size(0)
             
-            # Log noise levels for debugging
-            print(f"[DEBUG] Random noise levels: {random_noise_stds.cpu().numpy()}")
+            # Project to transformer dimension and add positional encoding
+            x = self.input_projection(original_embeddings).float()  # [batch_size, d_model]
+            x = x.unsqueeze(1).clone()  # [batch_size, 1, d_model] - treat as sequence length 1, clone to avoid memory sharing
+            x = self.pos_encoding(x)
+            
+            # Encoder: process the reference prompt embedding
+            memory = self.transformer_encoder(x)  # [batch_size, 1, d_model]
+            
+            # Decoder: generate noise vector
+            # Initialize target sequence (can be learned parameter or zero)
+            # Create new tensor instead of zeros_like to avoid memory sharing
+            tgt = torch.zeros(x.size(), dtype=torch.float32, device=x.device)  # [batch_size, 1, d_model]
+            tgt = self.pos_encoding(tgt)
+            
+            # Decode to get noise prediction
+            decoded = self.transformer_decoder(tgt, memory)  # [batch_size, 1, d_model]
+            
+            # Project back to embedding dimension
+            raw_mu = self.output_projection(decoded.squeeze(1).clone()).float()  # [batch_size, embedding_dim]
+            
+            # 训练热身：前几个epoch使用更小的扰动
+            warmup_epochs = 3
+            if self.training_step < warmup_epochs * 1000:  # 假设每个epoch约1000步
+                warmup_factor = 0.1 + 0.9 * (self.training_step / (warmup_epochs * 1000))
+            else:
+                warmup_factor = 1.0
+            
+            # Apply scaling and warmup to noise vector μ
+            mu = (raw_mu * self.perturbation_scale * warmup_factor).clone().float()
+            
+            # 增加训练步数计数
+            self.training_step += 1
+            
+            # Apply adaptive proximity constraint (P1 in paper: ||μ||₂ ≤ ε_p(t))
+            mu_constrained = self.apply_proximity_constraint(mu, reward_variance).float()
+            
+            # Create modified embeddings: s_t - a_t (transition dynamics in paper)
+            # Here we use addition instead of subtraction for consistency with existing code
+            # Clone to avoid memory sharing issues with DDP
+            modified_embeddings = (original_embeddings.clone() + mu_constrained).float()
+            
+            # Add random noise for diversity in each sampling (optional)
+            if hasattr(self, 'use_modification_noise') and self.use_modification_noise:
+                # Random noise strength for each sample between 0 and max_std
+                max_noise_std = getattr(self, 'modification_noise_std', 0.005)
+                # Generate random noise strength for each sample in the batch
+                batch_size = modified_embeddings.size(0)
+                random_noise_stds = torch.rand(batch_size, device=modified_embeddings.device) * max_noise_std
+                
+                # Generate base noise and scale it per sample
+                base_noise = torch.randn_like(modified_embeddings)
+                # Broadcast noise strength to match embedding dimensions [batch_size, 1] -> [batch_size, embedding_dim]
+                noise_scales = random_noise_stds.unsqueeze(1).expand_as(modified_embeddings)
+                modification_noise = base_noise * noise_scales
+                
+                modified_embeddings = (modified_embeddings + modification_noise).float()
+                
+                # Log noise levels for debugging
+                print(f"[DEBUG] Random noise levels: {random_noise_stds.cpu().numpy()}")
+            
+            modified_embeddings = F.normalize(modified_embeddings, p=2, dim=-1)  # Normalize to unit norm
+            
+            # Decode back to text
+            modified_prompts = self.decode_embeddings(modified_embeddings)
+            
+            # Compute semantic similarity for regularization
+            semantic_similarities = self.compute_semantic_similarity(prompts, modified_prompts)
+            
+            # Compute log probabilities for policy gradient
+            # For original policy gradient, we need the log probability of taking the action (mu_constrained)
+            # We'll compute this as the negative L2 norm (treating it as a Gaussian policy)
+            log_probs = -0.5 * torch.sum(mu_constrained ** 2, dim=-1)
+            
+            # Create policy info for training
+            policy_info = {
+                'log_prob': log_probs.float(),
+                'mu_raw': raw_mu.float(),
+                'mu_constrained': mu_constrained.float(),
+                'perturbation_scale': self.perturbation_scale,
+                'warmup_factor': warmup_factor,
+                'training_step': self.training_step,
+                'semantic_similarities': semantic_similarities.float() if isinstance(semantic_similarities, torch.Tensor) else semantic_similarities,
+                'reward_variance': reward_variance,
+                'epsilon_current': self.compute_adaptive_epsilon(reward_variance) if reward_variance is not None else self.epsilon_p
+            }
         
-        modified_embeddings = F.normalize(modified_embeddings, p=2, dim=-1)  # Normalize to unit norm
-        
-        # Decode back to text
-        modified_prompts = self.decode_embeddings(modified_embeddings)
-        
-        # Compute semantic similarity for regularization
-        semantic_similarities = self.compute_semantic_similarity(prompts, modified_prompts)
-        
-        # Compute log probabilities for policy gradient
-        # For original policy gradient, we need the log probability of taking the action (mu_constrained)
-        # We'll compute this as the negative L2 norm (treating it as a Gaussian policy)
-        log_probs = -0.5 * torch.sum(mu_constrained ** 2, dim=-1)
-        
-        # Create policy info for training
-        policy_info = {
-            'log_prob': log_probs,
-            'mu_raw': raw_mu,
-            'mu_constrained': mu_constrained,
-            'perturbation_scale': self.perturbation_scale,
-            'warmup_factor': warmup_factor,
-            'training_step': self.training_step,
-            'semantic_similarities': semantic_similarities,
-            'reward_variance': reward_variance,
-            'epsilon_current': self.compute_adaptive_epsilon(reward_variance) if reward_variance is not None else self.epsilon_p
-        }
-        
-        return modified_prompts, mu_constrained, original_embeddings, policy_info
+        return modified_prompts, mu_constrained.float(), original_embeddings.float(), policy_info
     
     def compute_regularization_loss(self, 
                                     mu: torch.Tensor,
@@ -958,83 +960,88 @@ class PromptEditorPolicy(nn.Module):
             policy_loss: True GRPO policy loss
             metrics: Dictionary of training metrics including GRPO stats
         """
-        # Update reward variance tracking
-        reward_variance = self.update_reward_variance_tracking(trajectories)
-        
-        # Compute GRPO advantages with scaling
-        grpo_advantages, grpo_stats = self.compute_grpo_advantages(trajectories)
-        
-        total_loss = 0.0
-        total_regularization = 0.0
-        batch_rewards = []
-        batch_log_probs = []
-        reg_breakdown_accumulator = defaultdict(list)
-        
-        for i, trajectory in enumerate(trajectories):
-            # Extract trajectory components
-            rewards = trajectory['rewards']
-            log_probs = trajectory['log_probs']
-            actions = trajectory['actions']
+        # Use FP32 for policy loss computation to ensure numerical stability
+        with torch.autocast(device_type="cuda", enabled=False):
+            # Update reward variance tracking
+            reward_variance = self.update_reward_variance_tracking(trajectories)
             
-            # Convert to tensors if needed (preserve gradients)
-            if not isinstance(rewards, torch.Tensor):
-                rewards = torch.tensor(rewards, device=self.device, dtype=torch.float32)
-            if not isinstance(log_probs, torch.Tensor):
-                log_probs = torch.tensor(log_probs, device=self.device, dtype=torch.float32, requires_grad=True)
-            else:
-                # Ensure log_probs tensor is on correct device and has gradients
-                log_probs = log_probs.to(device=self.device, dtype=torch.float32)
-                if not log_probs.requires_grad:
-                    log_probs.requires_grad_(True)
+            # Compute GRPO advantages with scaling
+            grpo_advantages, grpo_stats = self.compute_grpo_advantages(trajectories)
             
-            # Use GRPO advantages (group-based z-score with scaling)
-            advantages = grpo_advantages.get(i, torch.zeros_like(rewards))
+            total_loss = 0.0
+            total_regularization = 0.0
+            batch_rewards = []
+            batch_log_probs = []
+            reg_breakdown_accumulator = defaultdict(list)
             
-            if self.use_true_grpo:
-                # True GRPO loss: -ratio * scaled_advantages
-                # ratio = exp(log_π(a|s) - log_π_old(a|s)) 
-                # For simplicity, we assume log_π_old ≈ log_π (ratio ≈ 1) since we update frequently
-                # In practice, you might want to store old log_probs for proper ratio computation
-                ratio = torch.exp(log_probs - log_probs.detach())  # ratio = 1, but keeps gradient
-                policy_loss_traj = -(ratio * advantages).sum()
-            else:
-                # Fallback to REINFORCE with GRPO advantages
-                policy_loss_traj = -(log_probs * advantages).sum()
-            
-            total_loss += policy_loss_traj
-            
-            # Enhanced regularization loss
-            if 'policy_info' in trajectory and 'mu_constrained' in trajectory['policy_info']:
-                mu = trajectory['policy_info']['mu_constrained']
-                semantic_similarities = trajectory['policy_info'].get('semantic_similarities')
+            for i, trajectory in enumerate(trajectories):
+                # Extract trajectory components
+                rewards = trajectory['rewards']
+                log_probs = trajectory['log_probs']
+                actions = trajectory['actions']
                 
-                reg_loss, reg_breakdown = self.compute_regularization_loss(
-                    mu, 
-                    trajectory['states'],
-                    trajectory.get('modified_prompts', []),
-                    trajectory['prompts'],
-                    semantic_similarities,
-                    reward_variance
-                )
-                total_regularization += reg_loss
+                # Convert to tensors if needed (preserve gradients) and ensure FP32
+                if not isinstance(rewards, torch.Tensor):
+                    rewards = torch.tensor(rewards, device=self.device, dtype=torch.float32)
+                else:
+                    rewards = rewards.float()
+                    
+                if not isinstance(log_probs, torch.Tensor):
+                    log_probs = torch.tensor(log_probs, device=self.device, dtype=torch.float32, requires_grad=True)
+                else:
+                    # Ensure log_probs tensor is on correct device and has gradients
+                    log_probs = log_probs.to(device=self.device, dtype=torch.float32)
+                    if not log_probs.requires_grad:
+                        log_probs.requires_grad_(True)
                 
-                # Accumulate regularization breakdown
-                for key, value in reg_breakdown.items():
-                    reg_breakdown_accumulator[key].append(value)
+                # Use GRPO advantages (group-based z-score with scaling)
+                advantages = grpo_advantages.get(i, torch.zeros_like(rewards)).float()
+                
+                if self.use_true_grpo:
+                    # True GRPO loss: -ratio * scaled_advantages
+                    # ratio = exp(log_π(a|s) - log_π_old(a|s)) 
+                    # For simplicity, we assume log_π_old ≈ log_π (ratio ≈ 1) since we update frequently
+                    # In practice, you might want to store old log_probs for proper ratio computation
+                    ratio = torch.exp(log_probs - log_probs.detach())  # ratio = 1, but keeps gradient
+                    policy_loss_traj = -(ratio * advantages).sum()
+                else:
+                    # Fallback to REINFORCE with GRPO advantages
+                    policy_loss_traj = -(log_probs * advantages).sum()
+                
+                total_loss += policy_loss_traj
+                
+                # Enhanced regularization loss
+                if 'policy_info' in trajectory and 'mu_constrained' in trajectory['policy_info']:
+                    mu = trajectory['policy_info']['mu_constrained'].float()
+                    semantic_similarities = trajectory['policy_info'].get('semantic_similarities')
+                    
+                    reg_loss, reg_breakdown = self.compute_regularization_loss(
+                        mu, 
+                        trajectory['states'].float() if isinstance(trajectory['states'], torch.Tensor) else trajectory['states'],
+                        trajectory.get('modified_prompts', []),
+                        trajectory['prompts'],
+                        semantic_similarities,
+                        reward_variance
+                    )
+                    total_regularization += reg_loss
+                    
+                    # Accumulate regularization breakdown
+                    for key, value in reg_breakdown.items():
+                        reg_breakdown_accumulator[key].append(value)
+                
+                batch_rewards.extend(rewards.cpu().tolist() if rewards.dim() > 0 else [rewards.item()])
+                batch_log_probs.extend(log_probs.cpu().tolist() if log_probs.dim() > 0 else [log_probs.item()])
             
-            batch_rewards.extend(rewards.cpu().tolist() if rewards.dim() > 0 else [rewards.item()])
-            batch_log_probs.extend(log_probs.cpu().tolist() if log_probs.dim() > 0 else [log_probs.item()])
-        
-        # Average over batch
-        batch_size = len(trajectories)
-        if batch_size > 0:
-            policy_loss = total_loss / batch_size
-            regularization_loss = total_regularization / batch_size
-            total_loss_combined = policy_loss + 0.1 * regularization_loss  # Weight regularization
-        else:
-            policy_loss = torch.tensor(0.0, device=self.device)
-            regularization_loss = torch.tensor(0.0, device=self.device)
-            total_loss_combined = torch.tensor(0.0, device=self.device)
+            # Average over batch
+            batch_size = len(trajectories)
+            if batch_size > 0:
+                policy_loss = total_loss / batch_size
+                regularization_loss = total_regularization / batch_size
+                total_loss_combined = policy_loss + 0.1 * regularization_loss  # Weight regularization
+            else:
+                policy_loss = torch.tensor(0.0, device=self.device, dtype=torch.float32)
+                regularization_loss = torch.tensor(0.0, device=self.device, dtype=torch.float32)
+                total_loss_combined = torch.tensor(0.0, device=self.device, dtype=torch.float32)
         
         # Compute enhanced metrics including GRPO statistics
         metrics = {
@@ -1075,11 +1082,14 @@ class PromptEditorPolicy(nn.Module):
         Returns:
             metrics: Dictionary of training metrics
         """
-        # Compute policy loss
-        total_loss, metrics = self.compute_policy_loss(trajectories, baseline_value)
+        # Use FP32 for policy updates to ensure numerical stability
+        with torch.autocast(device_type="cuda", enabled=False):
+            # Compute policy loss
+            total_loss, metrics = self.compute_policy_loss(trajectories, baseline_value)
+            total_loss = total_loss.float()  # Ensure FP32
         
         if accelerator is not None:
-                        # Use accelerator.accumulate context for proper gradient scaler handling
+            # Use accelerator.accumulate context for proper gradient scaler handling
             with accelerator.accumulate(self):
                 accelerator.backward(total_loss)
                 
