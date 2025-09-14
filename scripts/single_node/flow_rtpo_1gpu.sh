@@ -46,9 +46,8 @@ echo "=================================="
 # All accelerate parameters must come before the script path
 accelerate launch \
     --num_processes=1 \
-    --multi_gpu=false \
     --gpu_ids=0 \
-    --mixed_precision=bf16 \
+    --mixed_precision=fp16 \
     /workspace/flow_rtpo/scripts/train_flow_rtpo.py \
     --config=/workspace/flow_rtpo/config/flow_rtpo.py:$CONFIG_NAME \
     2>&1 | tee $OUTPUT_DIR/training.log
