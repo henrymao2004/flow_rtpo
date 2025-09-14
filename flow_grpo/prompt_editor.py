@@ -1101,8 +1101,9 @@ class PromptEditorPolicy(nn.Module):
                     accelerator.backward(total_loss)
                     
                     # Gradient clipping - only when syncing gradients
+                    # Use torch.nn.utils directly since we disabled scaler
                     if accelerator.sync_gradients:
-                        accelerator.clip_grad_norm_(self.parameters(), max_norm=1.0)
+                        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                     
                     optimizer.step()
                     optimizer.zero_grad()
