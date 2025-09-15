@@ -153,45 +153,29 @@ class PromptEditorPolicy(nn.Module):
         vec2text_model_name = self.hf_models.get('vec2text', 'gtr-base') if self.hf_models else 'gtr-base'
         self.vec2text_corrector = vec2text.load_pretrained_corrector(vec2text_model_name)
         
-        # Use sentence-transformers library directly for GTR model (recommended approach)
-        try:
-            from sentence_transformers import SentenceTransformer
-            gtr_model_name = self._get_model_path('gtr', 'sentence-transformers/gtr-t5-base')
-            self.gtr_sentence_transformer = SentenceTransformer(gtr_model_name).to(device)
-            print(f"[INFO] GTR model loaded successfully using sentence-transformers: {gtr_model_name}")
-            self.use_sentence_transformer_gtr = True
-        except ImportError:
-            print("[WARNING] sentence-transformers not available, falling back to transformers AutoModel")
-            self.use_sentence_transformer_gtr = False
-        except Exception as e:
-            print(f"[WARNING] Failed to load GTR via sentence-transformers: {e}, falling back to transformers AutoModel")
-            self.use_sentence_transformer_gtr = False
+        # Use OFFICIAL vec2text approach for GTR as per documentation
+        from transformers import AutoTokenizer, AutoModel
+        gtr_model_name = self._get_model_path('gtr', 'sentence-transformers/gtr-t5-base')
+        self.gtr_tokenizer = AutoTokenizer.from_pretrained(gtr_model_name)
         
-        # Fallback to original transformers approach if sentence-transformers fails
-        if not self.use_sentence_transformer_gtr:
-            from transformers import AutoTokenizer, AutoModel
-            gtr_model_name = self._get_model_path('gtr', 'sentence-transformers/gtr-t5-base')
-            self.gtr_tokenizer = AutoTokenizer.from_pretrained(gtr_model_name)
-            
+        # Try loading with different precision/settings to avoid NaN
+        try:
+            self.gtr_encoder = AutoModel.from_pretrained(
+                gtr_model_name,
+                torch_dtype=torch.float32  # Force float32 to avoid precision issues
+            ).encoder.to(device)
+            self.use_fallback_encoder = False
+        except Exception as e:
+            print(f"[WARNING] Failed to load GTR encoder: {e}")
+            # Use a simple fallback encoder
             try:
-                self.gtr_encoder = AutoModel.from_pretrained(
-                    gtr_model_name,
-                    torch_dtype=torch.float32  # Force float32 to avoid precision issues
-                ).encoder.to(device)
-                self.use_fallback_encoder = False
-                print(f"[INFO] GTR encoder loaded via transformers AutoModel: {gtr_model_name}")
-            except Exception as e:
-                print(f"[WARNING] Failed to load GTR encoder: {e}")
-                # Use a simple fallback encoder
-                try:
-                    from sentence_transformers import SentenceTransformer
-                    fallback_model_name = self._get_model_path('sbert', 'all-MiniLM-L6-v2')
-                    self.sentence_transformer_fallback = SentenceTransformer(fallback_model_name).to(device)
-                    print(f"[INFO] Using SentenceTransformer fallback: {fallback_model_name}")
-                except ImportError:
-                    print("[WARNING] sentence-transformers not available for fallback encoder")
-                    self.sentence_transformer_fallback = None
-                self.use_fallback_encoder = True
+                from sentence_transformers import SentenceTransformer
+                fallback_model_name = self._get_model_path('sbert', 'all-MiniLM-L6-v2')
+                self.sentence_transformer_fallback = SentenceTransformer(fallback_model_name).to(device)
+            except ImportError:
+                print("[WARNING] sentence-transformers not available for fallback encoder")
+                self.sentence_transformer_fallback = None
+            self.use_fallback_encoder = True
         
         # Noise prediction network (π_θ in paper) - encoder-decoder transformer
         # Following the paper's architecture description
@@ -376,24 +360,9 @@ class PromptEditorPolicy(nn.Module):
                     return "fallback_text"
         
     def encode_prompts(self, prompts: List[str]) -> torch.Tensor:
-        """Encode prompts using sentence-transformers GTR model (preferred) or fallback methods."""
+        """Encode prompts using OFFICIAL vec2text GTR method from documentation."""
         with torch.no_grad():
-            # First priority: Use sentence-transformers GTR model (cleanest approach)
-            if getattr(self, "use_sentence_transformer_gtr", False) and hasattr(self, 'gtr_sentence_transformer'):
-                try:
-                    print(f"[DEBUG] Using sentence-transformers GTR model...")
-                    embeddings = self.gtr_sentence_transformer.encode(
-                        prompts, 
-                        convert_to_tensor=True,
-                        device=self.device,
-                        normalize_embeddings=True  # Built-in normalization
-                    )
-                    return embeddings.clone()
-                except Exception as e:
-                    print(f"[WARNING] sentence-transformers GTR failed: {e}, falling back to transformers approach")
-                    # Fall through to next method
-            
-            # Second priority: Use fallback encoder (all-MiniLM-L6-v2)
+            # Branch based on encoder availability
             if getattr(self, "use_fallback_encoder", False):
                 if hasattr(self, 'sentence_transformer_fallback') and self.sentence_transformer_fallback is not None:
                     print(f"[DEBUG] Using SentenceTransformer fallback encoder...")
@@ -404,56 +373,59 @@ class PromptEditorPolicy(nn.Module):
                     print(f"[WARNING] Fallback encoder not available, using zero embeddings")
                     return torch.zeros(len(prompts), self.embedding_dim, device=self.device)
             
-            # Third priority: Use transformers AutoModel GTR approach (original method)
-            if hasattr(self, 'gtr_encoder') and hasattr(self, 'gtr_tokenizer'):
-                # Official vec2text approach for GTR embeddings
-                inputs = self.gtr_tokenizer(
-                    prompts,
-                    return_tensors="pt",
-                    max_length=128,  # As per official example
-                    truncation=True,
-                    padding="max_length"
-                ).to(self.device)
-                
-                # Check model weights for NaN
-                model_has_nan = any(torch.isnan(p).any() for p in self.gtr_encoder.parameters())
-                
-                if model_has_nan:
-                    # Reinitialize the model
-                    from transformers import AutoModel
-                    self.gtr_encoder = AutoModel.from_pretrained('sentence-transformers/gtr-t5-base').encoder.to(self.device)
-                
-                # Use the encoder directly with autocast disabled to prevent NaN
-                try:
-                    # Set encoder to eval mode and disable autocast to prevent fp16 NaN
-                    self.gtr_encoder.eval()
-                    
-                    with torch.autocast(device_type="cuda", enabled=False):
-                        model_output = self.gtr_encoder(
-                            input_ids=inputs['input_ids'], 
-                            attention_mask=inputs['attention_mask']
-                        )
-                        hidden_state = model_output.last_hidden_state.float()  # Ensure fp32
-                        
-                        if torch.isnan(hidden_state).any():
-                            print("[ERROR] GTR encoder still produces NaN! Using zero embeddings.")
-                            return torch.zeros(len(prompts), self.embedding_dim, device=self.device)
-                        
-                        # Use vec2text's official mean_pool function (also in fp32)
-                        embeddings = vec2text.models.model_utils.mean_pool(hidden_state, inputs['attention_mask'])
-                        embeddings = F.normalize(embeddings, p=2, dim=-1)  # Normalize to unit norm
-                        # Clone to ensure no memory sharing for DDP
-                        embeddings = embeddings.clone()
-                    
-                    return embeddings
-                    
-                except Exception as e:
-                    print(f"[ERROR] GTR encoder failed: {e}")
-                    return torch.zeros(len(prompts), self.embedding_dim, device=self.device)
+          
             
-            # Final fallback: zero embeddings
-            print("[WARNING] No encoder available, using zero embeddings")
-            return torch.zeros(len(prompts), self.embedding_dim, device=self.device)
+            # Official vec2text approach for GTR embeddings
+            inputs = self.gtr_tokenizer(
+                prompts,
+                return_tensors="pt",
+                max_length=128,  # As per official example
+                truncation=True,
+                padding="max_length"
+            ).to(self.device)
+            
+            
+            # Check model weights for NaN
+            model_has_nan = any(torch.isnan(p).any() for p in self.gtr_encoder.parameters())
+            
+            
+            if model_has_nan:
+                
+                # Reinitialize the model
+                from transformers import AutoModel
+                self.gtr_encoder = AutoModel.from_pretrained('sentence-transformers/gtr-t5-base').encoder.to(self.device)
+            
+            # Use the encoder directly with autocast disabled to prevent NaN
+            try:
+                # Set encoder to eval mode and disable autocast to prevent fp16 NaN
+                self.gtr_encoder.eval()
+                
+                with torch.autocast(device_type="cuda", enabled=False):
+                    model_output = self.gtr_encoder(
+                        input_ids=inputs['input_ids'], 
+                        attention_mask=inputs['attention_mask']
+                    )
+                    hidden_state = model_output.last_hidden_state.float()  # Ensure fp32
+                    
+                   
+                    
+                    if torch.isnan(hidden_state).any():
+                        print("[ERROR] GTR encoder still produces NaN! Using zero embeddings.")
+                        return torch.zeros(len(prompts), self.embedding_dim, device=self.device)
+                    
+                    # Use vec2text's official mean_pool function (also in fp32)
+                    embeddings = vec2text.models.model_utils.mean_pool(hidden_state, inputs['attention_mask'])
+                    embeddings = F.normalize(embeddings, p=2, dim=-1)  # Normalize to unit norm
+                    # Clone to ensure no memory sharing for DDP
+                    embeddings = embeddings.clone()
+                
+            except Exception as e:
+                print(f"[ERROR] GTR encoder failed: {e}")
+                return torch.zeros(len(prompts), self.embedding_dim, device=self.device)
+            
+           
+            
+            return embeddings
     
     def decode_embeddings(self, embeddings: torch.Tensor) -> List[str]:
         """Decode embeddings back to text using vec2text with optional diverse sampling."""
