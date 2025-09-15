@@ -19,7 +19,7 @@ export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
 # Set environment variables for multi-GPU (using only 4 GPUs)
-export CUDA_VISIBLE_DEVICES=0,1  # Four GPUs only
+export CUDA_VISIBLE_DEVICES=0,1,2,3  # Four GPUs only
 export TOKENIZERS_PARALLELISM=false
 export WANDB_PROJECT="flow_rtpo"
 
@@ -35,7 +35,7 @@ echo "Starting Flow-RTPO Multi-GPU Training (4-GPU version)..."
 echo "Config: $CONFIG_NAME"
 echo "Output Dir: $OUTPUT_DIR"
 echo "GPUs: $CUDA_VISIBLE_DEVICES"
-echo "Number of processes: 2"
+echo "Number of processes: 4"
 
 # Check GPU status before training
 echo "=== GPU Status Before Training ==="
@@ -45,8 +45,8 @@ echo "=================================="
 # Run training with accelerate (multi-GPU)
 # All accelerate parameters must come before the script path
 accelerate launch \
-    --num_processes=2 \
-    --gpu_ids=0,1 \
+    --num_processes=4 \
+    --gpu_ids=0,1,2,3  \
     --mixed_precision=fp16 \
     /workspace/flow_rtpo/scripts/train_flow_rtpo.py \
     --config=/workspace/flow_rtpo/config/flow_rtpo.py:$CONFIG_NAME \
