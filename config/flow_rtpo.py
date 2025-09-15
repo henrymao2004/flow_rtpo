@@ -201,7 +201,7 @@ def flow_rtpo_debug():
     config.sample.num_steps = 20
     config.num_epochs = 100
     config.save_freq = 2
-    config.eval_freq = 2
+    config.eval_freq = 1
     config.sample.train_batch_size = config.sample.batch_size
     # ON-POLICY CONSISTENCY: Enforce purely on-policy setup
     config.sample.num_batches_per_epoch = 1 # Process all batches (16 prompts / 4 batch_size = 4 batches)

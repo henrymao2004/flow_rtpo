@@ -159,39 +159,51 @@ class ToxicityRewardSystem:
     def _init_detoxify_model(self):
         """Initialize Detoxify model from either local or HuggingFace."""
         try:
-            # Set custom cache directory for detoxify models using HF_HOME environment variable
-            custom_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
-            os.makedirs(custom_cache_dir, exist_ok=True)
+            cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
+            os.makedirs(cache_dir, exist_ok=True)
             
-            # Temporarily set environment variable to redirect detoxify downloads
-            original_hf_home = os.environ.get('HF_HOME', None)
-            os.environ['HF_HOME'] = custom_cache_dir
+            # 关键：Detoxify/torch.hub 用的是 TORCH_HOME
+            orig_torch_home = os.environ.get('TORCH_HOME')
+            os.environ['TORCH_HOME'] = cache_dir
+            
+            # 同时保留你原来的 HF_HOME（以防 transformers 资源）
+            orig_hf_home = os.environ.get('HF_HOME')
+            os.environ['HF_HOME'] = cache_dir
             
             try:
                 # Detoxify constructor expects model type string, not path
                 # Always use 'original' model type
                 self.detoxify = Detoxify('original', device=self.device)
             finally:
-                # Restore original HF_HOME
-                if original_hf_home is not None:
-                    os.environ['HF_HOME'] = original_hf_home
+                if orig_torch_home is not None:
+                    os.environ['TORCH_HOME'] = orig_torch_home
+                else:
+                    os.environ.pop('TORCH_HOME', None)
+                if orig_hf_home is not None:
+                    os.environ['HF_HOME'] = orig_hf_home
                 else:
                     os.environ.pop('HF_HOME', None)
                     
         except Exception as e:
             # Fallback: set environment and try default
-            custom_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
-            os.makedirs(custom_cache_dir, exist_ok=True)
+            cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
+            os.makedirs(cache_dir, exist_ok=True)
             
-            original_hf_home = os.environ.get('HF_HOME', None)
-            os.environ['HF_HOME'] = custom_cache_dir
+            orig_torch_home = os.environ.get('TORCH_HOME')
+            os.environ['TORCH_HOME'] = cache_dir
+            
+            orig_hf_home = os.environ.get('HF_HOME')
+            os.environ['HF_HOME'] = cache_dir
             
             try:
                 self.detoxify = Detoxify('original', device=self.device)
             finally:
-                # Restore original HF_HOME
-                if original_hf_home is not None:
-                    os.environ['HF_HOME'] = original_hf_home
+                if orig_torch_home is not None:
+                    os.environ['TORCH_HOME'] = orig_torch_home
+                else:
+                    os.environ.pop('TORCH_HOME', None)
+                if orig_hf_home is not None:
+                    os.environ['HF_HOME'] = orig_hf_home
                 else:
                     os.environ.pop('HF_HOME', None)
     
