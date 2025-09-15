@@ -13,4 +13,4 @@ accelerate launch --config_file ${PYTHONPATH}/scripts/accelerate_configs/flow_rt
     --num_machines 6 --num_processes 48 \
     --machine_rank ${RANK} --main_process_ip ${MASTER_ADDR} --main_process_port ${MASTER_PORT} \
     ${PYTHONPATH}/scripts/train_flow_rtpo.py \
-    --config ${PYTHONPATH}/config/flow_rtpo.py:flow_rtpo_large 
+    --config_file ${PYTHONPATH}/config/flow_rtpo.py:flow_rtpo_large 

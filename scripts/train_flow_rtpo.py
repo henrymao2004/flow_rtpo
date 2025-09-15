@@ -47,7 +47,7 @@ import random
 tqdm = partial(tqdm.tqdm, dynamic_ncols=True)
 
 FLAGS = flags.FLAGS
-config_flags.DEFINE_config_file("config", "config/flow_rtpo.py", "Training configuration.")
+config_flags.DEFINE_config_file("config_file", "config/flow_rtpo.py", "Training configuration.")
 
 logger = get_logger(__name__)
 
@@ -676,7 +676,7 @@ def main(_):
     time.sleep(rank * 0.5)  # Stagger startup by 0.5s per rank
     
     # Basic Accelerate and logging setup
-    config = FLAGS.config
+    config = FLAGS.config_file
     
     unique_id = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
     if not config.run_name:
