@@ -149,7 +149,8 @@ class PromptEditorPolicy(nn.Module):
             self.sbert_model = None
         
         # Initialize vec2text corrector
-        vec2text_model_name = self._get_model_path('vec2text', 'gtr-base')
+        # vec2text.load_pretrained_corrector() expects model name, not path
+        vec2text_model_name = self.hf_models.get('vec2text', 'gtr-base') if self.hf_models else 'gtr-base'
         self.vec2text_corrector = vec2text.load_pretrained_corrector(vec2text_model_name)
         
         # Use OFFICIAL vec2text approach for GTR as per documentation

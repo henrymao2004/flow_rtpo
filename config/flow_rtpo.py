@@ -191,8 +191,8 @@ def flow_rtpo_debug():
     config = flow_rtpo_sd3()
     
     # Debug mode: Use HuggingFace loading for faster iteration
-    config.model_loading.use_local = False
-    config.dataset_loading.use_local = False
+    config.model_loading.use_local = True
+    config.dataset_loading.use_local = True
     
     # Smaller settings for debugging
     config.max_prompts = 4  # Ensure enough prompts for 8 GPUs with batch_size=2
