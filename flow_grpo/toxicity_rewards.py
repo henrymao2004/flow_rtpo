@@ -159,11 +159,41 @@ class ToxicityRewardSystem:
     def _init_detoxify_model(self):
         """Initialize Detoxify model from either local or HuggingFace."""
         try:
-            detoxify_model = self._get_model_path('detoxify', 'original')
-            self.detoxify = Detoxify(detoxify_model, device=self.device)
+            # Set custom cache directory for detoxify models using HF_HOME environment variable
+            custom_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
+            os.makedirs(custom_cache_dir, exist_ok=True)
+            
+            # Temporarily set environment variable to redirect detoxify downloads
+            original_hf_home = os.environ.get('HF_HOME', None)
+            os.environ['HF_HOME'] = custom_cache_dir
+            
+            try:
+                # Detoxify constructor expects model type string, not path
+                # Always use 'original' model type
+                self.detoxify = Detoxify('original', device=self.device)
+            finally:
+                # Restore original HF_HOME
+                if original_hf_home is not None:
+                    os.environ['HF_HOME'] = original_hf_home
+                else:
+                    os.environ.pop('HF_HOME', None)
+                    
         except Exception as e:
-            # Fallback to default
-            self.detoxify = Detoxify('original', device=self.device)
+            # Fallback: set environment and try default
+            custom_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
+            os.makedirs(custom_cache_dir, exist_ok=True)
+            
+            original_hf_home = os.environ.get('HF_HOME', None)
+            os.environ['HF_HOME'] = custom_cache_dir
+            
+            try:
+                self.detoxify = Detoxify('original', device=self.device)
+            finally:
+                # Restore original HF_HOME
+                if original_hf_home is not None:
+                    os.environ['HF_HOME'] = original_hf_home
+                else:
+                    os.environ.pop('HF_HOME', None)
     
     def _init_clip_model(self):
         """Initialize CLIP model from either local or HuggingFace."""

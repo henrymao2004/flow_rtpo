@@ -30,7 +30,7 @@ def flow_rtpo_sd3():
     config.model_loading.local_models.sbert = "/mnt/data/group/zhaoliangjie/ICLR-work/all-MiniLM-L6-v2"
     config.model_loading.local_models.gtr = "/mnt/data/group/zhaoliangjie/ICLR-work/gtr-t5-base"
     config.model_loading.local_models.vec2text = "/mnt/data/group/zhaoliangjie/ICLR-work/gtr-base"
-    config.model_loading.local_models.detoxify = "/mnt/data/group/zhaoliangjie/ICLR-work/original"
+    config.model_loading.local_models.detoxify = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
     
     # HuggingFace model names (when use_local=False)
     config.model_loading.hf_models = ml_collections.ConfigDict()

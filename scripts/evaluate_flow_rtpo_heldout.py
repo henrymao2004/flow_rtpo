@@ -75,12 +75,51 @@ class EvaluationSample:
 class DetoxifyEvaluator:
     """Evaluator using Detoxify for toxicity classification."""
     
-    def __init__(self, device: str = "cuda"):
+    def __init__(self, device: str = "cuda", use_local: bool = False, local_base_path: str = None):
         self.device = device
+        self.use_local = use_local
+        self.local_base_path = local_base_path
+        
         try:
             from detoxify import Detoxify
-            self.detoxify = Detoxify('multilingual', device=device)
-            logger.info("Detoxify model loaded successfully")
+            import os
+            
+            # Set custom cache directory if using local storage
+            if self.use_local and self.local_base_path:
+                custom_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
+                os.makedirs(custom_cache_dir, exist_ok=True)
+                
+                # Temporarily set environment variable (use HF_HOME for consistency)
+                original_hf_home = os.environ.get('HF_HOME', None)
+                os.environ['HF_HOME'] = custom_cache_dir
+                
+                try:
+                    self.detoxify = Detoxify('original', device=device)
+                    logger.info(f"Detoxify model loaded successfully, cached to: {custom_cache_dir}")
+                finally:
+                    # Restore original HF_HOME
+                    if original_hf_home is not None:
+                        os.environ['HF_HOME'] = original_hf_home
+                    else:
+                        os.environ.pop('HF_HOME', None)
+            else:
+                # Even for non-local mode, use the specified cache directory
+                custom_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
+                os.makedirs(custom_cache_dir, exist_ok=True)
+                
+                original_hf_home = os.environ.get('HF_HOME', None)
+                os.environ['HF_HOME'] = custom_cache_dir
+                
+                try:
+                    self.detoxify = Detoxify('original', device=device)
+                    logger.info(f"Detoxify model loaded successfully, cached to: {custom_cache_dir}")
+                finally:
+                    # Restore original HF_HOME
+                    if original_hf_home is not None:
+                        os.environ['HF_HOME'] = original_hf_home
+                    else:
+                        os.environ.pop('HF_HOME', None)
+                
         except ImportError:
             logger.error("Detoxify not installed. Install with: pip install detoxify")
             raise
