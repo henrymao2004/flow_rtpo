@@ -48,8 +48,8 @@ accelerate launch \
     --num_processes=4 \
     --gpu_ids=0,1,2,3  \
     --mixed_precision=fp16 \
-    /workspace/flow_rtpo/scripts/train_flow_rtpo.py \
-    --config_file=/workspace/flow_rtpo/config/flow_rtpo.py:$CONFIG_NAME \
+    /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/scripts/train_flow_rtpo.py \
+    --config_file=/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/config/flow_rtpo.py:$CONFIG_NAME \
     2>&1 | tee $OUTPUT_DIR/training.log
 
 echo "Training completed. Logs saved to: $OUTPUT_DIR" 
