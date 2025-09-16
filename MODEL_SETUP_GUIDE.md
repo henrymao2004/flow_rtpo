@@ -12,7 +12,7 @@
 | **SBERT** | 语义相似度 | `sentence-transformers/all-MiniLM-L6-v2` | `all-MiniLM-L6-v2` | `SentenceTransformer()` |
 | **GTR-T5** | 文本嵌入编码器 | `sentence-transformers/gtr-t5-base` | `gtr-t5-base` | `AutoModel.from_pretrained().encoder` |
 | **vec2text** | 文本反演模型 | `gtr-base` | `gtr-base` | `vec2text.load_pretrained_corrector()` + 环境变量 |
-| **Detoxify** | 毒性检测 | `original` | `detoxify-original` | `Detoxify()` + 环境变量 |
+| **Detoxify** | 毒性检测 | `original` | `detoxify-original` | `Detoxify()` + 环境变量 | checkpoint + bert
 
 ### 📚 **数据集列表**
 
