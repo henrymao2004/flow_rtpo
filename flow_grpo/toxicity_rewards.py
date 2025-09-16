@@ -159,33 +159,49 @@ class ToxicityRewardSystem:
     def _init_detoxify_model(self):
         """Initialize Detoxify model from local checkpoints directory."""
         try:
-            # Use the specific checkpoints directory where detoxify models are stored
-            detoxify_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
-            torch_hub_dir = os.path.join(detoxify_cache_dir, "hub")
+            # Correct path setup for Detoxify caching
+            # PyTorch Hub base directory (where hub/checkpoints/ will be created)
+            torch_hub_base = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
             
-            # Create directories if they don't exist
-            os.makedirs(detoxify_cache_dir, exist_ok=True)
-            os.makedirs(torch_hub_dir, exist_ok=True)
+            # HuggingFace cache for BERT models (separate from PyTorch Hub)
+            hf_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/huggingface_cache"
+            
+            # Ensure directories exist
+            checkpoint_dir = os.path.join(torch_hub_base, "hub", "checkpoints")
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            os.makedirs(hf_cache_dir, exist_ok=True)
             
             # Save original environment variables
             orig_torch_home = os.environ.get('TORCH_HOME')
             orig_hf_home = os.environ.get('HF_HOME')
             orig_hf_hub_cache = os.environ.get('HF_HUB_CACHE')
+            orig_transformers_cache = os.environ.get('TRANSFORMERS_CACHE')
             
             try:
-                # Set environment variables to use local cache
-                # TORCH_HOME for PyTorch Hub (used by Detoxify)
-                os.environ['TORCH_HOME'] = detoxify_cache_dir
+                # Set environment variables correctly
+                # TORCH_HOME points to base directory (PyTorch Hub will create hub/checkpoints inside)
+                os.environ['TORCH_HOME'] = torch_hub_base
                 
-                # HF_HOME and HF_HUB_CACHE for HuggingFace models (backup)
-                os.environ['HF_HOME'] = detoxify_cache_dir
-                os.environ['HF_HUB_CACHE'] = os.path.join(detoxify_cache_dir, "hub")
+                # HuggingFace cache directories for BERT models
+                os.environ['HF_HOME'] = hf_cache_dir
+                os.environ['HF_HUB_CACHE'] = hf_cache_dir
+                os.environ['TRANSFORMERS_CACHE'] = hf_cache_dir
                 
-                print(f"[DETOXIFY INIT] Using cache directory: {detoxify_cache_dir}")
-                print(f"[DETOXIFY INIT] TORCH_HOME set to: {os.environ.get('TORCH_HOME')}")
+                print(f"[DETOXIFY INIT] PyTorch Hub base directory: {torch_hub_base}")
+                print(f"[DETOXIFY INIT] Checkpoint directory: {checkpoint_dir}")
+                print(f"[DETOXIFY INIT] HuggingFace cache directory: {hf_cache_dir}")
+                
+                # Check if checkpoint exists
+                checkpoint_path = os.path.join(checkpoint_dir, "toxic_original-c1212f89.ckpt")
+                if os.path.exists(checkpoint_path):
+                    checkpoint_size = os.path.getsize(checkpoint_path) / (1024 * 1024)  # MB
+                    print(f"[DETOXIFY INIT] Found checkpoint: {checkpoint_path} ({checkpoint_size:.1f} MB)")
+                else:
+                    print(f"[DETOXIFY INIT] Checkpoint not found at: {checkpoint_path}")
+                    print(f"[DETOXIFY INIT] Will download during initialization")
                 
                 # Initialize Detoxify with 'original' model type
-                # This will check the local cache first before downloading
+                # This will use PyTorch Hub cache for checkpoints and HF cache for BERT models
                 self.detoxify = Detoxify('original', device=self.device)
                 print(f"[DETOXIFY INIT] Successfully loaded Detoxify model")
                 
@@ -205,6 +221,11 @@ class ToxicityRewardSystem:
                     os.environ['HF_HUB_CACHE'] = orig_hf_hub_cache
                 else:
                     os.environ.pop('HF_HUB_CACHE', None)
+                    
+                if orig_transformers_cache is not None:
+                    os.environ['TRANSFORMERS_CACHE'] = orig_transformers_cache
+                else:
+                    os.environ.pop('TRANSFORMERS_CACHE', None)
                     
         except Exception as e:
             print(f"[DETOXIFY ERROR] Failed to load from local cache: {e}")
