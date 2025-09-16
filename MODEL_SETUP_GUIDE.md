@@ -11,7 +11,6 @@
 | **CLIP** | 图像-文本相似度 | `openai/clip-vit-large-patch14-336` | `clip-vit-large-patch14-336` | `CLIPModel.from_pretrained()` |
 | **SBERT** | 语义相似度 | `sentence-transformers/all-MiniLM-L6-v2` | `all-MiniLM-L6-v2` | `SentenceTransformer()` |
 | **GTR-T5** | 文本嵌入编码器 | `sentence-transformers/gtr-t5-base` | `gtr-t5-base` | `AutoModel.from_pretrained().encoder` |
-| **vec2text** | 文本反演模型 | `gtr-base` | `gtr-t5-base` | `vec2text.load_pretrained_corrector()` + 环境变量 |
 | **Detoxify** | 毒性检测 | `original` | `detoxify-original` | `Detoxify()` + 环境变量 | checkpoint + bert
 
 ### 📚 **数据集列表**
@@ -99,16 +98,7 @@ config.model_loading.use_local = True
 │   ├── spiece.model
 │   ├── tokenizer_config.json
 │   ├── tokenizer.json
-│   └── models--ielabgroup--vec2text_gtr-base-st_corrector/  # vec2text cached models
-│       ├── blobs/
-│       ├── refs/
-│       └── snapshots/
-│           └── [commit_hash]/
-│               ├── config.json
-│               ├── pytorch_model.bin
-│               ├── tokenizer_config.json
-│               ├── tokenizer.json
-│               └── vocab.json
+│   └── 
 │
 ├── detoxify-original/                      # Detoxify 模型缓存
 │   ├── hub/
@@ -152,30 +142,9 @@ def _get_model_path(self, model_type: str, default_path: str) -> str:
 model = AutoModel.from_pretrained(model_path)
 ```
 
-### **2. vec2text 环境变量加载**
-```python
-# 设置环境变量指向本地缓存
-if self.use_local:
-    # 从配置获取vec2text本地路径，统一使用gtr-t5-base目录
-    # 实际值："/mnt/data/group/zhaoliangjie/ICLR-work/gtr-t5-base"
-    vec2text_local_path = self.local_models.get('vec2text', 'gtr-t5-base')
-    
-    # 如果不是绝对路径，则与基础路径组合
-    if not vec2text_local_path.startswith('/'):
-        vec2text_local_path = os.path.join(self.local_base_path, vec2text_local_path)
-    
-    # 设置HuggingFace缓存环境变量
-    os.environ['HF_HOME'] = vec2text_local_path
-    os.environ['HF_HUB_CACHE'] = vec2text_local_path
-    os.environ['TRANSFORMERS_CACHE'] = vec2text_local_path
-
-# 使用标准API（vec2text内部使用'gtr-base'作为模型名，但会从环境变量指定的缓存加载）
-self.vec2text_corrector = vec2text.load_pretrained_corrector('gtr-base')
-
-# 恢复环境变量（确保不影响其他模块）
 ```
 
-### **3. Detoxify 双重缓存加载**
+### **2. Detoxify 双重缓存加载**
 ```python
 # PyTorch Hub 缓存（存储.ckpt检查点）
 torch_hub_base = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
@@ -190,7 +159,7 @@ os.environ['TRANSFORMERS_CACHE'] = hf_cache_dir
 self.detoxify = Detoxify('original', device=self.device)
 ```
 
-### **4. RTP数据集加载**
+### **3. RTP数据集加载**
 ```python
 # 方式1：HuggingFace datasets格式
 dataset = load_dataset(local_dataset_path, cache_dir=self.cache_dir)
@@ -205,16 +174,13 @@ with open(json_path, 'r') as f:
 
 ## ⚠️ **特殊注意事项**
 
-### **1. vec2text 特殊处理**
-- `vec2text.load_pretrained_corrector()` 只接受模型名称（'gtr-base'），不接受路径
-- 通过设置环境变量 `HF_HOME`, `HF_HUB_CACHE`, `TRANSFORMERS_CACHE` 重定向缓存
 
-### **2. Detoxify 双重缓存**
+### **1. Detoxify 双重缓存**
 - PyTorch Hub 缓存：存储 `.ckpt` 检查点文件
 - HuggingFace 缓存：存储 BERT 模型文件
 - 需要正确设置 `TORCH_HOME` 和 `HF_HOME` 环境变量
 
-### **3. 模型文件完整性检查**
+### **2. 模型文件完整性检查**
 ```bash
 # 检查关键文件是否存在
 ls -la /mnt/data/group/zhaoliangjie/ICLR-work/stable-diffusion-3.5-medium/model_index.json
@@ -223,7 +189,7 @@ ls -la /mnt/data/group/zhaoliangjie/ICLR-work/gtr-t5-base/config.json  # GTR-T5 
 ls -la /mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original/hub/checkpoints/toxic_original-c1212f89.ckpt
 ```
 
-### **4. 回退机制**
+### **3. 回退机制**
 所有模型都实现了回退机制：
 1. 本地路径不存在 → 回退到 HuggingFace
 2. 本地加载失败 → 回退到 HuggingFace
@@ -243,7 +209,6 @@ ls -la /mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original/hub/checkpoints/
 - [ ] 所有模型子目录存在且包含必要文件
 - [ ] GTR-T5 模型文件存在：`gtr-t5-base/config.json`（同时用于 vec2text）
 - [ ] Detoxify 检查点存在：`detoxify-original/hub/checkpoints/toxic_original-c1212f89.ckpt`
-- [ ] vec2text 缓存目录结构正确（位于 gtr-t5-base/ 内）
 
 ### **权限检查**
 - [ ] 目录读取权限
