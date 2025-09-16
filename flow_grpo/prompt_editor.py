@@ -148,57 +148,10 @@ class PromptEditorPolicy(nn.Module):
             print(f"[WARNING] Failed to load SBERT model: {e}")
             self.sbert_model = None
         
-        # Initialize vec2text corrector with local cache support
+        # Initialize vec2text corrector
         # vec2text.load_pretrained_corrector() expects model name, not path
-        # But we can set environment variables to use local cache
         vec2text_model_name = self.hf_models.get('vec2text', 'gtr-base') if self.hf_models else 'gtr-base'
-        
-        # Set environment variables for local cache if use_local is True
-        orig_hf_home = os.environ.get('HF_HOME')
-        orig_hf_hub_cache = os.environ.get('HF_HUB_CACHE')
-        orig_transformers_cache = os.environ.get('TRANSFORMERS_CACHE')
-        
-        try:
-            if self.use_local:
-                # Get vec2text local path from configuration
-                vec2text_local_path = self.local_models.get('vec2text', 'gtr-base')
-                if not vec2text_local_path.startswith('/'):
-                    vec2text_local_path = os.path.join(self.local_base_path, vec2text_local_path)
-                
-                # Set HuggingFace cache to point to local directory
-                os.environ['HF_HOME'] = vec2text_local_path
-                os.environ['HF_HUB_CACHE'] = vec2text_local_path
-                os.environ['TRANSFORMERS_CACHE'] = vec2text_local_path
-                
-                print(f"[VEC2TEXT] Using local cache directory: {vec2text_local_path}")
-                
-                # Check if local cache exists
-                if os.path.exists(vec2text_local_path):
-                    print(f"[VEC2TEXT] Local cache directory found: {vec2text_local_path}")
-                else:
-                    print(f"[VEC2TEXT] Local cache directory not found: {vec2text_local_path}")
-                    print(f"[VEC2TEXT] Will download to this location during initialization")
-            
-            # Load vec2text corrector (will use local cache if environment variables are set)
-            self.vec2text_corrector = vec2text.load_pretrained_corrector(vec2text_model_name)
-            print(f"[VEC2TEXT] Successfully loaded vec2text corrector: {vec2text_model_name}")
-            
-        finally:
-            # Restore original environment variables
-            if orig_hf_home is not None:
-                os.environ['HF_HOME'] = orig_hf_home
-            else:
-                os.environ.pop('HF_HOME', None)
-                
-            if orig_hf_hub_cache is not None:
-                os.environ['HF_HUB_CACHE'] = orig_hf_hub_cache
-            else:
-                os.environ.pop('HF_HUB_CACHE', None)
-                
-            if orig_transformers_cache is not None:
-                os.environ['TRANSFORMERS_CACHE'] = orig_transformers_cache
-            else:
-                os.environ.pop('TRANSFORMERS_CACHE', None)
+        self.vec2text_corrector = vec2text.load_pretrained_corrector(vec2text_model_name)
         
         # Use OFFICIAL vec2text approach for GTR as per documentation
         from transformers import AutoTokenizer, AutoModel
