@@ -157,55 +157,79 @@ class ToxicityRewardSystem:
             self.use_llava = False
     
     def _init_detoxify_model(self):
-        """Initialize Detoxify model from either local or HuggingFace."""
+        """Initialize Detoxify model from local checkpoints directory."""
         try:
-            cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
-            os.makedirs(cache_dir, exist_ok=True)
+            # Use the specific checkpoints directory where detoxify models are stored
+            detoxify_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
+            torch_hub_dir = os.path.join(detoxify_cache_dir, "hub")
             
-            # 关键：Detoxify/torch.hub 用的是 TORCH_HOME
+            # Create directories if they don't exist
+            os.makedirs(detoxify_cache_dir, exist_ok=True)
+            os.makedirs(torch_hub_dir, exist_ok=True)
+            
+            # Save original environment variables
             orig_torch_home = os.environ.get('TORCH_HOME')
-            os.environ['TORCH_HOME'] = cache_dir
-            
-            # 同时保留你原来的 HF_HOME（以防 transformers 资源）
             orig_hf_home = os.environ.get('HF_HOME')
-            os.environ['HF_HOME'] = cache_dir
+            orig_hf_hub_cache = os.environ.get('HF_HUB_CACHE')
             
             try:
-                # Detoxify constructor expects model type string, not path
-                # Always use 'original' model type
+                # Set environment variables to use local cache
+                # TORCH_HOME for PyTorch Hub (used by Detoxify)
+                os.environ['TORCH_HOME'] = detoxify_cache_dir
+                
+                # HF_HOME and HF_HUB_CACHE for HuggingFace models (backup)
+                os.environ['HF_HOME'] = detoxify_cache_dir
+                os.environ['HF_HUB_CACHE'] = os.path.join(detoxify_cache_dir, "hub")
+                
+                print(f"[DETOXIFY INIT] Using cache directory: {detoxify_cache_dir}")
+                print(f"[DETOXIFY INIT] TORCH_HOME set to: {os.environ.get('TORCH_HOME')}")
+                
+                # Initialize Detoxify with 'original' model type
+                # This will check the local cache first before downloading
                 self.detoxify = Detoxify('original', device=self.device)
+                print(f"[DETOXIFY INIT] Successfully loaded Detoxify model")
+                
             finally:
+                # Restore original environment variables
                 if orig_torch_home is not None:
                     os.environ['TORCH_HOME'] = orig_torch_home
                 else:
                     os.environ.pop('TORCH_HOME', None)
+                    
                 if orig_hf_home is not None:
                     os.environ['HF_HOME'] = orig_hf_home
                 else:
                     os.environ.pop('HF_HOME', None)
                     
+                if orig_hf_hub_cache is not None:
+                    os.environ['HF_HUB_CACHE'] = orig_hf_hub_cache
+                else:
+                    os.environ.pop('HF_HUB_CACHE', None)
+                    
         except Exception as e:
-            # Fallback: set environment and try default
-            cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
-            os.makedirs(cache_dir, exist_ok=True)
+            print(f"[DETOXIFY ERROR] Failed to load from local cache: {e}")
+            print(f"[DETOXIFY FALLBACK] Trying fallback initialization...")
             
-            orig_torch_home = os.environ.get('TORCH_HOME')
-            os.environ['TORCH_HOME'] = cache_dir
-            
-            orig_hf_home = os.environ.get('HF_HOME')
-            os.environ['HF_HOME'] = cache_dir
-            
+            # Fallback: try with simplified cache setup
             try:
-                self.detoxify = Detoxify('original', device=self.device)
-            finally:
-                if orig_torch_home is not None:
-                    os.environ['TORCH_HOME'] = orig_torch_home
-                else:
-                    os.environ.pop('TORCH_HOME', None)
-                if orig_hf_home is not None:
-                    os.environ['HF_HOME'] = orig_hf_home
-                else:
-                    os.environ.pop('HF_HOME', None)
+                detoxify_cache_dir = "/mnt/data/group/zhaoliangjie/ICLR-work/detoxify-original"
+                os.makedirs(detoxify_cache_dir, exist_ok=True)
+                
+                orig_torch_home = os.environ.get('TORCH_HOME')
+                os.environ['TORCH_HOME'] = detoxify_cache_dir
+                
+                try:
+                    self.detoxify = Detoxify('original', device=self.device)
+                    print(f"[DETOXIFY FALLBACK] Successfully loaded Detoxify model")
+                finally:
+                    if orig_torch_home is not None:
+                        os.environ['TORCH_HOME'] = orig_torch_home
+                    else:
+                        os.environ.pop('TORCH_HOME', None)
+                        
+            except Exception as fallback_e:
+                print(f"[DETOXIFY CRITICAL] Both primary and fallback initialization failed: {fallback_e}")
+                raise fallback_e
     
     def _init_clip_model(self):
         """Initialize CLIP model from either local or HuggingFace."""
