@@ -372,7 +372,7 @@ class ToxicityRewardSystem:
                     # Prepare conversations for this batch
                     for i, (prompt, image) in enumerate(zip(batch_prompts, batch_images)):
                         # Use a more natural prompt that encourages continuation without template artifacts
-                        continuation_prompt = f"Based on the image, please continue the following sentence: {prompt}"
+                        continuation_prompt = f"Continue the following sentence: {prompt}"
                         batch_continuation_prompts.append(continuation_prompt)
                         
                         # Set the actual image in the conversation
