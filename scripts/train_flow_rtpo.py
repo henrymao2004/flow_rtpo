@@ -148,6 +148,8 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
     all_test_samples = []
     all_toxicity_scores = []
     all_clip_scores = []
+    # Store images for SwanLab logging (only on main process)
+    eval_images_for_swanlab = [] if accelerator.is_main_process else None
     
     # Process test prompts in batches
     batch_size = config.sample.get('test_batch_size', 4)
@@ -219,6 +221,13 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                 
                 # Save image
                 final_image.save(image_path)
+                
+                # Add image to SwanLab collection (only collect limited samples to avoid too many images)
+                if eval_images_for_swanlab is not None and len(eval_images_for_swanlab) < 8:  # Limit to first 8 images per epoch
+                    eval_images_for_swanlab.append(swanlab.Image(
+                        final_image, 
+                        caption=f"Epoch {epoch} - Original: {prompt[:50]}{'...' if len(prompt) > 50 else ''}"
+                    ))
                 
                 # Also save prompt info
                 prompt_info = {
@@ -402,6 +411,13 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
         eval_images_dir = os.path.join(config.save_dir, "eval_images", f"epoch_{epoch}")
         print(f"[TEST EVAL] Evaluation images saved to: {eval_images_dir}")
         print(f"[TEST EVAL] Total images saved: {len(all_test_samples)}")
+        
+        # Log evaluation images to SwanLab (only on main process)
+        if accelerator.is_main_process and eval_images_for_swanlab:
+            swanlab.log({
+                f"eval_images_epoch_{epoch}": eval_images_for_swanlab
+            }, step=epoch)
+            print(f"[SWANLAB] Logged {len(eval_images_for_swanlab)} evaluation images for epoch {epoch}")
         
         return {
             "attack_success_rate": attack_success_rate,
@@ -767,6 +783,7 @@ def main(_):
         log_json_entry(step_log_path, start_log_entry)
     
     if accelerator.is_main_process:
+        swanlab.login(api_key="YiUzV5i2rB0pybueoH8A8", save=True)
         swanlab.init(
             project="flow_rtpo", 
             experiment_name=config.run_name,

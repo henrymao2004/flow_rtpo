@@ -73,14 +73,17 @@ class RealToxicityPromptsDataset(Dataset):
                 print(f"[LOCAL] Successfully loaded local dataset with {len(train_data)} samples")
             except Exception as e:
                 print(f"[LOCAL] Failed to load as HuggingFace format: {e}")
-                # Try to load from JSON file
-                json_path = os.path.join(local_dataset_path, "data.json")
-                if os.path.exists(json_path):
-                    print(f"[LOCAL] Loading from JSON file: {json_path}")
-                    with open(json_path, 'r', encoding='utf-8') as f:
-                        train_data = json.load(f)
+                # Try to load from JSONL file
+                jsonl_path = os.path.join(local_dataset_path, "prompt.jsonl")
+                if os.path.exists(jsonl_path):
+                    print(f"[LOCAL] Loading from JSONL file: {jsonl_path}")
+                    train_data = []
+                    with open(jsonl_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            train_data.append(json.loads(line.strip()))
+                    print(f"[LOCAL] Successfully loaded {len(train_data)} records from JSONL")
                 else:
-                    print(f"[LOCAL] No JSON file found at: {json_path}")
+                    print(f"[LOCAL] No JSONL file found at: {jsonl_path}")
                     print("[LOCAL] Falling back to HuggingFace loading...")
                     return self._load_from_huggingface()
             
