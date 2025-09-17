@@ -256,86 +256,77 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
             
             batch_samples.append(sample)
         
-        # Compute rewards and toxicity scores for this batch
-        if accelerator.is_main_process:
-            batch_images = [sample["final_image"] for sample in batch_samples]
-            # Use modified prompts for evaluation to align with training scoring
-            batch_prompts = [sample["modified_prompt"] for sample in batch_samples]
-            
-            # Compute toxicity scores using the reward function
-            batch_rewards, batch_reward_metadata = eval_reward_fn(batch_images, batch_prompts, [{}] * len(batch_samples))
-            
-            # Extract toxicity scores
-            toxicity_scores = batch_reward_metadata["toxicity_scores"]
-            
-            # Compute CLIP scores
-            clip_scores = []
-            for image, prompt in zip(batch_images, batch_prompts):
-                try:
-                    # Convert PIL image to tensor format expected by ClipScorer
-                    if hasattr(image, 'convert'):
-                        image = image.convert('RGB')
-                    
-                    # Convert PIL to tensor
-                    import torchvision.transforms as T
-                    import numpy as np
-                    
-                    # Convert PIL to numpy array, then to tensor
-                    if hasattr(image, 'convert'):
-                        image_array = np.array(image)
-                        # Convert from HWC to CHW format
-                        image_tensor = torch.from_numpy(image_array.transpose(2, 0, 1)).float() / 255.0
-                        # Add batch dimension
-                        image_tensor = image_tensor.unsqueeze(0)
-                    else:
-                        image_tensor = image
-                    
-                    # Use __call__ method instead of score method
-                    # Use modified prompt for CLIP quality scoring
-                    clip_score = clip_scorer(image_tensor, [sample["modified_prompt"]])
-                    clip_scores.append(clip_score.item() if hasattr(clip_score, 'item') else float(clip_score))
-                except Exception as e:
-                    print(f"[TEST EVAL] CLIP scoring failed for prompt: {e}")
-                    clip_scores.append(0.0)
-            
-            # Assign scores to samples
-            for i, sample in enumerate(batch_samples):
-                sample["reward"] = batch_rewards[i]
-                sample["toxicity_scores"] = {
-                    "toxicity": toxicity_scores["primary"][i],
-                    "severe_toxicity": toxicity_scores["severe_toxicity"][i],
-                    "obscene": toxicity_scores["obscene"][i],
-                    "threat": toxicity_scores["threat"][i],
-                    "insult": toxicity_scores["insult"][i],
-                    "identity_attack": toxicity_scores["identity_attack"][i],
-                }
-                sample["clip_score"] = clip_scores[i]
-                sample["vlm_response"] = batch_reward_metadata["vlm_responses"][i]
-        else:
-            # Non-main processes: initialize dummy scores
-            for i, sample in enumerate(batch_samples):
-                sample["reward"] = 0.0
-                sample["toxicity_scores"] = {
-                    "toxicity": 0.0, "severe_toxicity": 0.0, "obscene": 0.0,
-                    "threat": 0.0, "insult": 0.0, "identity_attack": 0.0
-                }
-                sample["clip_score"] = 0.0
-                sample["vlm_response"] = ""
+        # Compute rewards and toxicity scores for this batch (each process handles its own data)
+        batch_images = [sample["final_image"] for sample in batch_samples]
+        # Use modified prompts for evaluation to align with training scoring
+        batch_prompts = [sample["modified_prompt"] for sample in batch_samples]
+        
+        # Compute toxicity scores using the reward function
+        logger.info(f"[TEST EVAL] Process {accelerator.process_index}: Computing rewards for {len(batch_samples)} samples")
+        batch_rewards, batch_reward_metadata = eval_reward_fn(batch_images, batch_prompts, [{}] * len(batch_samples))
+        
+        # Extract toxicity scores
+        toxicity_scores = batch_reward_metadata["toxicity_scores"]
+        
+        # Compute CLIP scores
+        clip_scores = []
+        for i, (image, prompt) in enumerate(zip(batch_images, batch_prompts)):
+            try:
+                # Convert PIL image to tensor format expected by ClipScorer
+                if hasattr(image, 'convert'):
+                    image = image.convert('RGB')
+                
+                # Convert PIL to tensor
+                import torchvision.transforms as T
+                import numpy as np
+                
+                # Convert PIL to numpy array, then to tensor
+                if hasattr(image, 'convert'):
+                    image_array = np.array(image)
+                    # Convert from HWC to CHW format
+                    image_tensor = torch.from_numpy(image_array.transpose(2, 0, 1)).float() / 255.0
+                    # Add batch dimension
+                    image_tensor = image_tensor.unsqueeze(0)
+                else:
+                    image_tensor = image
+                
+                # Use __call__ method instead of score method
+                # Use modified prompt for CLIP quality scoring
+                clip_score = clip_scorer(image_tensor, [batch_samples[i]["modified_prompt"]])
+                clip_scores.append(clip_score.item() if hasattr(clip_score, 'item') else float(clip_score))
+            except Exception as e:
+                print(f"[TEST EVAL] Process {accelerator.process_index}: CLIP scoring failed for prompt: {e}")
+                clip_scores.append(0.0)
+        
+        # Assign scores to samples
+        for i, sample in enumerate(batch_samples):
+            sample["reward"] = batch_rewards[i]
+            sample["toxicity_scores"] = {
+                "toxicity": toxicity_scores["primary"][i],
+                "severe_toxicity": toxicity_scores["severe_toxicity"][i],
+                "obscene": toxicity_scores["obscene"][i],
+                "threat": toxicity_scores["threat"][i],
+                "insult": toxicity_scores["insult"][i],
+                "identity_attack": toxicity_scores["identity_attack"][i],
+            }
+            sample["clip_score"] = clip_scores[i]
+            sample["vlm_response"] = batch_reward_metadata["vlm_responses"][i]
         
         # Synchronize scores across processes
         if accelerator.num_processes > 1:
             accelerator.wait_for_everyone()
-            # For multi-process, we'll gather all scores and then distribute them
-            # This is a simpler approach that avoids the broadcast issue
+            
+            # Gather all batch samples from all processes
+            # Now all processes have computed real scores, so we can gather everything
+            gathered_samples = accelerator.gather_for_metrics(batch_samples)
+            
             if accelerator.is_main_process:
-                # Main process has the scores, others will get them via gather
-                pass
+                # Main process: use all gathered samples which now contain real scores from all processes
+                batch_samples = gathered_samples
+                logger.info(f"[TEST EVAL] Gathered {len(batch_samples)} samples from {accelerator.num_processes} processes")
             else:
-                # Non-main processes: initialize dummy scores that will be overwritten
-                for sample in batch_samples:
-                    for tox_type in ["toxicity", "severe_toxicity", "obscene", "threat", "insult", "identity_attack"]:
-                        sample["toxicity_scores"][tox_type] = 0.0
-                    sample["clip_score"] = 0.0
+                # Non-main processes: clear batch_samples since only main process will handle final evaluation
+                batch_samples = []
         
         all_test_samples.extend(batch_samples)
     
