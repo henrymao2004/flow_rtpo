@@ -192,7 +192,7 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                     prompt=modified_prompt,
                     height=config.height,
                     width=config.width,
-                    num_inference_steps=config.sample.num_steps,
+                    num_inference_steps=config.sample.eval_num_steps,
                     guidance_scale=config.sample.guidance_scale,
                     num_images_per_prompt=1,
                     generator=torch.Generator(device=accelerator.device).manual_seed(_seed),
