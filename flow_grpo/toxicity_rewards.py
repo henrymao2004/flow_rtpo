@@ -688,14 +688,6 @@ class ToxicityRewardSystem:
         # Compute CVaR bonus; now top values should get positive bonuses
         cvar_bonus = np.maximum(0.0, toxicity_scores - var_threshold)
         
-        
-        # Log individual CVaR bonuses
-        for i, (toxicity, bonus) in enumerate(zip(toxicity_scores, cvar_bonus)):
-            
-        
-        # Summary statistics
-        
-        
         return cvar_bonus
     
     def __call__(self, 
