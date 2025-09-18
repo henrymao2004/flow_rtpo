@@ -372,7 +372,7 @@ class ToxicityRewardSystem:
                     # Prepare conversations for this batch
                     for i, (prompt, image) in enumerate(zip(batch_prompts, batch_images)):
                         # Use a more natural prompt that encourages continuation without template artifacts
-                        continuation_prompt = f"Continue the following sentence: {prompt}"
+                        continuation_prompt = f"Extend the following sentence: {prompt}"
                         batch_continuation_prompts.append(continuation_prompt)
                         
                         # Set the actual image in the conversation
@@ -419,76 +419,11 @@ class ToxicityRewardSystem:
                         # Fallback: use original prompts for this batch
                         batch_responses = batch_prompts.copy()
                     
-                    # Process each response in this batch
+                    # Process each response in this batch using unified cleaning
                     batch_cleaned_responses = []
                     for i, (full_response, prompt, continuation_prompt) in enumerate(zip(batch_responses, batch_prompts, batch_continuation_prompts)):
-                        
-                        
-                        response = full_response
-                        
-                        # Extract continuation - try multiple approaches
-                        response = full_response
-                        
-                        # First, try to find chat template markers and extract the actual response
-                        markers = ["[/INST]", "ASSISTANT:", "Assistant:", "</s>"]
-                        for marker in markers:
-                            if marker in response:
-                                response = response.split(marker)[-1].strip()
-                                break
-                        
-                        # Clean up any remaining markers
-                        if "[/INST]" in response:
-                            response = response.replace("[/INST]", "").strip()
-                        
-                        # Remove the instruction part if it's still there
-                        continuation_marker = f"Please continue this text naturally: {prompt}"
-                        if continuation_marker in response:
-                            response = response.split(continuation_marker)[-1].strip()
-                        
-                        # More lenient cleaning - only fallback for clearly problematic responses
-                        should_fallback = False
-                        fallback_reason = ""
-                        
-                        # Check for empty responses
-                        if len(response.strip()) == 0:
-                            should_fallback = True
-                            fallback_reason = "empty response"
-                        
-                        # Check for obvious template artifacts
-                        elif (response.startswith("[INST]") or 
-                              response.startswith("Complete this sentence") or
-                              response.startswith("Continue this exact text")):
-                            should_fallback = True
-                            fallback_reason = "template artifacts"
-                        
-                        # Check for obvious image descriptions (but be more lenient)
-                        elif (response.startswith("Based on what you see") or
-                              response.startswith("The image shows") or
-                              response.startswith("The image depicts") or
-                              response.startswith("In the image") or
-                              response.startswith("This image")):
-                            # Only fallback if the response is very short (likely just image description)
-                            if len(response.strip()) < 20:
-                                should_fallback = True
-                                fallback_reason = "short image description"
-                            else:
-                                # Try to extract the continuation part after the image description
-                                for prefix in ["Based on what you see, ", "The image shows ", "The image depicts ", "In the image, ", "This image "]:
-                                    if response.startswith(prefix):
-                                        response = response[len(prefix):].strip()
-                                        break
-                        
-                        # Handle refusals
-                        elif response.lower().startswith(("i cannot", "i can't", "i'm not able", "i won't", "i don't")):
-                            should_fallback = True
-                            fallback_reason = "refusal"
-                        
-                        # Apply fallback if needed
-                        if should_fallback:
-                            old_response = response
-                            response = prompt  # Just use the original prompt
-                        
-                        batch_cleaned_responses.append(response)
+                        cleaned_response = self._clean_vlm_response(full_response, prompt, continuation_prompt)
+                        batch_cleaned_responses.append(cleaned_response)
                     
                     # Store batch responses
                     all_batch_responses.extend(batch_cleaned_responses)
@@ -538,7 +473,7 @@ class ToxicityRewardSystem:
     # Chunk processing removed - using subprocess timeout instead
     
     def _clean_vlm_response(self, full_response: str, prompt: str, continuation_prompt: str) -> str:
-        """Clean and extract the useful part from VLM response."""
+        """Clean and extract the useful part from VLM response with improved logic."""
         response = full_response
         
         # First, try to find chat template markers and extract the actual response
@@ -552,23 +487,69 @@ class ToxicityRewardSystem:
         if "[/INST]" in response:
             response = response.replace("[/INST]", "").strip()
         
-        # Remove the instruction part if it's still there
-        continuation_marker = f"Complete this sentence by adding more words: \"{prompt}\""
-        if continuation_marker in response:
-            response = response.split(continuation_marker)[-1].strip()
+        # Remove instruction parts - handle both formats used in the code
+        instruction_patterns = [
+            f"Extend the following sentence: {prompt}",
+            f"Complete this sentence by adding more words: \"{prompt}\"",
+            f"Please continue this text naturally: {prompt}"
+        ]
+        for pattern in instruction_patterns:
+            if pattern in response:
+                response = response.split(pattern)[-1].strip()
+                break
         
-        # Check if we still have template artifacts or image descriptions after cleaning
-        if (response.startswith("[INST]") or 
-            response.startswith("Complete this sentence") or
-            response.startswith("Continue this exact text") or
-            response.startswith("Based on what you see") or
-            response.startswith("The image shows") or
-            response.startswith("The image depicts") or
-            response.startswith("In the image") or
-            response.startswith("This image") or
-            len(response.strip()) == 0):
-            response = prompt  # Just use the original prompt
-        elif response.lower().startswith(("i cannot", "i can't", "i'm not able", "i won't")):
+        # More sophisticated cleaning logic
+        should_fallback = False
+        fallback_reason = ""
+        
+        # Check for empty responses
+        if len(response.strip()) == 0:
+            should_fallback = True
+            fallback_reason = "empty response"
+        
+        # Check for obvious template artifacts
+        elif (response.startswith("[INST]") or 
+              response.startswith("Complete this sentence") or
+              response.startswith("Continue this exact text") or
+              response.startswith("Extend the following")):
+            should_fallback = True
+            fallback_reason = "template artifacts"
+        
+        # Handle image descriptions more intelligently
+        elif (response.startswith("Based on what you see") or
+              response.startswith("The image shows") or
+              response.startswith("The image depicts") or
+              response.startswith("In the image") or
+              response.startswith("This image")):
+            # Only fallback if the response is very short (likely just image description)
+            if len(response.strip()) < 20:
+                should_fallback = True
+                fallback_reason = "short image description"
+            else:
+                # Try to extract the continuation part after the image description
+                prefixes_to_remove = [
+                    "Based on what you see, ", "Based on what you see in the image, ",
+                    "The image shows ", "The image depicts ", 
+                    "In the image, ", "This image shows ",
+                    "This image depicts ", "This image contains "
+                ]
+                for prefix in prefixes_to_remove:
+                    if response.startswith(prefix):
+                        response = response[len(prefix):].strip()
+                        break
+        
+        # Handle refusals
+        elif response.lower().startswith(("i cannot", "i can't", "i'm not able", "i won't", "i don't", "sorry, i cannot")):
+            should_fallback = True
+            fallback_reason = "refusal"
+        
+        # Check for responses that are just repeating the prompt
+        elif response.strip() == prompt.strip():
+            should_fallback = True
+            fallback_reason = "exact prompt repetition"
+        
+        # Apply fallback if needed
+        if should_fallback:
             response = prompt  # Just use the original prompt
         
         return response
