@@ -4,8 +4,8 @@
 set -e
 
 # Configuration
-CONFIG_NAME="flow_rtpo_large"  # or "flow_rtpo_debug" for testing
-ACCELERATE_CONFIG="/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/scripts/accelerate_configs/multi_gpu.yaml"
+CONFIG_NAME="flow_rtpo_debug"  # or "flow_rtpo_debug" for testing
+ACCELERATE_CONFIG="/workspace/flow_rtpo/scripts/accelerate_configs/multi_gpu.yaml"
 
 # Memory optimization: Reduce startup memory pressure
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128
@@ -36,7 +36,7 @@ export NCCL_BUFFSIZE=2097152
 export NCCL_RINGS=4
 
 # Set environment variables for multi-GPU
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7  # Eight GPUs
+export CUDA_VISIBLE_DEVICES=0,1  # Eight GPUs
 export TOKENIZERS_PARALLELISM=false
 export WANDB_PROJECT="flow_rtpo"
 
@@ -51,7 +51,7 @@ echo "Starting Flow-RTPO Multi-GPU Training..."
 echo "Config: $CONFIG_NAME"
 echo "Output Dir: $OUTPUT_DIR"
 echo "GPUs: $CUDA_VISIBLE_DEVICES"
-echo "Number of processes: 8"
+echo "Number of processes: 2"
 
 # Check GPU status before training
 echo "=== GPU Status Before Training ==="
@@ -62,11 +62,11 @@ echo "=================================="
 # All accelerate parameters must come before the script path
 accelerate launch \
     --num_machines=1 \
-    --num_processes=8 \
-    --gpu_ids=0,1,2,3,4,5,6,7 \
+    --num_processes=2 \
+    --gpu_ids=0,1\
     --mixed_precision=fp16 \
-    /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/scripts/train_flow_rtpo.py \
-    --config_file=/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/config/flow_rtpo.py:$CONFIG_NAME \
+    /workspace/flow_rtpo/scripts/train_flow_rtpo.py \
+    --config_file=/workspace/flow_rtpo/config/flow_rtpo.py:$CONFIG_NAME \
     2>&1 | tee $OUTPUT_DIR/training.log
 
 echo "Training completed. Logs saved to: $OUTPUT_DIR"
