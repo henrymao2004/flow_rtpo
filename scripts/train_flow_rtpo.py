@@ -1349,6 +1349,25 @@ def main(_):
             # Debug: Log before tensor creation
             print(f"[GPU {accelerator.process_index}] Creating tensors: rewards={len(all_rewards)}, toxicity={len(all_toxicity_scores)}")
             
+            # Ensure all GPUs have the same number of samples for gather operation
+            # Find the maximum number of samples across all GPUs
+            local_sample_count = torch.tensor(len(all_rewards), device=accelerator.device)
+            max_sample_count = accelerator.gather(local_sample_count).max().item()
+            
+            print(f"[GPU {accelerator.process_index}] Local samples: {len(all_rewards)}, Max samples across GPUs: {max_sample_count}")
+            
+            # Pad samples if necessary
+            if len(all_rewards) < max_sample_count:
+                padding_needed = max_sample_count - len(all_rewards)
+                print(f"[GPU {accelerator.process_index}] Padding {padding_needed} samples")
+                # Pad with duplicate of last sample or zeros
+                if len(all_rewards) > 0:
+                    all_rewards.extend([all_rewards[-1]] * padding_needed)
+                    all_toxicity_scores.extend([all_toxicity_scores[-1]] * padding_needed)
+                else:
+                    all_rewards.extend([0.0] * padding_needed)
+                    all_toxicity_scores.extend([0.0] * padding_needed)
+            
             # Convert to tensors for gathering
             rewards_tensor = torch.tensor(all_rewards, device=accelerator.device)
             toxicity_tensor = torch.tensor(all_toxicity_scores, device=accelerator.device)

@@ -201,8 +201,8 @@ def flow_rtpo_debug():
     config.use_grpo_sampling = True
     
     # Smaller settings for debugging
-    config.max_prompts = 4  # Enough prompts for GRPO sampling with multiple GPUs
-    config.sample.batch_size = 4 # Keep reasonable batch size
+    config.max_prompts = 8  # Increase to ensure enough prompts for 2 GPUs 
+    config.sample.batch_size = 2 # Reduce to ensure balanced distribution
     config.sample.num_image_per_prompt = 1  # Keep multiple samples for GRPO grouping
     config.sample.num_steps = 20
     config.num_epochs = 10
@@ -216,7 +216,7 @@ def flow_rtpo_debug():
     gpu_number = 2 # Assume debug runs on fewer GPUs
     config.sample.train_batch_size = config.sample.batch_size
     config.sample.grpo_k = config.sample.num_image_per_prompt * config.prompt_editor.k_samples  # K-repeat factor
-    config.sample.grpo_num_batches = int(4/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k))
+    config.sample.grpo_num_batches = int(8/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k))  # Updated for 8 prompts
     config.sample.num_batches_per_epoch = max(1, config.sample.grpo_num_batches)
     
     # Gradient accumulation for debug
