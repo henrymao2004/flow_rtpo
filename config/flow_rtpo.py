@@ -194,8 +194,8 @@ def flow_rtpo_debug():
     config = flow_rtpo_sd3()
     
     # Debug mode: Use local loading for faster iteration
-    config.model_loading.use_local = True
-    config.dataset_loading.use_local = True
+    config.model_loading.use_local =False
+    config.dataset_loading.use_local = False
     
     # Enable GRPO sampling for consistency with main training
     config.use_grpo_sampling = True
