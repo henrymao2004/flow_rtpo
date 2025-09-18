@@ -1336,6 +1336,9 @@ def main(_):
         print(f"[GPU {accelerator.process_index}] Moving to reward aggregation phase...\n")
         logger.info(f"Generated {len(epoch_samples)} samples for epoch {epoch}")
         
+        # Memory cleanup before aggregation
+        torch.cuda.empty_cache()
+        
         #################### REWARD AGGREGATION ####################
         # Extract rewards that were already computed during batch processing
         all_rewards = [sample["reward"] for sample in epoch_samples]
@@ -1343,13 +1346,42 @@ def main(_):
         
         # Gather rewards from all GPUs for comprehensive statistics
         if accelerator.num_processes > 1:
+            # Debug: Log before tensor creation
+            print(f"[GPU {accelerator.process_index}] Creating tensors: rewards={len(all_rewards)}, toxicity={len(all_toxicity_scores)}")
+            
             # Convert to tensors for gathering
             rewards_tensor = torch.tensor(all_rewards, device=accelerator.device)
             toxicity_tensor = torch.tensor(all_toxicity_scores, device=accelerator.device)
             
-            # Gather from all processes
-            gathered_rewards = accelerator.gather(rewards_tensor)
-            gathered_toxicity = accelerator.gather(toxicity_tensor)
+            print(f"[GPU {accelerator.process_index}] Tensor shapes: rewards={rewards_tensor.shape}, toxicity={toxicity_tensor.shape}")
+            print(f"[GPU {accelerator.process_index}] Starting gather operation...")
+            
+            try:
+                # Add timeout and error handling for gather operation
+                import signal
+                
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Gather operation timed out")
+                
+                # Set timeout for gather operation (60 seconds)
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(60)
+                
+                # Gather from all processes
+                gathered_rewards = accelerator.gather(rewards_tensor)
+                gathered_toxicity = accelerator.gather(toxicity_tensor)
+                
+                # Cancel timeout
+                signal.alarm(0)
+                print(f"[GPU {accelerator.process_index}] Gather operation completed!")
+                
+            except Exception as e:
+                print(f"[GPU {accelerator.process_index}] ERROR in gather operation: {e}")
+                signal.alarm(0)  # Cancel timeout
+                # Fallback: use local data only
+                gathered_rewards = rewards_tensor
+                gathered_toxicity = toxicity_tensor
+                print(f"[GPU {accelerator.process_index}] Using local data as fallback")
             
             if accelerator.is_main_process:
                 # Convert back to lists for statistics computation
