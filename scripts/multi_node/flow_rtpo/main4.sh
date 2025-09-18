@@ -1,6 +1,6 @@
 #!/bin/bash
 # Node 4 (Rank 4) - Worker node
-export PYTHONPATH="/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo"
+export PYTHONPATH="/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo:$PYTHONPATH"
 export NCCL_IB_DISABLE=0
 export NCCL_IB_HCA=mlx5
 export NCCL_IB_GID_INDEX=3
