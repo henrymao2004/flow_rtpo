@@ -1,10 +1,10 @@
 #!/bin/bash
-# Node 1 (Rank 1) - Worker node
+# Node 5 (Rank 5) - Worker node
 export PYTHONPATH="/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo"
 export NCCL_IB_DISABLE=0
 export NCCL_IB_HCA=mlx5
 export NCCL_IB_GID_INDEX=3
-export RANK=1
+export RANK=5
 
 echo "Starting training on node with machine_rank=${RANK}"
 
@@ -13,4 +13,4 @@ echo "Starting training on node with machine_rank=${RANK}"
     --num_machines 6 --num_processes 48 \
     --machine_rank ${RANK} \
     ${PYTHONPATH}/scripts/train_flow_rtpo.py \
-    --config_file ${PYTHONPATH}/config/flow_rtpo.py:flow_rtpo_large 
+    --config_file ${PYTHONPATH}/config/flow_rtpo.py:flow_rtpo_large
