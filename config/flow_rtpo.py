@@ -252,17 +252,15 @@ def flow_rtpo_large():
     config.sample.batch_size = 4  # Changed to 2 as requested
     config.sample.num_image_per_prompt = 6 # Multiple samples per prompt for ranking
     
-    # Calculate proper num_batches_per_epoch for 32 GPUs
-    # Following GRPO pattern: int(132/(gpu_number*batch_size/num_image_per_prompt))
+    # GRPO sampling configuration for large scale
     gpu_number = 48
-    config.sample.num_batches_per_epoch = int(144/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
-    # This gives: 132/(32*2/4) = 132/16 = 8.25 -> int(8.25) = 8
-    config.sample.num_batches_per_epoch = max(2, config.sample.num_batches_per_epoch)
-    
-    # GRPO-style K-repeat sampling parameters (when use_grpo_sampling=True)
     config.sample.train_batch_size = config.sample.batch_size  # For GRPO compatibility
     config.sample.grpo_k = config.sample.num_image_per_prompt * config.prompt_editor.k_samples  # Total K-repeat
-    config.sample.grpo_num_batches = int(48/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k)) 
+    
+    # Calculate batches based on GRPO grouping requirements
+    # Use full prompt set but optimize batch distribution
+    config.sample.grpo_num_batches = int(config.max_prompts/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k))
+    config.sample.num_batches_per_epoch = max(1, config.sample.grpo_num_batches) 
     
     # Set gradient accumulation steps to half of num_batches_per_epoch
     # This ensures gradients are updated twice per epoch for stability
