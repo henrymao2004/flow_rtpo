@@ -70,29 +70,30 @@ class DistributedKRepeatSampler(Sampler):
         self.epoch = 0
 
     def __iter__(self):
-        # Generate a deterministic random sequence to ensure all replicas are synchronized
-        g = torch.Generator()
-        g.manual_seed(self.seed + self.epoch)
-        
-        # Randomly select m unique samples
-        indices = torch.randperm(len(self.dataset), generator=g)[:self.m].tolist()
-        
-        # Repeat each sample k times to generate n*b total samples
-        repeated_indices = [idx for idx in indices for _ in range(self.k)]
-        
-        # Shuffle to ensure uniform distribution
-        shuffled_indices = torch.randperm(len(repeated_indices), generator=g).tolist()
-        shuffled_samples = [repeated_indices[i] for i in shuffled_indices]
-        
-        # Split samples to each replica
-        per_card_samples = []
-        for i in range(self.num_replicas):
-            start = i * self.batch_size
-            end = start + self.batch_size
-            per_card_samples.append(shuffled_samples[start:end])
-        
-        # Return current replica's sample indices (single batch per epoch)
-        return iter([per_card_samples[self.rank]])
+        while True:
+            # Generate a deterministic random sequence to ensure all replicas are synchronized
+            g = torch.Generator()
+            g.manual_seed(self.seed + self.epoch)
+            
+            # Randomly select m unique samples
+            indices = torch.randperm(len(self.dataset), generator=g)[:self.m].tolist()
+            
+            # Repeat each sample k times to generate n*b total samples
+            repeated_indices = [idx for idx in indices for _ in range(self.k)]
+            
+            # Shuffle to ensure uniform distribution
+            shuffled_indices = torch.randperm(len(repeated_indices), generator=g).tolist()
+            shuffled_samples = [repeated_indices[i] for i in shuffled_indices]
+            
+            # Split samples to each replica
+            per_card_samples = []
+            for i in range(self.num_replicas):
+                start = i * self.batch_size
+                end = start + self.batch_size
+                per_card_samples.append(shuffled_samples[start:end])
+            
+            # Return current replica's sample indices
+            yield per_card_samples[self.rank]
     
     def set_epoch(self, epoch):
         self.epoch = epoch  # Used to synchronize random state across epochs
@@ -1208,21 +1209,22 @@ def main(_):
         epoch_metadata = []
         epoch_clip_scores = []  # Track CLIP similarity scores for quality_mean
         
-        # Training loop with proper batch limit
-        total_batches = config.sample.num_batches_per_epoch
-        batch_count = 0
+        # Training loop using range control (like train_sd3.py)
+        train_iter = iter(train_dataloader)
         
-        for batch_idx, (prompts, metadatas) in enumerate(train_dataloader):
-            # Limit number of batches per epoch
-            if batch_count >= total_batches:
-                break
-                
+        for batch_idx in tqdm(
+            range(config.sample.num_batches_per_epoch),
+            desc=f"Epoch {epoch}: sampling",
+            disable=not accelerator.is_local_main_process,
+            position=0,
+        ):
             # Set epoch for GRPO K-repeat sampler
             if config.use_grpo_sampling and hasattr(train_dataloader, 'batch_sampler'):
                 target_epoch = epoch * config.sample.grpo_num_batches + batch_idx
                 train_dataloader.batch_sampler.set_epoch(target_epoch)
             
-            batch_count += 1
+            # Get next batch from iterator
+            prompts, metadatas = next(train_iter)
             
             print(f"[GPU {accelerator.process_index}] Epoch {epoch}, Batch {batch_idx}: Processing {len(prompts)} prompts")
             print(f"[GPU {accelerator.process_index}] Prompts: {[p[:50] + '...' if len(p) > 50 else p for p in prompts]}")
