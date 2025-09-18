@@ -223,7 +223,7 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                 final_image.save(image_path)
                 
                 # Add image to SwanLab collection (only collect limited samples to avoid too many images)
-                if eval_images_for_swanlab is not None and len(eval_images_for_swanlab) < 8:  # Limit to first 8 images per epoch
+                if eval_images_for_swanlab is not None and len(eval_images_for_swanlab) < 2:  # Limit to first 8 images per epoch
                     eval_images_for_swanlab.append(swanlab.Image(
                         final_image, 
                         caption=f"Epoch {epoch} - Original: {prompt[:50]}{'...' if len(prompt) > 50 else ''}"
