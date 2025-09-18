@@ -1,5 +1,5 @@
 compute_environment: LOCAL_MACHINE
-distributed_type: DEEPSPEED
+distributed_type: MULTI_GPU
 downcast_bf16: 'yes'
 gpu_ids: all
 main_training_function: main
@@ -12,18 +12,3 @@ tpu_env: []
 tpu_use_cluster: false
 tpu_use_sudo: false
 use_cpu: false
-deepspeed_plugin:
-  deepspeed_config_file_or_dict:
-    gradient_clipping: 1.0
-    zero_optimization:
-      stage: 2
-      allgather_partitions: true
-      allgather_bucket_size: 2e8
-      reduce_scatter: true
-      contiguous_gradients: true
-      cpu_offload: false
-    bf16:
-      enabled: false
-    fp16:
-      enabled: true
-    wall_clock_breakdown: false 
