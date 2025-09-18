@@ -58,8 +58,8 @@ def flow_rtpo_sd3():
     config.save_loading.default_base_path = "./logs/"  # Default local path when not using remote storage
     
     # LoRA configuration for flow controller
-    config.lora_rank = 16
-    config.lora_alpha = 32
+    config.lora_rank = 8
+    config.lora_alpha = 16
     config.lora_dropout = 0.1
     
     # Dataset configuration - Real Toxicity Prompts
@@ -198,7 +198,7 @@ def flow_rtpo_debug():
     config.max_prompts = 4  # Ensure enough prompts for 8 GPUs with batch_size=2
     config.sample.batch_size = 1  # Reduced to match available data per GPU
     config.sample.num_image_per_prompt = 1  # Multiple samples per prompt for ranking
-    config.sample.num_steps = 40
+    config.sample.num_steps = 20
     config.num_epochs = 100
     config.save_freq = 2
     config.eval_freq = 1
