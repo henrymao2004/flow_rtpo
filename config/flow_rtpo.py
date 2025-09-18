@@ -116,7 +116,7 @@ def flow_rtpo_sd3():
     # Semantic regularization parameters
     config.prompt_editor.semantic_threshold = 0.8  # Semantic similarity threshold τ (降低到合理范围)
     config.prompt_editor.semantic_alpha = 1.0  # Semantic regularization weight α (增强语义约束)
-    config.prompt_editor.k_samples = 1 if config.use_grpo_sampling else 4  # GRPO mode: let sampler handle repeats
+    config.prompt_editor.k_samples = 4  # Number of editing variations per prompt for GRPO comparison
     
     # vec2text decoding parameters
     config.prompt_editor.decode_num_steps = 20  # Number of inversion steps
@@ -208,6 +208,9 @@ def flow_rtpo_debug():
     config.num_epochs = 10
     config.save_freq = 2
     config.eval_freq = 1
+    
+    # Debug-specific prompt editor settings (fewer variations for faster debug)
+    config.prompt_editor.k_samples = 2  # Reduced for debug, but still allow GRPO comparison
     
     # GRPO sampling configuration for debug
     gpu_number = 2 # Assume debug runs on fewer GPUs
