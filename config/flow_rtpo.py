@@ -97,6 +97,9 @@ def flow_rtpo_sd3():
     config.train.adv_clip_max = 5
     config.train.beta = 0.04  # KL regularization coefficient
     
+    # Default sampling strategy configuration (set early)
+    config.use_grpo_sampling = True # Default to Flow-RTPO sampling
+    
     # Enhanced hierarchical policy configuration
     config.prompt_editor = ml_collections.ConfigDict()
     config.prompt_editor.learning_rate = 5e-6
