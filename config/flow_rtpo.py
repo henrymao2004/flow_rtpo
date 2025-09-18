@@ -292,8 +292,8 @@ def flow_rtpo_memory_optimized():
     config.gradient_checkpointing = True
     
     # Reduce LoRA rank to save memory
-    config.lora_rank = 8  # Reduce from 16 to 8
-    config.lora_alpha = 16  # Reduce from 32 to 16
+    config.lora_rank = 32 # Reduce from 16 to 8
+    config.lora_alpha = 64  # Reduce from 32 to 16
     
     # Reduce prompt editor parameters
     config.prompt_editor.embedding_dim = 512  # Reduce from 768 to 512
