@@ -202,7 +202,7 @@ def flow_rtpo_debug():
     
     # Smaller settings for debugging
     config.max_prompts = 4  # Enough prompts for GRPO sampling with multiple GPUs
-    config.sample.batch_size = 2 # Keep reasonable batch size
+    config.sample.batch_size = 4 # Keep reasonable batch size
     config.sample.num_image_per_prompt = 1  # Keep multiple samples for GRPO grouping
     config.sample.num_steps = 20
     config.num_epochs = 10
