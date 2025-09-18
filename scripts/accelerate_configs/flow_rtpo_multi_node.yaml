@@ -3,13 +3,11 @@ distributed_type: DEEPSPEED
 downcast_bf16: 'yes'
 gpu_ids: all
 machine_rank: 0
-main_process_ip: '10.82.139.22'
-main_process_port: 19001
 main_training_function: main
 mixed_precision: fp16
 num_machines: 6
 num_processes: 48
-rdzv_backend: static
+rdzv_backend: c10d
 same_network: true
 tpu_env: []
 tpu_use_cluster: false
