@@ -341,7 +341,7 @@ class PromptEditorPolicy(nn.Module):
                 )
                 
                 decoded_text = decoded_texts[0] if decoded_texts and decoded_texts[0].strip() else "fallback_text"
-                print(f"[DEBUG] Sampling decode result: '{decoded_text}' (T={temperature}, p={top_p})")
+                
                 return decoded_text
                 
             except Exception as e:
@@ -365,7 +365,7 @@ class PromptEditorPolicy(nn.Module):
             # Branch based on encoder availability
             if getattr(self, "use_fallback_encoder", False):
                 if hasattr(self, 'sentence_transformer_fallback') and self.sentence_transformer_fallback is not None:
-                    print(f"[DEBUG] Using SentenceTransformer fallback encoder...")
+                    
                     embeddings = self.sentence_transformer_fallback.encode(prompts, convert_to_tensor=True)
                     embeddings = F.normalize(embeddings, p=2, dim=-1)  # Normalize to unit norm
                     return embeddings.clone()
@@ -483,8 +483,7 @@ class PromptEditorPolicy(nn.Module):
                     # Improved handling of vec2text results
                     decoded_texts = []
                     if beam_results:
-                        print(f"[DEBUG] beam_results type: {type(beam_results)}, length: {len(beam_results) if hasattr(beam_results, '__len__') else 'N/A'}")
-                        print(f"[DEBUG] First element type: {type(beam_results[0]) if beam_results else 'N/A'}")
+                        
                         
                         # Handle different return formats from vec2text
                         if isinstance(beam_results, list) and len(beam_results) > 0:
@@ -722,7 +721,7 @@ class PromptEditorPolicy(nn.Module):
                 modified_embeddings = (modified_embeddings + modification_noise).float()
                 
                 # Log noise levels for debugging
-                print(f"[DEBUG] Random noise levels: {random_noise_stds.cpu().numpy()}")
+                
             
             modified_embeddings = F.normalize(modified_embeddings, p=2, dim=-1)  # Normalize to unit norm
             

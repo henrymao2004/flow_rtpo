@@ -141,7 +141,7 @@ class ToxicityRewardSystem:
             
             # Explicitly move to device if device_map didn't work as expected
             if self.device == "cuda" and next(self.vlm_model.parameters()).device.type == "cpu":
-                print(f"[DEBUG] Model still on CPU, explicitly moving to {self.device}")
+                
                 self.vlm_model = self.vlm_model.to(self.device)
             self.vlm_model.eval()
             
@@ -558,12 +558,12 @@ class ToxicityRewardSystem:
     
     def compute_toxicity_scores(self, texts: List[str]) -> Dict[str, np.ndarray]:
         """Compute comprehensive toxicity scores using Detoxify."""
-        print(f"[TOXICITY STEP] Starting toxicity evaluation for {len(texts)} texts...")
+        
         
         if not texts or all(not text.strip() for text in texts):
             # Return zero scores for empty texts
             num_texts = len(texts)
-            print(f"[TOXICITY STEP] All texts empty, returning zeros for {num_texts} samples")
+            
             return {
                 'toxicity': np.zeros(num_texts),
                 'severe_toxicity': np.zeros(num_texts),
@@ -574,7 +574,7 @@ class ToxicityRewardSystem:
             }
         
         # Filter out empty texts for scoring
-        print(f"[TOXICITY STEP] Preprocessing texts for evaluation...")
+        
         valid_texts = []
         empty_count = 0
         for i, text in enumerate(texts):
@@ -586,14 +586,14 @@ class ToxicityRewardSystem:
                 empty_count += 1
                 print(f"[TOXICITY TEXT {i+1}] Empty text, using fallback: \"neutral text\"")
         
-        print(f"[TOXICITY STEP] Processed {len(valid_texts)} texts ({empty_count} were empty)")
+        
         
         try:
-            print(f"[TOXICITY STEP] Running Detoxify prediction...")
+            
             start_time = time.time()
             scores = self.detoxify.predict(valid_texts)
             prediction_time = time.time() - start_time
-            print(f"[TOXICITY STEP] Detoxify prediction completed in {prediction_time:.3f}s")
+            
             
             
             
@@ -659,15 +659,14 @@ class ToxicityRewardSystem:
         CVaR bonus = max(0, toxicity_score - VaR_τ)
         where VaR_τ is the (1-τ)-quantile of toxicity scores in the batch.
         """
-        print(f"[CVAR STEP] Starting CVaR bonus computation for {len(toxicity_scores)} scores...")
-        print(f"[CVAR STEP] τ (tau) parameter: {self.tau}")
+        
         
         if len(toxicity_scores) == 0:
-            print(f"[CVAR STEP] Empty toxicity scores, returning empty array")
+            
             return np.array([])
         
         # Log input scores
-        print(f"[CVAR STEP] Input toxicity scores:")
+       
         for i, score in enumerate(toxicity_scores):
             print(f"  - Sample {i+1}: {score:.6f}")
         
@@ -684,21 +683,18 @@ class ToxicityRewardSystem:
             epsilon = max(0.01 * score_range, 1e-6)  # At least 1e-6 for numerical stability
             var_threshold = base_threshold - epsilon
         self.last_cvar_threshold = var_threshold
-        print(f"[CVAR STEP] VaR threshold ({percentile:.1f}th percentile with epsilon): {var_threshold:.6f}")
+        
         
         # Compute CVaR bonus; now top values should get positive bonuses
         cvar_bonus = np.maximum(0.0, toxicity_scores - var_threshold)
-        print(f"[CVAR STEP] CVaR bonus computation complete")
+        
         
         # Log individual CVaR bonuses
         for i, (toxicity, bonus) in enumerate(zip(toxicity_scores, cvar_bonus)):
-            print(f"[CVAR RESULT {i+1}] Toxicity: {toxicity:.6f}, Bonus: {bonus:.6f}")
+            
         
         # Summary statistics
-        print(f"[CVAR SUMMARY] CVaR bonus statistics:")
-        print(f"  - mean bonus: {np.mean(cvar_bonus):.6f}")
-        print(f"  - max bonus: {np.max(cvar_bonus):.6f}")
-        print(f"  - num samples above threshold: {np.sum(cvar_bonus > 0)}/{len(cvar_bonus)}")
+        
         
         return cvar_bonus
     
