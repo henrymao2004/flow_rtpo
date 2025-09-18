@@ -43,6 +43,7 @@ from flow_grpo.clip_scorer import ClipScorer
 from flow_grpo.convergence_monitor import ConvergenceMonitor
 from sklearn.model_selection import train_test_split
 import random
+from torch.utils.data import Sampler
 
 tqdm = partial(tqdm.tqdm, dynamic_ncols=True)
 
@@ -50,6 +51,52 @@ FLAGS = flags.FLAGS
 config_flags.DEFINE_config_file("config_file", "config/flow_rtpo.py", "Training configuration.")
 
 logger = get_logger(__name__)
+
+
+class DistributedKRepeatSampler(Sampler):
+    """GRPO-style K-repeat sampler for distributed training."""
+    def __init__(self, dataset, batch_size, k, num_replicas, rank, seed=0):
+        self.dataset = dataset
+        self.batch_size = batch_size  # Batch size per replica
+        self.k = k                    # Number of repetitions per sample
+        self.num_replicas = num_replicas  # Total number of replicas
+        self.rank = rank              # Current replica rank
+        self.seed = seed              # Random seed for synchronization
+        
+        # Compute the number of unique samples needed per iteration
+        self.total_samples = self.num_replicas * self.batch_size
+        assert self.total_samples % self.k == 0, f"k can not divide n*b, k{k}-num_replicas{num_replicas}-batch_size{batch_size}"
+        self.m = self.total_samples // self.k  # Number of unique samples
+        self.epoch = 0
+
+    def __iter__(self):
+        while True:
+            # Generate a deterministic random sequence to ensure all replicas are synchronized
+            g = torch.Generator()
+            g.manual_seed(self.seed + self.epoch)
+            
+            # Randomly select m unique samples
+            indices = torch.randperm(len(self.dataset), generator=g)[:self.m].tolist()
+            
+            # Repeat each sample k times to generate n*b total samples
+            repeated_indices = [idx for idx in indices for _ in range(self.k)]
+            
+            # Shuffle to ensure uniform distribution
+            shuffled_indices = torch.randperm(len(repeated_indices), generator=g).tolist()
+            shuffled_samples = [repeated_indices[i] for i in shuffled_indices]
+            
+            # Split samples to each replica
+            per_card_samples = []
+            for i in range(self.num_replicas):
+                start = i * self.batch_size
+                end = start + self.batch_size
+                per_card_samples.append(shuffled_samples[start:end])
+            
+            # Return current replica's sample indices
+            yield per_card_samples[self.rank]
+    
+    def set_epoch(self, epoch):
+        self.epoch = epoch  # Used to synchronize random state across epochs
 
 
 def setup_json_logger(save_dir, run_name):
@@ -935,17 +982,33 @@ def main(_):
         logger.info(f"Test ratio: {len(test_prompts) / (len(train_prompts) + len(test_prompts)):.2f}")
         
         # Debug: Expected total samples calculation
-        expected_samples_per_gpu = (len(train_prompts) // accelerator.num_processes) * config.prompt_editor.k_samples * config.sample.num_image_per_prompt
-        expected_total_samples = expected_samples_per_gpu * accelerator.num_processes
-        logger.info(f"[🔧 SAMPLING DEBUG]")
-        logger.info(f"  Total train prompts: {len(train_prompts)}")
-        logger.info(f"  GPUs: {accelerator.num_processes}")
-        logger.info(f"  Prompts per GPU: {len(train_prompts) // accelerator.num_processes}")
-        logger.info(f"  k_samples: {config.prompt_editor.k_samples}")
-        logger.info(f"  images_per_prompt: {config.sample.num_image_per_prompt}")
-        logger.info(f"  Expected samples per GPU: {expected_samples_per_gpu}")
-        logger.info(f"  Expected total samples: {expected_total_samples}")
-        logger.info(f"[🔧 END SAMPLING DEBUG]")
+        if config.use_grpo_sampling:
+            # GRPO mode calculation
+            unique_prompts_per_batch = config.sample.grpo_num_batches * (accelerator.num_processes * config.sample.train_batch_size // config.sample.grpo_k)
+            expected_samples_per_gpu = config.sample.grpo_num_batches * config.sample.train_batch_size
+            expected_total_samples = expected_samples_per_gpu * accelerator.num_processes
+            logger.info(f"[🔧 GRPO SAMPLING DEBUG]")
+            logger.info(f"  Total train prompts: {len(train_prompts)}")
+            logger.info(f"  GPUs: {accelerator.num_processes}")
+            logger.info(f"  GRPO k_repeat: {config.sample.grpo_k}")
+            logger.info(f"  GRPO batches per epoch: {config.sample.grpo_num_batches}")
+            logger.info(f"  Unique prompts per batch: {config.sample.grpo_num_batches * (accelerator.num_processes * config.sample.train_batch_size // config.sample.grpo_k)}")
+            logger.info(f"  Expected samples per GPU: {expected_samples_per_gpu}")
+            logger.info(f"  Expected total samples: {expected_total_samples}")
+            logger.info(f"[🔧 END GRPO SAMPLING DEBUG]")
+        else:
+            # Original Flow-RTPO calculation
+            expected_samples_per_gpu = (len(train_prompts) // accelerator.num_processes) * config.prompt_editor.k_samples * config.sample.num_image_per_prompt
+            expected_total_samples = expected_samples_per_gpu * accelerator.num_processes
+            logger.info(f"[🔧 FLOW-RTPO SAMPLING DEBUG]")
+            logger.info(f"  Total train prompts: {len(train_prompts)}")
+            logger.info(f"  GPUs: {accelerator.num_processes}")
+            logger.info(f"  Prompts per GPU: {len(train_prompts) // accelerator.num_processes}")
+            logger.info(f"  k_samples: {config.prompt_editor.k_samples}")
+            logger.info(f"  images_per_prompt: {config.sample.num_image_per_prompt}")
+            logger.info(f"  Expected samples per GPU: {expected_samples_per_gpu}")
+            logger.info(f"  Expected total samples: {expected_total_samples}")
+            logger.info(f"[🔧 END FLOW-RTPO SAMPLING DEBUG]")
     
     # Create a simple dataset wrapper for training
     class SimplePromptDataset:
@@ -967,19 +1030,39 @@ def main(_):
     
     # Use DistributedSampler to ensure each GPU gets different data
     if accelerator.num_processes > 1:
-        train_sampler = DistributedSampler(
-            train_dataset,
-            num_replicas=accelerator.num_processes,
-            rank=accelerator.process_index,
-            shuffle=True
-        )
-        train_dataloader = DataLoader(
-            train_dataset,
-            batch_size=config.sample.batch_size,
-            sampler=train_sampler,
-            num_workers=0,
-            collate_fn=lambda x: (list(zip(*x))[0], list(zip(*x))[1])
-        )
+        if config.use_grpo_sampling:
+            # GRPO-style K-repeat sampling
+            logger.info(f"[GRPO SAMPLING] Using DistributedKRepeatSampler with k={config.sample.grpo_k}")
+            train_sampler = DistributedKRepeatSampler(
+                dataset=train_dataset,
+                batch_size=config.sample.train_batch_size,
+                k=config.sample.grpo_k,
+                num_replicas=accelerator.num_processes,
+                rank=accelerator.process_index,
+                seed=config.seed
+            )
+            train_dataloader = DataLoader(
+                train_dataset,
+                batch_sampler=train_sampler,
+                num_workers=0,
+                collate_fn=lambda x: (list(zip(*x))[0], list(zip(*x))[1])
+            )
+        else:
+            # Original Flow-RTPO sampling
+            logger.info(f"[FLOW-RTPO SAMPLING] Using standard DistributedSampler")
+            train_sampler = DistributedSampler(
+                train_dataset,
+                num_replicas=accelerator.num_processes,
+                rank=accelerator.process_index,
+                shuffle=True
+            )
+            train_dataloader = DataLoader(
+                train_dataset,
+                batch_size=config.sample.batch_size,
+                sampler=train_sampler,
+                num_workers=0,
+                collate_fn=lambda x: (list(zip(*x))[0], list(zip(*x))[1])
+            )
     else:
         # Single GPU setup
         train_dataloader = DataLoader(
@@ -1102,11 +1185,16 @@ def main(_):
         pipeline.transformer.eval()
         prompt_editor.eval()
         
-        # Set epoch for DistributedSampler
-        if accelerator.num_processes > 1 and hasattr(train_dataloader.sampler, 'set_epoch'):
-            train_dataloader.sampler.set_epoch(epoch)
-            if accelerator.is_main_process:
-                logger.info(f"DistributedSampler epoch set to {epoch}")
+        # Set epoch for DistributedSampler or DistributedKRepeatSampler
+        if accelerator.num_processes > 1:
+            if config.use_grpo_sampling and hasattr(train_dataloader, 'batch_sampler'):
+                # For GRPO sampling, we'll set epoch during batch iteration
+                if accelerator.is_main_process:
+                    logger.info(f"GRPO sampling mode - epoch will be set per batch")
+            elif hasattr(train_dataloader.sampler, 'set_epoch'):
+                train_dataloader.sampler.set_epoch(epoch)
+                if accelerator.is_main_process:
+                    logger.info(f"DistributedSampler epoch set to {epoch}")
         
         # # Log GPU assignment at start of epoch
         # print(f"\n{'='*80}")
@@ -1123,6 +1211,11 @@ def main(_):
         
         # Training loop
         for batch_idx, (prompts, metadatas) in enumerate(train_dataloader):
+            # Set epoch for GRPO K-repeat sampler
+            if config.use_grpo_sampling and hasattr(train_dataloader, 'batch_sampler'):
+                target_epoch = epoch * config.sample.grpo_num_batches + batch_idx
+                train_dataloader.batch_sampler.set_epoch(target_epoch)
+            
             print(f"[GPU {accelerator.process_index}] Epoch {epoch}, Batch {batch_idx}: Processing {len(prompts)} prompts")
             print(f"[GPU {accelerator.process_index}] Prompts: {[p[:50] + '...' if len(p) > 50 else p for p in prompts]}")
             
@@ -1261,6 +1354,11 @@ def main(_):
             all_rewards_global = all_rewards
             all_toxicity_global = all_toxicity_scores
         
+        # Convert rewards to tensors and extend to timestep dimension (like SD3)
+        all_rewards_tensor = torch.tensor(all_rewards, device=accelerator.device)
+        # Extend rewards to timestep dimension for advantage computation
+        all_rewards_expanded = all_rewards_tensor.unsqueeze(1).repeat(1, num_train_timesteps)  # [batch, timesteps]
+        
         # Create reward metadata from aggregated batch results (use global data for main process)
         if accelerator.is_main_process:
             reward_metadata = {
@@ -1309,18 +1407,24 @@ def main(_):
         
         #################### ADVANTAGE COMPUTATION ####################
         if config.per_prompt_stat_tracking:
-            advantages = stat_tracker.update(epoch_prompts, np.array(all_rewards))
+            # Use expanded rewards for advantage computation (like SD3)
+            advantages = stat_tracker.update(epoch_prompts, all_rewards_expanded.cpu().numpy())
         else:
-            advantages = (np.array(all_rewards) - np.mean(all_rewards)) / (np.std(all_rewards) + 1e-4)
+            # Compute advantages using expanded rewards (like SD3)
+            rewards_flat = all_rewards_expanded.flatten()
+            advantages = (rewards_flat - rewards_flat.mean()) / (rewards_flat.std() + 1e-4)
+            advantages = advantages.reshape(all_rewards_expanded.shape)  # [batch, timesteps]
+        
+        # Convert to tensor format
+        advantages_tensor = torch.tensor(advantages, device=accelerator.device, dtype=torch.float32)
         
         # Log advantage statistics (condensed)
         if accelerator.is_main_process:
-            logger.info(f"Advantage computation: mean={np.mean(advantages):.6f}, std={np.std(advantages):.6f}, max_abs={np.max(np.abs(advantages)):.6f}")
+            logger.info(f"Advantage computation: mean={advantages_tensor.mean():.6f}, std={advantages_tensor.std():.6f}, max_abs={advantages_tensor.abs().max():.6f}")
         
-        # Assign advantages to samples (broadcast to timesteps)
-        # 保持原有的 1D 格式，因为 Flow-RTPO 使用单样本循环
+        # Assign advantages to samples (now in 2D format like SD3)
         for i, sample in enumerate(epoch_samples):
-            sample["advantages"] = torch.tensor(advantages[i]).repeat(len(sample["timesteps"])).to(accelerator.device)  # [timesteps]
+            sample["advantages"] = advantages_tensor[i]  # [timesteps] - already in correct shape
         
         #################### TRAINING ####################
         pipeline.transformer.train()
@@ -1367,9 +1471,9 @@ def main(_):
                                                 sample["prompt_embeds"], sample["pooled_prompt_embeds"], config
                                             )
                             
-                            # GRPO loss computation - 恢复原有的单样本索引方式
+                            # GRPO loss computation - 使用与SD3一致的索引方式
                             advantages = torch.clamp(
-                                sample["advantages"][j:j+1],  # [timesteps] -> [1]
+                                sample["advantages"][j],  # [timesteps] -> scalar (like SD3)
                                 -config.train.adv_clip_max,
                                 config.train.adv_clip_max,
                             )

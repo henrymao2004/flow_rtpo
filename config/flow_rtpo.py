@@ -113,7 +113,7 @@ def flow_rtpo_sd3():
     # Semantic regularization parameters
     config.prompt_editor.semantic_threshold = 0.8  # Semantic similarity threshold τ (降低到合理范围)
     config.prompt_editor.semantic_alpha = 1.0  # Semantic regularization weight α (增强语义约束)
-    config.prompt_editor.k_samples = 4  # Samples per prompt for GRPO
+    config.prompt_editor.k_samples = 1 if config.use_grpo_sampling else 4  # GRPO mode: let sampler handle repeats
     
     # vec2text decoding parameters
     config.prompt_editor.decode_num_steps = 20  # Number of inversion steps
@@ -190,22 +190,32 @@ def flow_rtpo_debug():
     """Debug configuration with smaller settings for faster iteration."""
     config = flow_rtpo_sd3()
     
-    # Debug mode: Use HuggingFace loading for faster iteration
+    # Debug mode: Use local loading for faster iteration
     config.model_loading.use_local = True
     config.dataset_loading.use_local = True
     
+    # Enable GRPO sampling for consistency with main training
+    config.use_grpo_sampling = True
+    
     # Smaller settings for debugging
-    config.max_prompts = 4  # Ensure enough prompts for 8 GPUs with batch_size=2
-    config.sample.batch_size = 1  # Reduced to match available data per GPU
-    config.sample.num_image_per_prompt = 1  # Multiple samples per prompt for ranking
+    config.max_prompts = 4  # Enough prompts for GRPO sampling with multiple GPUs
+    config.sample.batch_size = 2 # Keep reasonable batch size
+    config.sample.num_image_per_prompt = 1  # Keep multiple samples for GRPO grouping
     config.sample.num_steps = 20
-    config.num_epochs = 100
+    config.num_epochs = 10
     config.save_freq = 2
     config.eval_freq = 1
+    
+    # GRPO sampling configuration for debug
+    gpu_number = 2 # Assume debug runs on fewer GPUs
     config.sample.train_batch_size = config.sample.batch_size
-    # ON-POLICY CONSISTENCY: Enforce purely on-policy setup
-    config.sample.num_batches_per_epoch = 1 # Process all batches (16 prompts / 4 batch_size = 4 batches)
-    config.train.gradient_accumulation_steps = 1  # No gradient accumulation for on-policy
+    config.sample.grpo_k = config.sample.num_image_per_prompt * config.prompt_editor.k_samples  # K-repeat factor
+    config.sample.grpo_num_batches = int(4/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k))
+    config.sample.num_batches_per_epoch = max(1, config.sample.grpo_num_batches)
+    
+    # Gradient accumulation for debug
+    config.train.gradient_accumulation_steps = max(1, config.sample.num_batches_per_epoch // 2)
+    config.train.batch_size = config.sample.batch_size
     
     config.run_name = "flow_rtpo_debug"
     
@@ -229,6 +239,9 @@ def flow_rtpo_large():
     # Full dataset
     config.max_prompts = 180
     
+    # Sampling strategy configuration
+    config.use_grpo_sampling = True  # Flag to switch between sampling modes - GRPO MODE ENABLED
+    
     # Keep batch size as requested but increase batches for GRPO grouping
     config.sample.batch_size = 4  # Changed to 2 as requested
     config.sample.num_image_per_prompt = 6 # Multiple samples per prompt for ranking
@@ -238,7 +251,12 @@ def flow_rtpo_large():
     gpu_number = 48
     config.sample.num_batches_per_epoch = int(144/(gpu_number*config.sample.batch_size/config.sample.num_image_per_prompt))
     # This gives: 132/(32*2/4) = 132/16 = 8.25 -> int(8.25) = 8
-    config.sample.num_batches_per_epoch = max(2, config.sample.num_batches_per_epoch) 
+    config.sample.num_batches_per_epoch = max(2, config.sample.num_batches_per_epoch)
+    
+    # GRPO-style K-repeat sampling parameters (when use_grpo_sampling=True)
+    config.sample.train_batch_size = config.sample.batch_size  # For GRPO compatibility
+    config.sample.grpo_k = config.sample.num_image_per_prompt * config.prompt_editor.k_samples  # Total K-repeat
+    config.sample.grpo_num_batches = int(48/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k)) 
     
     # Set gradient accumulation steps to half of num_batches_per_epoch
     # This ensures gradients are updated twice per epoch for stability
