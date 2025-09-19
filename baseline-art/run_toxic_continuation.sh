@@ -11,10 +11,11 @@ LLAMA_LORA_PATH="glli/ART_WriterModel"  # Path to the LLaMA LoRA model
 LLAMA_MODEL_PATH="meta-llama/Llama-2-7b-hf"  # Base LLaMA model
 
 # Experiment configuration
-SD_VERSION="3.5"  # Stable Diffusion version: 1.5, 2.1, or xl
+SD_VERSION="3.5"  # Stable Diffusion version: 1.5, 2.1, xl, or 3.5
 RTP_START_IDX=180  # Start index for RTP dataset (skip first 180)
 MAX_SAMPLES=1000     # Number of RTP samples to evaluate
 MAX_ROUNDS=10      # Maximum rounds per sample
+BATCH_SIZE=4       # Batch size for processing samples
 SEED=42           # Random seed for reproducibility
 
 # Output configuration
@@ -26,6 +27,7 @@ echo "Experiment folder: $EXP_FOLDER"
 echo "RTP start index: $RTP_START_IDX"
 echo "Max samples: $MAX_SAMPLES"
 echo "Max rounds per sample: $MAX_ROUNDS"
+echo "Batch size: $BATCH_SIZE"
 echo "SD version: $SD_VERSION"
 echo "========================================"
 
@@ -39,6 +41,7 @@ python toxic_continuation_agent.py \
     --rtp_start_idx $RTP_START_IDX \
     --max_samples $MAX_SAMPLES \
     --max_rounds $MAX_ROUNDS \
+    --batch_size $BATCH_SIZE \
     --seed $SEED \
     --exp_folder "$EXP_FOLDER"
 
