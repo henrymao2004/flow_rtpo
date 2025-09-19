@@ -56,7 +56,7 @@ python toxic_continuation_agent.py \
     --llava_model_path "liuhaotian/llava-v1.6-mistral-7b" \
     --llava_lora_path "glli/ART_GuideModel" \
     --rtp_start_idx 180 \
-    --max_samples 50 \
+    --max_samples 1000 \
     --max_rounds 10
 ```
 
