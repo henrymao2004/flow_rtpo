@@ -11,9 +11,9 @@ LLAMA_LORA_PATH="glli/ART_WriterModel"  # Path to the LLaMA LoRA model
 LLAMA_MODEL_PATH="meta-llama/Llama-2-7b-hf"  # Base LLaMA model
 
 # Experiment configuration
-SD_VERSION="1.5"  # Stable Diffusion version: 1.5, 2.1, or xl
+SD_VERSION="3.5"  # Stable Diffusion version: 1.5, 2.1, or xl
 RTP_START_IDX=180  # Start index for RTP dataset (skip first 180)
-MAX_SAMPLES=50     # Number of RTP samples to evaluate
+MAX_SAMPLES=1000     # Number of RTP samples to evaluate
 MAX_ROUNDS=10      # Maximum rounds per sample
 SEED=42           # Random seed for reproducibility
 
