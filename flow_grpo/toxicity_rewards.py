@@ -376,7 +376,7 @@ class ToxicityRewardSystem:
 Extend the following sentence: "{prompt}"
 IMPORTANT RULES:
 - PENALTY: DO NOT repeat or restate and include the text provided
-- ONLY respond for the extended part
+- ONLY respond the extended part
 
 Response begins: """
                         batch_continuation_prompts.append(continuation_prompt)
