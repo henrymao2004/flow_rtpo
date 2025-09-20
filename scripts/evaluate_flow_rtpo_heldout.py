@@ -85,14 +85,32 @@ def evaluate(config_path: str,
              device: str = "cuda",
              save_dir: str = "./flow_rtpo_heldout_results",
              max_prompts: Optional[int] = None,
-             save_images: bool = False) -> Dict[str, Any]:
+             save_images: bool = False,
+             low_memory: bool = False) -> Dict[str, Any]:
     os.makedirs(save_dir, exist_ok=True)
+
+    # Clear GPU cache at start
+    if device == "cuda":
+        torch.cuda.empty_cache()
+        print(f"Initial GPU memory: {torch.cuda.memory_allocated()/1024**3:.2f}GB / {torch.cuda.max_memory_allocated()/1024**3:.2f}GB")
 
     # Load config
     config = _load_config(config_path)
 
     # Load vanilla SD3.5 pipeline (no LoRA)
     pipeline = _load_pipeline_sd3_5(config, device)
+    
+    # Enable memory efficient attention and CPU offloading
+    try:
+        pipeline.enable_attention_slicing()
+        if low_memory:
+            pipeline.enable_sequential_cpu_offload()  # More aggressive offloading
+            print("Enabled aggressive memory optimization with sequential CPU offload")
+        else:
+            pipeline.enable_model_cpu_offload()
+            print("Enabled memory efficient attention and CPU offloading")
+    except Exception as e:
+        print(f"Could not enable memory optimizations: {e}")
 
     # Initialize reward function (Detoxify + LLaVA)
     reward_fn = toxicity_reward_function(
@@ -128,6 +146,10 @@ def evaluate(config_path: str,
         sample_id = f"heldout_{i:04d}"
         start_time = time.time()
         
+        # Clear GPU cache periodically
+        if device == "cuda" and i % 5 == 0:
+            torch.cuda.empty_cache()
+        
         # No prompt editing
         modified_prompt = prompt
         
@@ -161,10 +183,16 @@ def evaluate(config_path: str,
         if isinstance(image, torch.Tensor):
             import torchvision.transforms as T
             image = T.ToPILImage()(image.cpu())
+        
+        # Clear tensors from GPU memory immediately
+        del final_images
+        if device == "cuda":
+            torch.cuda.empty_cache()
 
         # VLM + Detoxify scores
         eval_start = time.time()
-        rewards, metadata = reward_fn([image], [modified_prompt], [{}])
+        with torch.no_grad():  # Ensure no gradients during evaluation
+            rewards, metadata = reward_fn([image], [modified_prompt], [{}])
         toxicity_scores = {
             "toxicity": metadata["toxicity_scores"]["primary"][0],
             "severe_toxicity": metadata["toxicity_scores"]["severe_toxicity"][0],
@@ -181,9 +209,16 @@ def evaluate(config_path: str,
         import numpy as _np
         img_array = _np.array(image)
         img_tensor = torch.from_numpy(img_array.transpose(2, 0, 1)).float() / 255.0
-        img_tensor = img_tensor.unsqueeze(0)
-        clip_score = clip_scorer(img_tensor, [modified_prompt])
+        img_tensor = img_tensor.unsqueeze(0).to(device)
+        
+        with torch.no_grad():  # Ensure no gradients for CLIP
+            clip_score = clip_scorer(img_tensor, [modified_prompt])
         clip_value = clip_score.item() if hasattr(clip_score, 'item') else float(clip_score)
+        
+        # Clean up tensors
+        del img_tensor
+        if device == "cuda":
+            torch.cuda.empty_cache()
         
         evaluation_time = time.time() - eval_start
 
@@ -204,9 +239,14 @@ def evaluate(config_path: str,
             image_path = os.path.join(save_dir, f"{sample_id}.png")
             image.save(image_path)
 
-        # progress print (minimal)
+        # progress print with memory info
         if (i + 1) % 10 == 0:
-            print(f"Evaluated {i+1}/{len(prompts)}")
+            if device == "cuda":
+                mem_used = torch.cuda.memory_allocated() / 1024**3
+                mem_cached = torch.cuda.memory_reserved() / 1024**3
+                print(f"Evaluated {i+1}/{len(prompts)} | GPU: {mem_used:.2f}GB used, {mem_cached:.2f}GB cached")
+            else:
+                print(f"Evaluated {i+1}/{len(prompts)}")
 
     # Aggregation
     if results:
@@ -287,9 +327,18 @@ def main():
     parser.add_argument("--config_path", type=str, required=True, help="Path to training configuration file")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--save_dir", type=str, default="./flow_rtpo_heldout_results")
-    parser.add_argument("--max_prompts", type=int, default=None)
+    parser.add_argument("--max_prompts", type=int, default=None, help="Limit number of prompts (useful for OOM issues)")
     parser.add_argument("--save_images", action="store_true")
+    parser.add_argument("--batch_size", type=int, default=1, help="Process images in smaller batches")
+    parser.add_argument("--low_memory", action="store_true", help="Enable aggressive memory optimization")
     args = parser.parse_args()
+    
+    # Print memory optimization recommendations for OOM issues
+    if args.low_memory:
+        print("🔧 Running with aggressive memory optimization enabled")
+    
+    if args.max_prompts:
+        print(f"📊 Limited to {args.max_prompts} prompts to avoid OOM")
     
     evaluate(
         config_path=args.config_path,
@@ -297,6 +346,7 @@ def main():
         save_dir=args.save_dir,
         max_prompts=args.max_prompts,
         save_images=args.save_images,
+        low_memory=args.low_memory,
     )
 
 
