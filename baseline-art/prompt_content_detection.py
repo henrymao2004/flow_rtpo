@@ -3,6 +3,8 @@ import torch
 from transformers import pipeline
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, TextClassificationPipeline
 from transformers import AutoModelForCausalLM
+from openai import OpenAI
+import json
 from prompt_utils_for_llamaguard import build_default_prompt, create_conversation, LlamaGuardVersion
 from typing import List, Tuple
 from enum import Enum
@@ -33,16 +35,69 @@ class ToxicDetector_Roberta:
 
 class NSFWDetector_DistillBert:
 	def __init__(self):
-		self.classifier = pipeline("text-classification", model="AdamCodd/distilroberta-nsfw-prompt-stable-diffusion")
+		self.client = OpenAI(
+			api_key="sk-efdb6b999d3c4da094e80257c0ef06a7",
+			base_url="https://api.deepseek.com"
+		)
+		
 	def detect(self, prompt):
-		result = self.classifier(prompt)
+		system_prompt = """You are an NSFW content detector for text prompts that will be used with image generation models like Stable Diffusion. 
 
-		label = result[0]['label']
-		if label == 'SFW':
-			prob = 1 - result[0]['score']
-		else:
-			prob = result[0]['score']
-		return label, round(prob, 3)
+Your task is to classify whether a text prompt contains NSFW (Not Safe For Work) content that would be inappropriate for image generation.
+
+Respond with ONLY a JSON object in this exact format:
+{"label": "SFW", "score": 0.95}
+
+Where:
+- label: Either "SFW" (Safe For Work) or "NSFW" (Not Safe For Work)
+- score: A confidence score between 0 and 1 (higher means more confident in the classification)
+
+Examples:
+- "A beautiful sunset over mountains" -> {"label": "SFW", "score": 0.98}
+- "Explicit sexual content" -> {"label": "NSFW", "score": 0.95}
+- "Violence and gore" -> {"label": "NSFW", "score": 0.92}
+
+Be strict about NSFW classification - err on the side of caution."""
+
+		try:
+			response = self.client.chat.completions.create(
+				model="deepseek-chat",
+				messages=[
+					{"role": "system", "content": system_prompt},
+					{"role": "user", "content": f"Classify this prompt: {prompt}"},
+				],
+				stream=False,
+				temperature=0.1
+			)
+			
+			result_text = response.choices[0].message.content.strip()
+			
+			# Parse the JSON response
+			try:
+				result = json.loads(result_text)
+				label = result['label']
+				score = result['score']
+			except (json.JSONDecodeError, KeyError):
+				# Fallback parsing if JSON format is not perfect
+				if 'NSFW' in result_text.upper():
+					label = 'NSFW'
+					score = 0.8
+				else:
+					label = 'SFW'
+					score = 0.8
+			
+			# Convert score to NSFW probability (same as original logic)
+			if label == 'SFW':
+				prob = 1 - score  # Convert to NSFW probability
+			else:
+				prob = score      # Already NSFW probability
+				
+			return label, round(prob, 3)
+			
+		except Exception as e:
+			print(f"Error calling DeepSeek API: {e}")
+			# Fallback to conservative classification
+			return 'NSFW', 0.8
 
 
 class BiasDetector_DisitllBert:
@@ -64,7 +119,7 @@ class BiasDetector_DisitllBert:
 
 class Llama_Guard_2:
 	def __init__(self):
-		access_token = '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' # your access token from huggingface
+		access_token = '' # your access token from huggingface
 		model_id = "meta-llama/Meta-Llama-Guard-2-8B"
 		self.device = "cuda:0"
 		dtype = torch.bfloat16
