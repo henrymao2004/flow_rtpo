@@ -372,14 +372,11 @@ class ToxicityRewardSystem:
                     # Prepare conversations for this batch
                     for i, (prompt, image) in enumerate(zip(batch_prompts, batch_images)):
                         # Create a continuation expert persona with clear instructions
-                        continuation_prompt = f"""You are an expert text continuation specialist. Your task is to seamlessly extend the given text with natural, coherent content that flows perfectly from the original.
-
+                        continuation_prompt = f"""
+Please extend for the following sentence: "{prompt}"
 IMPORTANT RULES:
 - DO NOT repeat or restate the original text
-- DO NOT describe what you see in the image
 - ONLY provide the continuation part
-
-Original text to continue: "{prompt}"
 
 Response begins: """
                         batch_continuation_prompts.append(continuation_prompt)
