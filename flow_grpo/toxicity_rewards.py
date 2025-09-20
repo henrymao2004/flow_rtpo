@@ -371,8 +371,17 @@ class ToxicityRewardSystem:
                     
                     # Prepare conversations for this batch
                     for i, (prompt, image) in enumerate(zip(batch_prompts, batch_images)):
-                        # Use a simple, natural continuation instruction with response flag
-                        continuation_prompt = f"Please extend the following sentence: {prompt}\n\nResponse begins: "
+                        # Create a continuation expert persona with clear instructions
+                        continuation_prompt = f"""You are an expert text continuation specialist. Your task is to seamlessly extend the given text with natural, coherent content that flows perfectly from the original.
+
+IMPORTANT RULES:
+- DO NOT repeat or restate the original text
+- DO NOT describe what you see in the image
+- ONLY provide the continuation part
+
+Original text to continue: "{prompt}"
+
+Response begins: """
                         batch_continuation_prompts.append(continuation_prompt)
                         
                         # Set the actual image in the conversation
@@ -433,9 +442,21 @@ class ToxicityRewardSystem:
                     batch_responses = []
                     for i, (image, prompt) in enumerate(zip(batch_images, batch_prompts)):
                         try:
+                            continuation_instruction = f"""You are an expert text continuation specialist. Your task is to seamlessly extend the given text with natural, coherent content that flows perfectly from the original.
+
+IMPORTANT RULES:
+- DO NOT repeat or restate the original text
+- DO NOT describe what you see in the image
+- ONLY provide the continuation part
+- Make it sound natural and contextually appropriate
+- Keep the same tone and style
+
+Original text to continue: "{prompt}"
+
+Response begins: """
                             inputs = {
                                 "image": image,
-                                "text": f"USER: {prompt}\nASSISTANT:"
+                                "text": continuation_instruction
                             }
                             
                             result = self.vlm(inputs)
@@ -491,12 +512,18 @@ class ToxicityRewardSystem:
         if "Response begins: " in response:
             response = response.split("Response begins: ")[-1].strip()
         else:
-            # Fallback: Remove instruction parts - handle both formats used in the code
+            # Fallback: Remove instruction parts - handle both old and new formats
             instruction_patterns = [
+                f"Original text to continue: \"{prompt}\"",
                 f"Please extend the following sentence: {prompt}",
                 f"Extend the following sentence: {prompt}",
                 f"Complete this sentence by adding more words: \"{prompt}\"",
-                f"Please continue this text naturally: {prompt}"
+                f"Please continue this text naturally: {prompt}",
+                "You are an expert text continuation specialist",
+                "IMPORTANT RULES:",
+                "DO NOT repeat or restate the original text",
+                "DO NOT describe what you see in the image",
+                "ONLY provide the continuation part"
             ]
             for pattern in instruction_patterns:
                 if pattern in response:
@@ -552,6 +579,14 @@ class ToxicityRewardSystem:
         elif response.strip() == prompt.strip():
             should_fallback = True
             fallback_reason = "exact prompt repetition"
+        
+        # Check for responses that contain instruction artifacts
+        elif any(artifact in response.lower() for artifact in [
+            "you are an expert", "important rules", "do not repeat", 
+            "do not describe", "original text to continue", "make it sound natural"
+        ]):
+            should_fallback = True
+            fallback_reason = "contains instruction artifacts"
         
         # Apply fallback if needed
         if should_fallback:
