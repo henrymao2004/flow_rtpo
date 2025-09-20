@@ -652,6 +652,71 @@ class ToxicityRewardSystem:
     
     # Aesthetic scoring removed per user request
     
+    def extract_continuations(self, vlm_responses: List[str], original_prompts: List[str]) -> List[str]:
+        """Extract only the continuation part beyond the original prompt.
+        
+        Args:
+            vlm_responses: Full VLM responses
+            original_prompts: Original prompts used for generation
+            
+        Returns:
+            List of continuation texts (new content only)
+        """
+        continuations = []
+        
+        for response, prompt in zip(vlm_responses, original_prompts):
+            # Clean and normalize texts for comparison
+            response_clean = response.strip()
+            prompt_clean = prompt.strip()
+            
+            # Try to find where the prompt ends in the response
+            if response_clean.lower().startswith(prompt_clean.lower()):
+                # Response starts with prompt, extract continuation
+                continuation = response_clean[len(prompt_clean):].strip()
+            else:
+                # Try fuzzy matching - look for prompt content within response
+                import re
+                # Remove punctuation and extra spaces for matching
+                prompt_words = re.findall(r'\w+', prompt_clean.lower())
+                response_words = re.findall(r'\w+', response_clean.lower())
+                
+                # Find the end position of prompt content in response
+                if len(prompt_words) > 0:
+                    # Look for the last word of prompt in response
+                    last_prompt_word = prompt_words[-1]
+                    try:
+                        # Find position after the last prompt word
+                        response_text_lower = response_clean.lower()
+                        last_word_pos = response_text_lower.rfind(last_prompt_word)
+                        if last_word_pos != -1:
+                            # Find end of this word
+                            word_end = last_word_pos + len(last_prompt_word)
+                            # Extract everything after
+                            continuation = response_clean[word_end:].strip()
+                            # Remove leading punctuation/spaces
+                            continuation = re.sub(r'^[^\w]*', '', continuation)
+                        else:
+                            # Fallback: use entire response
+                            continuation = response_clean
+                    except:
+                        continuation = response_clean
+                else:
+                    continuation = response_clean
+            
+            # Ensure continuation is not empty
+            if not continuation.strip():
+                continuation = "neutral continuation"  # Fallback for empty continuations
+            
+            continuations.append(continuation)
+            
+            # Log for debugging
+            print(f"[CONTINUATION] Original: \"{prompt_clean[:50]}{'...' if len(prompt_clean) > 50 else ''}\"")
+            print(f"[CONTINUATION] Full VLM: \"{response_clean[:100]}{'...' if len(response_clean) > 100 else ''}\"")
+            print(f"[CONTINUATION] Extracted: \"{continuation[:80]}{'...' if len(continuation) > 80 else ''}\"")
+            print("-" * 40)
+        
+        return continuations
+
     def compute_cvar_bonus(self, toxicity_scores: np.ndarray) -> np.ndarray:
         """
         Compute CVaR bonus for tail toxicity optimization.
@@ -713,8 +778,11 @@ class ToxicityRewardSystem:
             torch.cuda.reset_peak_memory_stats()
             
         
-        # Step 2: Compute toxicity scores
-        toxicity_results = self.compute_toxicity_scores(vlm_responses)
+        # Step 2: Extract continuation parts only (new content beyond original prompt)
+        continuation_texts = self.extract_continuations(vlm_responses, prompts)
+        
+        # Step 3: Compute toxicity scores on continuations only
+        toxicity_results = self.compute_toxicity_scores(continuation_texts)
         
         # Ensure all toxicity scores are numpy arrays
         for key in toxicity_results:
@@ -754,6 +822,7 @@ class ToxicityRewardSystem:
         # Comprehensive metadata for logging and analysis
         reward_metadata = {
             'vlm_responses': vlm_responses,
+            'continuation_texts': continuation_texts,  # Add extracted continuations
             'toxicity_scores': {
                 'primary': primary_toxicity.tolist(),
                 'severe_toxicity': toxicity_results['severe_toxicity'].tolist(),
