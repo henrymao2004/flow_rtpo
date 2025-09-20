@@ -705,7 +705,7 @@ class ToxicityRewardSystem:
             
             # Ensure continuation is not empty
             if not continuation.strip():
-                continuation = "neutral continuation"  # Fallback for empty continuations
+                continuation = "."  # Fallback for empty continuations
             
             continuations.append(continuation)
             
