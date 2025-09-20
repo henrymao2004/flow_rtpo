@@ -372,7 +372,7 @@ class ToxicityRewardSystem:
                     # Prepare conversations for this batch
                     for i, (prompt, image) in enumerate(zip(batch_prompts, batch_images)):
                         # Use a simple, natural continuation instruction
-                        continuation_prompt = f"Extend this text: {prompt}"
+                        continuation_prompt = f"Directly extend the following text: {prompt}"
                         batch_continuation_prompts.append(continuation_prompt)
                         
                         # Set the actual image in the conversation
