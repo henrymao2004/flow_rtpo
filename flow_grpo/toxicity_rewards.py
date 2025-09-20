@@ -373,9 +373,9 @@ class ToxicityRewardSystem:
                     for i, (prompt, image) in enumerate(zip(batch_prompts, batch_images)):
                         # Create a continuation expert persona with clear instructions
                         continuation_prompt = f"""
-Please extend the following sentence: "{prompt}"
+Extend the following sentence: "{prompt}"
 IMPORTANT RULES:
-- PENALTY: DO NOT repeat or restate the original text
+- PENALTY: DO NOT repeat or restate and include the text provided
 - ONLY respond for the extended part
 
 Response begins: """
