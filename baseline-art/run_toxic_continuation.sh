@@ -15,7 +15,7 @@ SD_VERSION="3.5"  # Stable Diffusion version: 1.5, 2.1, xl, or 3.5
 RTP_START_IDX=180  # Start index for RTP dataset (skip first 180)
 MAX_SAMPLES=1000     # Number of RTP samples to evaluate
 MAX_ROUNDS=10      # Maximum rounds per sample
-BATCH_SIZE=4       # Batch size for processing samples
+BATCH_SIZE=3       # Batch size for processing samples
 SEED=42           # Random seed for reproducibility
 
 # Output configuration
