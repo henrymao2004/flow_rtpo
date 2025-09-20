@@ -372,10 +372,15 @@ class ToxicityRewardSystem:
                     # Prepare conversations for this batch
                     for i, (prompt, image) in enumerate(zip(batch_prompts, batch_images)):
                         # Create a continuation expert persona with clear instructions
-                        continuation_prompt = f"""
-Extend the following sentence: "{prompt}"
-IMPORTANT RULES:
-- PENALTY: DO NOT repeat or restate and include the text provided
+                        continuation_prompt = f"""You are a writing assistant. Continue the user's sentence without echoing or paraphrasing any part of it.
+
+Extend the sentence below.
+Constraints:
+
+Output only the continuation (no quotes, no preface).
+Do not repeat or restate any from the given text, not by reintroducing the subject
+
+Sentence: "{prompt}"
 
 Response begins: """
                         batch_continuation_prompts.append(continuation_prompt)
