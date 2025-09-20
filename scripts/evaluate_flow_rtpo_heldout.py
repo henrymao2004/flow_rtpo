@@ -48,7 +48,7 @@ def _load_config(config_path: str):
     return config_module.flow_rtpo_sd3()
 
 
-def _load_pipeline_sd3_5(config, device: str, use_fp16: bool = False):
+def _load_pipeline_sd3_5(config, device: str, use_fp16: bool = False, multi_gpu: bool = False):
     # Choose precision
     torch_dtype = torch.float16 if use_fp16 else torch.float32
     
@@ -66,7 +66,18 @@ def _load_pipeline_sd3_5(config, device: str, use_fp16: bool = False):
             config.model_loading.hf_models.sd3,
             torch_dtype=torch_dtype
         )
-    pipeline.to(device)
+    
+    if multi_gpu and torch.cuda.device_count() >= 2:
+        # Distribute components across 2 GPUs
+        pipeline.text_encoder.to("cuda:0")
+        pipeline.text_encoder_2.to("cuda:0") 
+        pipeline.text_encoder_3.to("cuda:1")
+        pipeline.transformer.to("cuda:1")
+        pipeline.vae.to("cuda:0")
+        print(f"✅ Multi-GPU setup: Text encoders on GPU:0, Transformer on GPU:1")
+    else:
+        pipeline.to(device)
+    
     pipeline.safety_checker = None
     pipeline.set_progress_bar_config(disable=True)
     
@@ -101,19 +112,20 @@ def evaluate(config_path: str,
              use_fp16: bool = False,
              batch_size: int = 1,
              resume_from: int = 0,
-             verbose_toxicity: bool = True) -> Dict[str, Any]:
+             verbose_toxicity: bool = True,
+             multi_gpu: bool = False) -> Dict[str, Any]:
     os.makedirs(save_dir, exist_ok=True)
 
     # Clear GPU cache at start
     if device == "cuda":
         torch.cuda.empty_cache()
         print(f"Initial GPU memory: {torch.cuda.memory_allocated()/1024**3:.2f}GB / {torch.cuda.max_memory_allocated()/1024**3:.2f}GB")
-
-    # Load config
+        
+        # Load config
     config = _load_config(config_path)
 
     # Load vanilla SD3.5 pipeline (no LoRA)
-    pipeline = _load_pipeline_sd3_5(config, device, use_fp16=use_fp16)
+    pipeline = _load_pipeline_sd3_5(config, device, use_fp16=use_fp16, multi_gpu=multi_gpu)
     
     # Enable memory efficient attention and CPU offloading
     try:
@@ -197,6 +209,8 @@ def evaluate(config_path: str,
         _seed = _deterministic_seed_from_prompt(modified_prompt, base_seed)
         gen_start = time.time()
         with torch.no_grad():
+            # Use cuda:0 as the main device for generation in multi-GPU setup
+            gen_device = "cuda:0" if multi_gpu else device
             final_images, _, _ = pipeline_with_logprob(
                 pipeline,
                 prompt=modified_prompt,
@@ -205,7 +219,7 @@ def evaluate(config_path: str,
                 num_inference_steps=40,  # Fixed 40 steps for evaluation
                 guidance_scale=config.sample.guidance_scale,
                 num_images_per_prompt=1,
-                generator=torch.Generator(device=device).manual_seed(_seed),
+                generator=torch.Generator(device=gen_device).manual_seed(_seed),
             )
         generation_time = time.time() - gen_start
 
@@ -414,6 +428,7 @@ def main():
     parser.add_argument("--fp16", action="store_true", help="Use FP16 precision to save memory (~50% VRAM reduction)")
     parser.add_argument("--resume_from", type=int, default=0, help="Resume processing from specific sample index")
     parser.add_argument("--quiet", action="store_true", help="Compact output (no detailed toxicity analysis per sample)")
+    parser.add_argument("--multi_gpu", action="store_true", help="Use 2 GPUs to split model loading (requires 2+ GPUs)")
     args = parser.parse_args()
     
     # Print memory optimization recommendations for OOM issues
@@ -426,6 +441,9 @@ def main():
     if args.max_prompts:
         print(f"📊 Limited to {args.max_prompts} prompts to avoid OOM")
     
+    if args.multi_gpu:
+        print(f"🔀 Multi-GPU mode enabled: Using {torch.cuda.device_count()} GPUs")
+    
     evaluate(
         config_path=args.config_path,
         device=args.device,
@@ -437,6 +455,7 @@ def main():
         batch_size=args.batch_size,
         resume_from=args.resume_from,
         verbose_toxicity=not args.quiet,
+        multi_gpu=args.multi_gpu,
     )
 
 
