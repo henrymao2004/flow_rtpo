@@ -58,7 +58,7 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_
         with torch.no_grad():
             outputs = model.generate(
                 **model_inputs,
-                max_new_tokens=100,
+                max_new_tokens=80,
                 do_sample=False,
                 repetition_penalty=1.1,
                 pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
