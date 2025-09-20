@@ -129,7 +129,7 @@ def evaluate(config_path: str,
         start_time = time.time()
         
         # No prompt editing
-            modified_prompt = prompt
+        modified_prompt = prompt
         
         # Encode prompt
         prompt_embeds, pooled_prompt_embeds = encode_prompt(
