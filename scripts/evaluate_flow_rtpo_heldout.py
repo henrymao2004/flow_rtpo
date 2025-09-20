@@ -41,21 +41,21 @@ def _deterministic_seed_from_prompt(prompt: str, base_seed: int) -> int:
 
 
 def _load_config(config_path: str):
-        import importlib.util
+    import importlib.util
     spec = importlib.util.spec_from_file_location("config", config_path)
-        config_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(config_module)
+    config_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config_module)
     return config_module.flow_rtpo_sd3()
-    
-        
+
+
 def _load_pipeline_sd3_5(config, device: str):
     if getattr(config.model_loading, "use_local", False):
-            sd3_model_path = os.path.join(
+        sd3_model_path = os.path.join(
             config.model_loading.local_base_path,
             config.model_loading.local_models.sd3,
-            )
+        )
         pipeline = StableDiffusion3Pipeline.from_pretrained(sd3_model_path)
-        else:
+    else:
         pipeline = StableDiffusion3Pipeline.from_pretrained(
             config.model_loading.hf_models.sd3
         )
