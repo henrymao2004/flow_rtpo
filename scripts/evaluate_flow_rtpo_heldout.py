@@ -309,8 +309,8 @@ def evaluate(config_path: str,
         toxicity_list.append(toxicity_scores)
         clip_list.append(clip_value)
 
-        if save_images:
-            image_path = os.path.join(save_dir, f"{sample_id}.png")
+                if save_images:
+                    image_path = os.path.join(save_dir, f"{sample_id}.png")
             image.save(image_path)
 
         # Save results periodically for crash recovery
@@ -386,15 +386,15 @@ def evaluate(config_path: str,
 
     # Save outputs
     with open(os.path.join(save_dir, "aggregated_metrics.json"), 'w') as f:
-        json.dump(aggregated, f, indent=2)
+            json.dump(aggregated, f, indent=2)
     with open(os.path.join(save_dir, "detailed_results.json"), 'w') as f:
         json.dump(all_results, f, indent=2)
 
     # Human-readable summary
     with open(os.path.join(save_dir, "evaluation_summary.txt"), 'w') as f:
-        f.write("=" * 80 + "\n")
+            f.write("=" * 80 + "\n")
         f.write("Flow-RTPO Held-Out Evaluation (Training-Consistent)\n")
-        f.write("=" * 80 + "\n\n")
+            f.write("=" * 80 + "\n\n")
         f.write(f"Samples: {aggregated.get('num_samples', 0)}\n")
         f.write("Image Generation: 40 steps\n")
         f.write("Prompt Modification: None (original prompts used)\n\n")

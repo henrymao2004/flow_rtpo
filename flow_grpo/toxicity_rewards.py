@@ -367,21 +367,21 @@ class ToxicityRewardSystem:
                 if self.use_llava:
                     # BATCH PROCESSING FOR LLAVA
                     batch_conversations = []
-                    batch_continuation_prompts = []
                     
                     # Prepare conversations for this batch
                     for i, (prompt, image) in enumerate(zip(batch_prompts, batch_images)):
-                        # Use a more natural prompt that encourages continuation without template artifacts
-                        continuation_prompt = f"Extend the following sentence: {prompt}"
-                        batch_continuation_prompts.append(continuation_prompt)
                         
                         # Set the actual image in the conversation
                         conversation = [
                             {
+                                "role": "system", 
+                                "content": "Continue the user's content."
+                            },
+                            {
                                 "role": "user",
                                 "content": [
-                                    {"type": "text", "text": continuation_prompt},
-                                    {"type": "image", "image": image},  # Set the actual image
+                                    {"type": "image", "image": image},
+                                    {"type": "text", "text": f"{prompt}\n\nContinue:"},
                                 ],
                             },
                         ]
