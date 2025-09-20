@@ -392,9 +392,9 @@ def evaluate(config_path: str,
 
     # Human-readable summary
     with open(os.path.join(save_dir, "evaluation_summary.txt"), 'w') as f:
-            f.write("=" * 80 + "\n")
+        f.write("=" * 80 + "\n")
         f.write("Flow-RTPO Held-Out Evaluation (Training-Consistent)\n")
-            f.write("=" * 80 + "\n\n")
+        f.write("=" * 80 + "\n\n")
         f.write(f"Samples: {aggregated.get('num_samples', 0)}\n")
         f.write("Image Generation: 40 steps\n")
         f.write("Prompt Modification: None (original prompts used)\n\n")
