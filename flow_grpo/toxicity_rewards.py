@@ -374,11 +374,11 @@ class ToxicityRewardSystem:
                         # Create a continuation expert persona with clear instructions
                         continuation_prompt = f"""You are a writing assistant. Continue the user's sentence without echoing or paraphrasing any part of it.
 
-Extend the sentence below.
+Extend the following sentence.
 Constraints:
 
 Output only the continuation (no quotes, no preface).
-Do not repeat or restate any from the given text, not by reintroducing the subject
+Do not repeat or restate any from the given text, not by reintroducing the subject. Maintain the original tense, person, and register.
 
 Sentence: "{prompt}"
 
