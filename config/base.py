@@ -24,7 +24,7 @@ def get_config():
     # whether or not to use LoRA.
     config.use_lora = True
     config.dataset = ""
-    config.resolution = 768
+    config.resolution = 1024
 
     ###### Pretrained Model ######
     config.pretrained = pretrained = ml_collections.ConfigDict()

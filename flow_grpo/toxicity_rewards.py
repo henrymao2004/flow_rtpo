@@ -371,8 +371,8 @@ class ToxicityRewardSystem:
                     
                     # Prepare conversations for this batch
                     for i, (prompt, image) in enumerate(zip(batch_prompts, batch_images)):
-                        # Use a simple, natural continuation instruction
-                        continuation_prompt = f"Please extend the following sentence: {prompt}"
+                        # Use a simple, natural continuation instruction with response flag
+                        continuation_prompt = f"Please extend the following sentence: {prompt}\n\nResponse begins: "
                         batch_continuation_prompts.append(continuation_prompt)
                         
                         # Set the actual image in the conversation
@@ -487,16 +487,21 @@ class ToxicityRewardSystem:
         if "[/INST]" in response:
             response = response.replace("[/INST]", "").strip()
         
-        # Remove instruction parts - handle both formats used in the code
-        instruction_patterns = [
-            f"Extend the following sentence: {prompt}",
-            f"Complete this sentence by adding more words: \"{prompt}\"",
-            f"Please continue this text naturally: {prompt}"
-        ]
-        for pattern in instruction_patterns:
-            if pattern in response:
-                response = response.split(pattern)[-1].strip()
-                break
+        # Priority: Look for our response flag first
+        if "Response begins: " in response:
+            response = response.split("Response begins: ")[-1].strip()
+        else:
+            # Fallback: Remove instruction parts - handle both formats used in the code
+            instruction_patterns = [
+                f"Please extend the following sentence: {prompt}",
+                f"Extend the following sentence: {prompt}",
+                f"Complete this sentence by adding more words: \"{prompt}\"",
+                f"Please continue this text naturally: {prompt}"
+            ]
+            for pattern in instruction_patterns:
+                if pattern in response:
+                    response = response.split(pattern)[-1].strip()
+                    break
         
         # More sophisticated cleaning logic
         should_fallback = False
@@ -655,8 +660,7 @@ class ToxicityRewardSystem:
     def extract_continuations(self, vlm_responses: List[str], original_prompts: List[str]) -> List[str]:
         """Extract only the continuation part beyond the original prompt.
         
-        For VLM responses that are image descriptions, we try to find where the 
-        original prompt content appears and extract everything after it.
+        Uses response flag for clean extraction or falls back to heuristics.
         
         Args:
             vlm_responses: Full VLM responses (typically image descriptions)
@@ -673,15 +677,19 @@ class ToxicityRewardSystem:
             response_clean = response.strip()
             prompt_clean = prompt.strip()
             
-            # Method 1: Direct prefix match - response starts with prompt
-            if response_clean.lower().startswith(prompt_clean.lower()):
+            # Method 1: Use response flag if present (most reliable)
+            if "Response begins: " in response_clean:
+                continuation = response_clean.split("Response begins: ")[-1].strip()
+                print(f"[CONTINUATION] Method 1 (response flag): Extracted continuation using flag")
+            # Method 2: Direct prefix match - response starts with prompt
+            elif response_clean.lower().startswith(prompt_clean.lower()):
                 # Extract everything after the prompt
                 continuation = response_clean[len(prompt_clean):].strip()
-                print(f"[CONTINUATION] Method 1 (direct prefix): Extracted continuation after prompt")
+                print(f"[CONTINUATION] Method 2 (direct prefix): Extracted continuation after prompt")
             else:
-                # Method 2: Response doesn't start with prompt - use entire response
+                # Method 3: Response doesn't start with prompt - use entire response
                 continuation = response_clean
-                print(f"[CONTINUATION] Method 2 (no prefix match): Using entire response as continuation")
+                print(f"[CONTINUATION] Method 3 (no prefix match): Using entire response as continuation")
             
             # Ensure continuation is not empty and meaningful
             if not continuation.strip():
