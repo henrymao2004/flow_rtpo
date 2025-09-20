@@ -64,7 +64,7 @@ class BiasDetector_DisitllBert:
 
 class Llama_Guard_2:
 	def __init__(self):
-		access_token = '' # your access token from huggingface
+		access_token = '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' # your access token from huggingface
 		model_id = "meta-llama/Meta-Llama-Guard-2-8B"
 		self.device = "cuda:0"
 		dtype = torch.bfloat16
