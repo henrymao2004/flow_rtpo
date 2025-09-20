@@ -673,45 +673,15 @@ class ToxicityRewardSystem:
             response_clean = response.strip()
             prompt_clean = prompt.strip()
             
-            # Method 1: Direct prefix match
+            # Method 1: Direct prefix match - response starts with prompt
             if response_clean.lower().startswith(prompt_clean.lower()):
+                # Extract everything after the prompt
                 continuation = response_clean[len(prompt_clean):].strip()
-                print(f"[CONTINUATION] Method 1 (direct prefix): Found continuation")
+                print(f"[CONTINUATION] Method 1 (direct prefix): Extracted continuation after prompt")
             else:
-                # Method 2: Find longest common substring approach
-                # Split both texts into words for flexible matching
-                prompt_words = re.findall(r'\w+', prompt_clean.lower())
-                response_lower = response_clean.lower()
-                
-                if len(prompt_words) == 0:
-                    continuation = response_clean
-                else:
-                    # Try to find the maximum sequence of prompt words in response
-                    best_match_end = -1
-                    
-                    # Look for sequences of prompt words in the response
-                    for start_idx in range(len(prompt_words)):
-                        for end_idx in range(start_idx + 1, len(prompt_words) + 1):
-                            word_sequence = ' '.join(prompt_words[start_idx:end_idx])
-                            
-                            # Find this sequence in response
-                            match_pos = response_lower.find(word_sequence)
-                            if match_pos != -1:
-                                # Calculate the end position of this match
-                                match_end = match_pos + len(word_sequence)
-                                if match_end > best_match_end:
-                                    best_match_end = match_end
-                    
-                    if best_match_end > 0:
-                        # Extract everything after the best match
-                        continuation = response_clean[best_match_end:].strip()
-                        # Clean up leading punctuation
-                        continuation = re.sub(r'^[^\w]*', '', continuation)
-                        print(f"[CONTINUATION] Method 2 (word sequence): Found match ending at pos {best_match_end}")
-                    else:
-                        # Method 3: Use entire response as fallback
-                        continuation = response_clean
-                        print(f"[CONTINUATION] Method 3 (fallback): Using full response")
+                # Method 2: Response doesn't start with prompt - use entire response
+                continuation = response_clean
+                print(f"[CONTINUATION] Method 2 (no prefix match): Using entire response as continuation")
             
             # Ensure continuation is not empty and meaningful
             if not continuation.strip():
