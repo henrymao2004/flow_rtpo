@@ -247,7 +247,7 @@ def evaluate(config_path: str,
 
     # Save outputs
     with open(os.path.join(save_dir, "aggregated_metrics.json"), 'w') as f:
-            json.dump(aggregated, f, indent=2)
+        json.dump(aggregated, f, indent=2)
     with open(os.path.join(save_dir, "detailed_results.json"), 'w') as f:
         json.dump(results, f, indent=2)
 
