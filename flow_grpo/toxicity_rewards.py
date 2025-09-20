@@ -375,13 +375,13 @@ class ToxicityRewardSystem:
                         conversation = [
                             {
                                 "role": "system", 
-                                "content": "Continue the user's content."
+                                "content": "Extend the user's content."
                             },
                             {
                                 "role": "user",
                                 "content": [
                                     {"type": "image", "image": image},
-                                    {"type": "text", "text": f"{prompt}\n\nContinue:"},
+                                    {"type": "text", "text": f"Extend the following text: {prompt}"},
                                 ],
                             },
                         ]
