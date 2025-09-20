@@ -655,13 +655,17 @@ class ToxicityRewardSystem:
     def extract_continuations(self, vlm_responses: List[str], original_prompts: List[str]) -> List[str]:
         """Extract only the continuation part beyond the original prompt.
         
+        For VLM responses that are image descriptions, we try to find where the 
+        original prompt content appears and extract everything after it.
+        
         Args:
-            vlm_responses: Full VLM responses
+            vlm_responses: Full VLM responses (typically image descriptions)
             original_prompts: Original prompts used for generation
             
         Returns:
             List of continuation texts (new content only)
         """
+        import re
         continuations = []
         
         for response, prompt in zip(vlm_responses, original_prompts):
@@ -669,51 +673,61 @@ class ToxicityRewardSystem:
             response_clean = response.strip()
             prompt_clean = prompt.strip()
             
-            # Try to find where the prompt ends in the response
+            # Method 1: Direct prefix match
             if response_clean.lower().startswith(prompt_clean.lower()):
-                # Response starts with prompt, extract continuation
                 continuation = response_clean[len(prompt_clean):].strip()
+                print(f"[CONTINUATION] Method 1 (direct prefix): Found continuation")
             else:
-                # Try fuzzy matching - look for prompt content within response
-                import re
-                # Remove punctuation and extra spaces for matching
+                # Method 2: Find longest common substring approach
+                # Split both texts into words for flexible matching
                 prompt_words = re.findall(r'\w+', prompt_clean.lower())
-                response_words = re.findall(r'\w+', response_clean.lower())
+                response_lower = response_clean.lower()
                 
-                # Find the end position of prompt content in response
-                if len(prompt_words) > 0:
-                    # Look for the last word of prompt in response
-                    last_prompt_word = prompt_words[-1]
-                    try:
-                        # Find position after the last prompt word
-                        response_text_lower = response_clean.lower()
-                        last_word_pos = response_text_lower.rfind(last_prompt_word)
-                        if last_word_pos != -1:
-                            # Find end of this word
-                            word_end = last_word_pos + len(last_prompt_word)
-                            # Extract everything after
-                            continuation = response_clean[word_end:].strip()
-                            # Remove leading punctuation/spaces
-                            continuation = re.sub(r'^[^\w]*', '', continuation)
-                        else:
-                            # Fallback: use entire response
-                            continuation = response_clean
-                    except:
-                        continuation = response_clean
-                else:
+                if len(prompt_words) == 0:
                     continuation = response_clean
+                else:
+                    # Try to find the maximum sequence of prompt words in response
+                    best_match_end = -1
+                    
+                    # Look for sequences of prompt words in the response
+                    for start_idx in range(len(prompt_words)):
+                        for end_idx in range(start_idx + 1, len(prompt_words) + 1):
+                            word_sequence = ' '.join(prompt_words[start_idx:end_idx])
+                            
+                            # Find this sequence in response
+                            match_pos = response_lower.find(word_sequence)
+                            if match_pos != -1:
+                                # Calculate the end position of this match
+                                match_end = match_pos + len(word_sequence)
+                                if match_end > best_match_end:
+                                    best_match_end = match_end
+                    
+                    if best_match_end > 0:
+                        # Extract everything after the best match
+                        continuation = response_clean[best_match_end:].strip()
+                        # Clean up leading punctuation
+                        continuation = re.sub(r'^[^\w]*', '', continuation)
+                        print(f"[CONTINUATION] Method 2 (word sequence): Found match ending at pos {best_match_end}")
+                    else:
+                        # Method 3: Use entire response as fallback
+                        continuation = response_clean
+                        print(f"[CONTINUATION] Method 3 (fallback): Using full response")
             
-            # Ensure continuation is not empty
+            # Ensure continuation is not empty and meaningful
             if not continuation.strip():
-                continuation = "."  # Fallback for empty continuations
+                continuation = "neutral content"  # Neutral fallback
+            elif len(continuation.strip()) < 3:
+                continuation = "neutral content"  # Too short, likely punctuation only
             
             continuations.append(continuation)
             
-            # Log for debugging
-            print(f"[CONTINUATION] Original: \"{prompt_clean[:50]}{'...' if len(prompt_clean) > 50 else ''}\"")
-            print(f"[CONTINUATION] Full VLM: \"{response_clean[:100]}{'...' if len(response_clean) > 100 else ''}\"")
-            print(f"[CONTINUATION] Extracted: \"{continuation[:80]}{'...' if len(continuation) > 80 else ''}\"")
-            print("-" * 40)
+            # Enhanced debugging output
+            print(f"[CONTINUATION DEBUG]")
+            print(f"  Original Prompt: \"{prompt_clean[:60]}{'...' if len(prompt_clean) > 60 else ''}\"")
+            print(f"  VLM Full Response: \"{response_clean[:80]}{'...' if len(response_clean) > 80 else ''}\"")
+            print(f"  Extracted Continuation: \"{continuation[:70]}{'...' if len(continuation) > 70 else ''}\"")
+            print(f"  Continuation Length: {len(continuation)} chars")
+            print("-" * 50)
         
         return continuations
 
