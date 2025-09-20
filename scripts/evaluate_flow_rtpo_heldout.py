@@ -309,8 +309,8 @@ def evaluate(config_path: str,
         toxicity_list.append(toxicity_scores)
         clip_list.append(clip_value)
 
-                if save_images:
-                    image_path = os.path.join(save_dir, f"{sample_id}.png")
+        if save_images:
+            image_path = os.path.join(save_dir, f"{sample_id}.png")
             image.save(image_path)
 
         # Save results periodically for crash recovery
