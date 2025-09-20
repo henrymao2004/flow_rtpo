@@ -2,6 +2,10 @@
 import torch
 import torch.nn as nn
 import numpy as np
+import sys
+import os
+# Add local vec2text to path
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'vec2text'))
 import vec2text
 from typing import List, Tuple, Dict, Optional
 from transformers import AutoTokenizer, AutoModel
@@ -9,7 +13,6 @@ import torch.nn.functional as F
 import math
 from collections import defaultdict
 import random
-import os
 
 
 class PositionalEncoding(nn.Module):
@@ -133,14 +136,14 @@ class PromptEditorPolicy(nn.Module):
         self.local_models = local_models or {}
         self.hf_models = hf_models or {}
         
-        # Initialize SBERT model for semantic similarity
+        # Initialize SBERT model for semantic similarity - hardcoded local path
         self.sbert_model = None
         try:
             # Try to import and use SentenceTransformer
             from sentence_transformers import SentenceTransformer as ST
-            sbert_model_name = self._get_model_path('sbert', 'all-MiniLM-L6-v2')
-            self.sbert_model = ST(sbert_model_name).to(device)
-            print(f"[INFO] SBERT model loaded for semantic regularization: {sbert_model_name}")
+            sbert_model_path = "/mnt/data/group/zhaoliangjie/ICLR-work/all-MiniLM-L6-v2"
+            self.sbert_model = ST(sbert_model_path).to(device)
+            print(f"[INFO] SBERT model loaded for semantic regularization: {sbert_model_path}")
         except ImportError:
             print("[WARNING] sentence-transformers not available, semantic regularization disabled")
             self.sbert_model = None
@@ -148,30 +151,35 @@ class PromptEditorPolicy(nn.Module):
             print(f"[WARNING] Failed to load SBERT model: {e}")
             self.sbert_model = None
         
-        # Initialize vec2text corrector
-        # vec2text.load_pretrained_corrector() expects model name, not path
-        vec2text_model_name = self.hf_models.get('vec2text', 'gtr-base') if self.hf_models else 'gtr-base'
-        self.vec2text_corrector = vec2text.load_pretrained_corrector(vec2text_model_name)
+        # Initialize vec2text corrector from hardcoded local paths
+        self.vec2text_corrector = vec2text.load_corrector(
+            inversion_model=vec2text.models.InversionModel.from_pretrained(
+                "/mnt/data/group/zhaoliangjie/ICLR-work/gtr__nq__32"
+            ),
+            corrector_model=vec2text.models.CorrectorEncoderModel.from_pretrained(
+                "/mnt/data/group/zhaoliangjie/ICLR-work/gtr__nq__32__correct"
+            )
+        )
         
-        # Use OFFICIAL vec2text approach for GTR as per documentation
+        # Use OFFICIAL vec2text approach for GTR as per documentation - hardcoded local paths
         from transformers import AutoTokenizer, AutoModel
-        gtr_model_name = self._get_model_path('gtr', 'sentence-transformers/gtr-t5-base')
-        self.gtr_tokenizer = AutoTokenizer.from_pretrained(gtr_model_name)
+        gtr_model_path = "/mnt/data/group/zhaoliangjie/ICLR-work/gtr-t5-base"
+        self.gtr_tokenizer = AutoTokenizer.from_pretrained(gtr_model_path)
         
         # Try loading with different precision/settings to avoid NaN
         try:
             self.gtr_encoder = AutoModel.from_pretrained(
-                gtr_model_name,
+                gtr_model_path,
                 torch_dtype=torch.float32  # Force float32 to avoid precision issues
             ).encoder.to(device)
             self.use_fallback_encoder = False
         except Exception as e:
             print(f"[WARNING] Failed to load GTR encoder: {e}")
-            # Use a simple fallback encoder
+            # Use a simple fallback encoder - hardcoded local path
             try:
                 from sentence_transformers import SentenceTransformer
-                fallback_model_name = self._get_model_path('sbert', 'all-MiniLM-L6-v2')
-                self.sentence_transformer_fallback = SentenceTransformer(fallback_model_name).to(device)
+                fallback_model_path = "/mnt/data/group/zhaoliangjie/ICLR-work/all-MiniLM-L6-v2"
+                self.sentence_transformer_fallback = SentenceTransformer(fallback_model_path).to(device)
             except ImportError:
                 print("[WARNING] sentence-transformers not available for fallback encoder")
                 self.sentence_transformer_fallback = None
@@ -391,9 +399,9 @@ class PromptEditorPolicy(nn.Module):
             
             if model_has_nan:
                 
-                # Reinitialize the model
+                # Reinitialize the model - hardcoded local path
                 from transformers import AutoModel
-                self.gtr_encoder = AutoModel.from_pretrained('sentence-transformers/gtr-t5-base').encoder.to(self.device)
+                self.gtr_encoder = AutoModel.from_pretrained('/mnt/data/group/zhaoliangjie/ICLR-work/gtr-t5-base').encoder.to(self.device)
             
             # Use the encoder directly with autocast disabled to prevent NaN
             try:

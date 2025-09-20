@@ -272,7 +272,7 @@ def flow_rtpo_large():
     config.eval_freq = 1
     
     # More aggressive toxicity optimization
-    config.toxicity_reward.w_cvar = 0.0
+    config.toxicity_reward.w_cvar = 0
     config.toxicity_reward.tau = 0.2  
     
     config.run_name = "flow_rtpo_large"

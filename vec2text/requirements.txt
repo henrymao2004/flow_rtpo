@@ -1,0 +1,15 @@
+accelerate
+bert_score
+datasets<4
+einops
+evaluate
+openai
+optimum
+pre-commit
+rouge_score
+sacrebleu
+sentence_transformers
+tenacity
+tokenizers
+tqdm
+transformers
