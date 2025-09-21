@@ -1048,15 +1048,17 @@ def main(_):
         # Debug: Expected total samples calculation
         if config.use_grpo_sampling:
             # GRPO mode calculation
-            unique_prompts_per_batch = config.sample.grpo_num_batches * (accelerator.num_processes * config.sample.train_batch_size // config.sample.grpo_k)
+            unique_prompts_per_batch = accelerator.num_processes * config.sample.train_batch_size // config.sample.grpo_k
+            total_unique_prompts_per_epoch = config.sample.grpo_num_batches * unique_prompts_per_batch
             expected_samples_per_gpu = config.sample.grpo_num_batches * config.sample.train_batch_size
             expected_total_samples = expected_samples_per_gpu * accelerator.num_processes
             logger.info(f"[🔧 GRPO SAMPLING DEBUG]")
-            logger.info(f"  Total train prompts: {len(train_prompts)}")
+            logger.info(f"  Total train prompts available: {len(train_prompts)}")
             logger.info(f"  GPUs: {accelerator.num_processes}")
             logger.info(f"  GRPO k_repeat: {config.sample.grpo_k}")
             logger.info(f"  GRPO batches per epoch: {config.sample.grpo_num_batches}")
-            logger.info(f"  Unique prompts per batch: {config.sample.grpo_num_batches * (accelerator.num_processes * config.sample.train_batch_size // config.sample.grpo_k)}")
+            logger.info(f"  Unique prompts per batch: {unique_prompts_per_batch}")
+            logger.info(f"  Total unique prompts per epoch: {total_unique_prompts_per_epoch}")
             logger.info(f"  Expected samples per GPU: {expected_samples_per_gpu}")
             logger.info(f"  Expected total samples: {expected_total_samples}")
             logger.info(f"[🔧 END GRPO SAMPLING DEBUG]")
