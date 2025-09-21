@@ -1492,147 +1492,144 @@ def main(_):
             sample["advantages"] = advantages_tensor[i]  # [timesteps] - already in correct shape
         
         #################### TRAINING ####################
-        pipeline.transformer.train()
-        prompt_editor.train()
         
-        # Batch samples for training
-        samples_batched = [
-            epoch_samples[i:i + config.train.batch_size] 
-            for i in range(0, len(epoch_samples), config.train.batch_size)
-        ]
+        # Convert epoch_samples to SD3-style samples dict (similar to SD3's collate step)
+        # First, organize samples into the same format as SD3
+        flow_samples = []
+        for sample in epoch_samples:
+            flow_sample = {
+                "prompt_embeds": sample["prompt_embeds"],
+                "pooled_prompt_embeds": sample["pooled_prompt_embeds"],
+                "timesteps": sample["timesteps"].unsqueeze(0),  # Add batch dimension
+                "latents": sample["latents"].unsqueeze(0),      # Add batch dimension  
+                "log_probs": sample["log_probs"].unsqueeze(0),  # Add batch dimension
+                "advantages": sample["advantages"].unsqueeze(0), # Add batch dimension
+            }
+            flow_samples.append(flow_sample)
+        
+        # Collate samples into dict where each entry has shape (num_samples, ...)
+        # This matches SD3's data organization exactly
+        samples = {
+            k: torch.cat([s[k] for s in flow_samples], dim=0)
+            for k in flow_samples[0].keys()
+        }
+        
+        # Get total batch size and timesteps (like SD3)
+        total_batch_size, num_timesteps = samples["timesteps"].shape
+        assert num_timesteps == config.sample.num_steps
         
         train_info = defaultdict(list)
-        
-        # KL regularization coefficient
         current_beta = config.train.beta  # Fixed beta value
         
+        # SD3-style training loop
         for inner_epoch in range(config.train.num_inner_epochs):
             logger.info(f"Training inner epoch {inner_epoch + 1}/{config.train.num_inner_epochs}")
             
-            # Training loop over timesteps (Flow Controller)
-            for i, samples_batch in enumerate(samples_batched):
+            # Shuffle samples along batch dimension (like SD3)
+            perm = torch.randperm(total_batch_size, device=accelerator.device)
+            samples = {k: v[perm] for k, v in samples.items()}
+
+            # Rebatch for training (like SD3)
+            samples_batched = {
+                k: v.reshape(-1, total_batch_size//config.sample.num_batches_per_epoch, *v.shape[1:])
+                for k, v in samples.items()
+            }
+
+            # Dict of lists -> list of dicts for easier iteration (like SD3)
+            samples_batched = [
+                dict(zip(samples_batched, x)) for x in zip(*samples_batched.values())
+            ]
+
+            # Train (like SD3)
+            pipeline.transformer.train()
+            for i, sample in tqdm(
+                list(enumerate(samples_batched)),
+                desc=f"Epoch {epoch}.{inner_epoch}: training",
+                position=0,
+                disable=not accelerator.is_local_main_process,
+            ):
+                # Use sample embeddings directly (like SD3)
+                embeds = sample["prompt_embeds"]
+                pooled_embeds = sample["pooled_prompt_embeds"]
+
                 train_timesteps = list(range(num_train_timesteps))
-                
-                for sample in samples_batch:
-                    for j in tqdm(
-                        train_timesteps,
-                        desc=f"Sample (Batch {i+1}/{len(samples_batched)})",
-                        disable=not accelerator.is_local_main_process,
-                    ):
-                        with accelerator.accumulate(pipeline.transformer):
-                            # Compute log probabilities
-                            prev_sample, log_prob, prev_sample_mean, std_dev_t = compute_log_prob(
-                                pipeline.transformer, pipeline, sample, j, 
-                                sample["prompt_embeds"], sample["pooled_prompt_embeds"], config
-                            )
-                            
-                            # Reference log probs for KL regularization
-                            if config.train.beta > 0:
-                                with torch.no_grad():
-                                    with pipeline.transformer.no_sync():  # 避免DDP同步问题
-                                        with pipeline.transformer.module.disable_adapter():
-                                            _, _, prev_sample_mean_ref, _ = compute_log_prob(
-                                                pipeline.transformer, pipeline, sample, j,
-                                                sample["prompt_embeds"], sample["pooled_prompt_embeds"], config
-                                            )
-                            
-                            # GRPO loss computation - 使用与SD3一致的索引方式
-                            advantages = torch.clamp(
-                                sample["advantages"][j],  # [timesteps] -> scalar (like SD3)
-                                -config.train.adv_clip_max,
-                                config.train.adv_clip_max,
-                            )
-                            
-                            ratio = torch.exp(log_prob - sample["log_probs"][j])
-                            unclipped_loss = -advantages * ratio
-                            clipped_loss = -advantages * torch.clamp(
-                                ratio,
-                                1.0 - config.train.clip_range,
-                                1.0 + config.train.clip_range,
-                            )
-                            policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
-                            
-                            # KL regularization with fixed beta
-                            if config.train.beta > 0:
-                                kl_loss = ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean(dim=(1,2,3), keepdim=True) / (2 * std_dev_t ** 2)
-                                kl_loss = torch.mean(kl_loss)
-                                flow_loss = policy_loss + current_beta * kl_loss
-                            else:
-                                flow_loss = policy_loss
-                                kl_loss = torch.tensor(0.0)
-                            
-                            # Backward pass
-                            accelerator.backward(flow_loss)
-                            
-                            # Gradient clipping - only when syncing gradients
-                            if accelerator.sync_gradients:
-                                torch.nn.utils.clip_grad_norm_(transformer_trainable_parameters, 1.0)
-                            
-                            # Optimizer step - inside accumulate context for proper gradient accumulation
-                            optimizer.step()
-                            optimizer.zero_grad()
-                            
-                            # Track KL divergence for logging
-                            if config.train.beta > 0:
-                                pass  # No adaptive control needed
-                            
-                            train_info["flow_policy_loss"].append(policy_loss.item())
-                            train_info["kl_loss"].append(kl_loss.item())
+                for j in tqdm(
+                    train_timesteps,
+                    desc="Timestep",
+                    position=1,
+                    leave=False,
+                    disable=not accelerator.is_local_main_process,
+                ):
+                    with accelerator.accumulate(pipeline.transformer):
+                        # Compute log probabilities (like SD3)
+                        prev_sample, log_prob, prev_sample_mean, std_dev_t = compute_log_prob(
+                            pipeline.transformer, pipeline, sample, j, embeds, pooled_embeds, config
+                        )
+                        
+                        # Reference log probs for KL regularization (like SD3)
+                        if config.train.beta > 0:
+                            with torch.no_grad():
+                                with pipeline.transformer.module.disable_adapter():
+                                    _, _, prev_sample_mean_ref, _ = compute_log_prob(
+                                        pipeline.transformer, pipeline, sample, j, embeds, pooled_embeds, config
+                                    )
+
+                        # GRPO loss computation (exactly like SD3)
+                        advantages = torch.clamp(
+                            sample["advantages"][:, j],  # [batch_size] (like SD3)
+                            -config.train.adv_clip_max,
+                            config.train.adv_clip_max,
+                        )
+                        
+                        ratio = torch.exp(log_prob - sample["log_probs"][:, j])
+                        unclipped_loss = -advantages * ratio
+                        clipped_loss = -advantages * torch.clamp(
+                            ratio,
+                            1.0 - config.train.clip_range,
+                            1.0 + config.train.clip_range,
+                        )
+                        policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+                        
+                        # KL regularization (exactly like SD3)
+                        if config.train.beta > 0:
+                            kl_loss = ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean(dim=(1,2,3), keepdim=True) / (2 * std_dev_t ** 2)
+                            kl_loss = torch.mean(kl_loss)
+                            flow_loss = policy_loss + current_beta * kl_loss
+                        else:
+                            flow_loss = policy_loss
+                            kl_loss = torch.tensor(0.0)
+                        
+                        # Backward pass (like SD3)
+                        accelerator.backward(flow_loss)
+                        
+                        # Gradient clipping (like SD3)
+                        if accelerator.sync_gradients:
+                            torch.nn.utils.clip_grad_norm_(transformer_trainable_parameters, 1.0)
+                        
+                        # Optimizer step
+                        optimizer.step()
+                        optimizer.zero_grad()
+                        
+                        # Track metrics
+                        train_info["flow_policy_loss"].append(policy_loss.item())
+                        train_info["kl_loss"].append(kl_loss.item())
                     
-                    # Only log when gradients are actually synchronized (actual optimization step)
+                    # Checks if the accelerator has performed an optimization step behind the scenes (like SD3)
                     if accelerator.sync_gradients:
-                        # Aggregate and reduce metrics across processes
-                        flow_info_aggregated = {k: torch.mean(torch.stack([torch.tensor(x, device=accelerator.device) for x in v])) for k, v in train_info.items() if v}
-                        flow_info_aggregated = accelerator.reduce(flow_info_aggregated, reduction="mean")
+                        # Log training-related stuff (like SD3)
+                        info = {k: torch.mean(torch.stack(v)) for k, v in train_info.items() if v}
+                        info = accelerator.reduce(info, reduction="mean")
+                        info.update({"epoch": epoch, "inner_epoch": inner_epoch})
                         
-                        # Log flow controller metrics before incrementing global_step (DPO style)
                         if accelerator.is_main_process:
-                            flow_log_data = {
-                                "epoch": epoch,
-                                "global_step": global_step,
-                                "flow_policy_loss": flow_info_aggregated.get("flow_policy_loss", torch.tensor(0.0)).item(),
-                                "kl_loss": flow_info_aggregated.get("kl_loss", torch.tensor(0.0)).item(),
-                                "batch_idx": i,
-                                "timestep_idx": j,
-                                "inner_epoch": inner_epoch,
-                                # Rewards are logged after sampling phase, not during training
-                            }
-                            swanlab.log(flow_log_data, step=global_step)
-                            logger.info(f"Flow Controller Step {global_step}: {flow_log_data}")
+                            swanlab.log(info, step=global_step)
+                            logger.info(f"Flow Controller Step {global_step}: {info}")
                         
-                        # Increment global_step after logging (DPO style)
                         global_step += 1
-                        
-                        # Log sync_gradients confirmation (reduced frequency)
-                        if accelerator.is_local_main_process and global_step % 100 == 0:
-                            logger.info(f"[SYNC] Gradient synchronization at global_step {global_step}")
+                        train_info = defaultdict(list)  # Reset for next step
                         
                         if config.train.ema:
                             ema.step(transformer_trainable_parameters, global_step)
-                            
-                            # JSON step logging for flow controller
-                            if step_log_path:
-                                current_time = time.time()
-                                step_log_entry = {
-                                    "event_type": "flow_controller_step",
-                                    "timestamp": datetime.datetime.now().isoformat(),
-                                    "global_step": global_step,
-                                    "epoch": epoch,
-                                    "inner_epoch": inner_epoch,
-                                    "batch_idx": i,
-                                    "timestep_idx": j,
-                                    "training_time_elapsed": current_time - training_start_time,
-                                    "losses": {
-                                        "flow_policy_loss": float(flow_info_aggregated.get("flow_policy_loss", torch.tensor(0.0)).item()),
-                                        "kl_loss": float(flow_info_aggregated.get("kl_loss", torch.tensor(0.0)).item())
-                                    },
-                                    # Note: Reward data is logged after sampling phase, not during training
-                                }
-                                log_json_entry(step_log_path, step_log_entry)
-                        
-                        # Reset flow controller metrics for next actual optimization step
-                        train_info["flow_policy_loss"] = []
-                        train_info["kl_loss"] = []
             
             # Training for Prompt Editor 
             if len(epoch_samples) > 0:
