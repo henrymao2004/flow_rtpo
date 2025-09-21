@@ -166,14 +166,14 @@ def flow_rtpo_sd3():
     
     # Logging and saving
     config.run_name = "flow_rtpo_sd3_llava"
-    
+
     # Set save directory based on configuration
     if config.save_loading.use_local:
         config.save_dir = f'{config.save_loading.local_base_path}flow_rtpo/{config.run_name}'
     else:
         config.save_dir = f'{config.save_loading.default_base_path}flow_rtpo/{config.run_name}'
     
-    config.num_checkpoint_limit = 5
+    config.num_checkpoint_limit = 100
     config.resume_from = None
     
     # Step-level attribution configuration
@@ -253,7 +253,7 @@ def flow_rtpo_large():
     
     # Keep batch size as requested but increase batches for GRPO grouping
     config.sample.batch_size = 6 # Changed to 2 as requested
-    config.sample.num_image_per_prompt = 8 # Multiple samples per prompt for ranking
+    config.sample.num_image_per_prompt = 6 # Multiple samples per prompt for ranking
     
     # GRPO sampling configuration for large scale
     gpu_number = 48

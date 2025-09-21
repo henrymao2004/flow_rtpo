@@ -63,7 +63,7 @@ class DistributedKRepeatSampler(Sampler):
         self.rank = rank              # Current replica rank
         self.seed = seed              # Random seed for synchronization
         
-        # Compute the number of unique samples needed per iteration
+        # Compute the number of unique torch.distributedsamples needed per iteration
         self.total_samples = self.num_replicas * self.batch_size
         assert self.total_samples % self.k == 0, f"k can not divide n*b, k{k}-num_replicas{num_replicas}-batch_size{batch_size}"
         self.m = self.total_samples // self.k  # Number of unique samples
