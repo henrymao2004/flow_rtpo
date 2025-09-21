@@ -90,6 +90,7 @@ def flow_rtpo_sd3():
     config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch // 2
     config.train.num_inner_epochs = 1
     config.train.timestep_fraction = 0.99
+    config.train.cfg = True  # Enable CFG (like SD3)
     
     # GRPO configuration (same as existing)
     config.train.learning_rate = 5e-6
@@ -222,6 +223,7 @@ def flow_rtpo_debug():
     # Gradient accumulation for debug
     config.train.gradient_accumulation_steps = max(1, config.sample.num_batches_per_epoch // 2)
     config.train.batch_size = config.sample.batch_size
+    config.train.cfg = True  # Enable CFG (like SD3)
     
     config.run_name = "flow_rtpo_debug"
     
@@ -266,6 +268,7 @@ def flow_rtpo_large():
     # This ensures gradients are updated twice per epoch for stability
     config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch // 2
     config.train.batch_size = config.sample.batch_size
+    config.train.cfg = True  # Enable CFG (like SD3)
     # Extended training
     config.num_epochs = 10000
     config.save_freq = 3
@@ -333,6 +336,7 @@ def flow_rtpo_memory_optimized():
     # Training adjustments
     config.train.gradient_accumulation_steps = 22  # Adjust for new batch size
     config.train.num_inner_epochs = 1
+    config.train.cfg = True  # Enable CFG (like SD3)
     
     # Evaluation settings
     config.eval.num_samples = 10  # Reduce from 20 to 10

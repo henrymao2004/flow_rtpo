@@ -523,17 +523,30 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
         timesteps = sample["timesteps"][:, timestep_idx]
         latents = sample["latents"][:, timestep_idx]
 
-        # Use transformer (buffer broadcasting disabled at DDP level)
-        noise_pred = transformer(
-            hidden_states=latents,
-            timestep=timesteps,
-            encoder_hidden_states=embeds,
-            pooled_projections=pooled_embeds,
-            return_dict=False,
-        )[0]
-
-        # previous latent (if any) should also be [batch_size, C, H, W]
-        prev_latent = sample["latents"][:, timestep_idx - 1] if timestep_idx > 0 else None
+        # CFG implementation (exactly like SD3)
+        if config.train.cfg:
+            noise_pred = transformer(
+                hidden_states=torch.cat([latents] * 2),
+                timestep=torch.cat([timesteps] * 2),
+                encoder_hidden_states=embeds,
+                pooled_projections=pooled_embeds,
+                return_dict=False,
+            )[0]
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred_uncond = noise_pred_uncond.detach()
+            noise_pred = (
+                noise_pred_uncond
+                + config.sample.guidance_scale
+                * (noise_pred_text - noise_pred_uncond)
+            )
+        else:
+            noise_pred = transformer(
+                hidden_states=latents,
+                timestep=timesteps,
+                encoder_hidden_states=embeds,
+                pooled_projections=pooled_embeds,
+                return_dict=False,
+            )[0]
 
         # compute the log prob of next_latents given latents under the current model (like SD3)
         prev_sample, log_prob, prev_sample_mean, std_dev_t = sde_step_with_logprob(
@@ -953,6 +966,22 @@ def main(_):
         local_models=config.model_loading.local_models.to_dict(),
         hf_models=config.model_loading.hf_models.to_dict()
     )
+
+    # Prepare negative prompt embeddings for CFG (like SD3)
+    neg_prompt_embed, neg_pooled_prompt_embed = encode_prompt(
+        text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
+        tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
+        prompt="",  # Empty string for unconditional prompt
+        max_sequence_length=256,
+        device=accelerator.device,
+        num_images_per_prompt=1
+    )
+
+    # Prepare negative embeddings for different batch sizes (like SD3)
+    sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.train_batch_size, 1, 1)
+    train_neg_prompt_embeds = neg_prompt_embed.repeat(config.train.batch_size, 1, 1)
+    sample_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(config.sample.train_batch_size, 1)
+    train_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(config.train.batch_size, 1)
     
 
     
@@ -1585,10 +1614,19 @@ def main(_):
                 desc=f"Epoch {epoch}.{inner_epoch}: training",
                 position=0,
                 disable=not accelerator.is_local_main_process,
-            ):
-                # Use sample embeddings directly (like SD3)
-                embeds = sample["prompt_embeds"]
-                pooled_embeds = sample["pooled_prompt_embeds"]
+                ):
+                    # CFG embeddings preparation (like SD3)
+                    if config.train.cfg:
+                        # concat negative prompts to sample prompts to avoid two forward passes
+                        embeds = torch.cat(
+                            [train_neg_prompt_embeds[:len(sample["prompt_embeds"])], sample["prompt_embeds"]]
+                        )
+                        pooled_embeds = torch.cat(
+                            [train_neg_pooled_prompt_embeds[:len(sample["pooled_prompt_embeds"])], sample["pooled_prompt_embeds"]]
+                        )
+                    else:
+                        embeds = sample["prompt_embeds"]
+                        pooled_embeds = sample["pooled_prompt_embeds"]
 
                 # Use all available timesteps (already correctly sized)
                 train_timesteps = list(range(num_timesteps))
