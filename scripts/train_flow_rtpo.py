@@ -397,27 +397,23 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
             else:
                 sample["continuation_text"] = ""
         
-        # Gather results from different GPU subsets (only if distributed eval is enabled)
-        if accelerator.num_processes > 1 and getattr(config, 'distributed_eval', True):
-            accelerator.wait_for_everyone()
-            
-            # Gather batch samples from all processes (each process has different test prompts)
-            gathered_samples = accelerator.gather_for_metrics(batch_samples)
-            
-            if accelerator.is_main_process:
-                # Main process: use all gathered samples from different GPU subsets
-                batch_samples = gathered_samples
-                logger.info(f"[TEST EVAL] Gathered {len(batch_samples)} samples from {accelerator.num_processes} processes (distributed evaluation)")
-            else:
-                # Non-main processes: clear batch_samples since only main process will handle final evaluation
-                batch_samples = []
-        elif accelerator.num_processes > 1:
-            # Non-distributed mode: all processes computed the same data, only main process keeps it
-            if not accelerator.is_main_process:
-                batch_samples = []
-        
+        # Accumulate local batch results; defer cross-process gather to after all batches
         all_test_samples.extend(batch_samples)
     
+    # Cross-process gather once after all local batches complete
+    if accelerator.num_processes > 1 and getattr(config, 'distributed_eval', True):
+        accelerator.wait_for_everyone()
+        gathered_samples = accelerator.gather_for_metrics(all_test_samples)
+        if accelerator.is_main_process:
+            all_test_samples = gathered_samples
+            logger.info(f"[TEST EVAL] Gathered {len(all_test_samples)} samples from {accelerator.num_processes} processes (distributed evaluation)")
+        else:
+            all_test_samples = []
+    elif accelerator.num_processes > 1:
+        # Non-distributed eval: all processes computed same data; keep only on main
+        if not accelerator.is_main_process:
+            all_test_samples = []
+
     # Compute evaluation metrics
     if accelerator.is_main_process:
         # Extract all scores
