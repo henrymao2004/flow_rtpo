@@ -158,6 +158,26 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
     print(f"[TEST EVAL] Starting test evaluation for epoch {epoch}")
     print(f"[TEST EVAL] Test set size: {len(test_prompts)}")
     
+    # Distribute test set across GPUs to avoid duplicate computation (if enabled)
+    if accelerator.num_processes > 1 and getattr(config, 'distributed_eval', True):
+        # Split test set among GPUs
+        total_test_size = len(test_prompts)
+        per_gpu_size = (total_test_size + accelerator.num_processes - 1) // accelerator.num_processes
+        start_idx = accelerator.process_index * per_gpu_size
+        end_idx = min(start_idx + per_gpu_size, total_test_size)
+        
+        # Each GPU gets a subset of test prompts
+        gpu_test_prompts = test_prompts[start_idx:end_idx]
+        gpu_test_metadata = test_metadata[start_idx:end_idx]
+        
+        print(f"[TEST EVAL] Distributed mode: GPU {accelerator.process_index}: Processing {len(gpu_test_prompts)}/{total_test_size} test prompts (indices {start_idx}:{end_idx})")
+    else:
+        # Single GPU or disabled distributed eval: process all test prompts
+        gpu_test_prompts = test_prompts
+        gpu_test_metadata = test_metadata
+        if accelerator.num_processes > 1:
+            print(f"[TEST EVAL] Non-distributed mode: GPU {accelerator.process_index}: Processing all {len(gpu_test_prompts)} test prompts")
+    
     # Use fixed, deterministic noise during evaluation for stability across epochs/runs
     def _deterministic_seed_from_prompt(prompt: str, base_seed: int) -> int:
         import hashlib
@@ -198,15 +218,15 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
     # Store images for SwanLab logging (only on main process)
     eval_images_for_swanlab = [] if accelerator.is_main_process else None
     
-    # Process test prompts in batches
+    # Process test prompts in batches (now using GPU-specific subset)
     batch_size = config.sample.get('test_batch_size', 4)
-    num_batches = (len(test_prompts) + batch_size - 1) // batch_size
+    num_batches = (len(gpu_test_prompts) + batch_size - 1) // batch_size
     
     for batch_idx in range(num_batches):
         start_idx = batch_idx * batch_size
-        end_idx = min(start_idx + batch_size, len(test_prompts))
-        batch_prompts = test_prompts[start_idx:end_idx]
-        batch_metadata = test_metadata[start_idx:end_idx]
+        end_idx = min(start_idx + batch_size, len(gpu_test_prompts))
+        batch_prompts = gpu_test_prompts[start_idx:end_idx]
+        batch_metadata = gpu_test_metadata[start_idx:end_idx]
         
         print(f"[TEST EVAL] Processing batch {batch_idx + 1}/{num_batches} ({len(batch_prompts)} prompts)")
         
@@ -217,7 +237,9 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
         # Generate images for test prompts (no prompt editing for evaluation)
         batch_samples = []
         for prompt_idx, (prompt, metadata) in enumerate(zip(batch_prompts, batch_metadata)):
-            print(f"[TEST EVAL] Generating image for test prompt {start_idx + prompt_idx + 1}/{len(test_prompts)}")
+            # Calculate global prompt index for consistent logging and file naming
+            global_prompt_idx = (accelerator.process_index * ((len(test_prompts) + accelerator.num_processes - 1) // accelerator.num_processes)) + start_idx + prompt_idx if accelerator.num_processes > 1 else start_idx + prompt_idx
+            print(f"[TEST EVAL] GPU {accelerator.process_index}: Generating image for test prompt {global_prompt_idx + 1}/{len(test_prompts)}")
             modified_prompt = eval_modified_prompts[prompt_idx]
             
             # Encode prompt for SD3
@@ -260,10 +282,10 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                 eval_images_dir = os.path.join(config.save_dir, "eval_images", f"epoch_{epoch}")
                 os.makedirs(eval_images_dir, exist_ok=True)
                 
-                # Create safe filename from prompt
+                # Create safe filename from prompt using global index
                 safe_prompt = "".join(c for c in prompt[:50] if c.isalnum() or c in (' ', '-', '_')).rstrip()
                 safe_prompt = safe_prompt.replace(' ', '_')
-                image_filename = f"prompt_{start_idx + prompt_idx:03d}_{safe_prompt}.png"
+                image_filename = f"prompt_{global_prompt_idx:03d}_{safe_prompt}.png"
                 image_path = os.path.join(eval_images_dir, image_filename)
                 
                 # Save image
@@ -280,13 +302,14 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                 prompt_info = {
                     "original_prompt": prompt,
                     "modified_prompt": modified_prompt,
-                    "sample_id": f"test_epoch_{epoch}_prompt_{start_idx + prompt_idx}",
+                    "sample_id": f"test_epoch_{epoch}_prompt_{global_prompt_idx}",
                     "image_path": image_path,
-                    "seed": _seed
+                    "seed": _seed,
+                    "gpu_id": accelerator.process_index  # Track which GPU processed this
                 }
                 
                 # Save prompt info as JSON
-                prompt_info_path = os.path.join(eval_images_dir, f"prompt_{start_idx + prompt_idx:03d}_info.json")
+                prompt_info_path = os.path.join(eval_images_dir, f"prompt_{global_prompt_idx:03d}_info.json")
                 with open(prompt_info_path, 'w', encoding='utf-8') as f:
                     json.dump(prompt_info, f, indent=2, ensure_ascii=False)
             
@@ -298,7 +321,8 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                 "prompt_embeds": prompt_embeds,
                 "pooled_prompt_embeds": pooled_prompt_embeds,
                 "metadata": metadata,
-                "sample_id": f"test_epoch_{epoch}_prompt_{start_idx + prompt_idx}"
+                "sample_id": f"test_epoch_{epoch}_prompt_{global_prompt_idx}",
+                "gpu_id": accelerator.process_index  # Track which GPU processed this
             }
             
             batch_samples.append(sample)
@@ -373,20 +397,23 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
             else:
                 sample["continuation_text"] = ""
         
-        # Synchronize scores across processes
-        if accelerator.num_processes > 1:
+        # Gather results from different GPU subsets (only if distributed eval is enabled)
+        if accelerator.num_processes > 1 and getattr(config, 'distributed_eval', True):
             accelerator.wait_for_everyone()
             
-            # Gather all batch samples from all processes
-            # Now all processes have computed real scores, so we can gather everything
+            # Gather batch samples from all processes (each process has different test prompts)
             gathered_samples = accelerator.gather_for_metrics(batch_samples)
             
             if accelerator.is_main_process:
-                # Main process: use all gathered samples which now contain real scores from all processes
+                # Main process: use all gathered samples from different GPU subsets
                 batch_samples = gathered_samples
-                logger.info(f"[TEST EVAL] Gathered {len(batch_samples)} samples from {accelerator.num_processes} processes")
+                logger.info(f"[TEST EVAL] Gathered {len(batch_samples)} samples from {accelerator.num_processes} processes (distributed evaluation)")
             else:
                 # Non-main processes: clear batch_samples since only main process will handle final evaluation
+                batch_samples = []
+        elif accelerator.num_processes > 1:
+            # Non-distributed mode: all processes computed the same data, only main process keeps it
+            if not accelerator.is_main_process:
                 batch_samples = []
         
         all_test_samples.extend(batch_samples)

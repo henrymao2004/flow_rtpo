@@ -79,11 +79,12 @@ def flow_rtpo_sd3():
     config.sample.num_steps = 40
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale = 4.5
-    config.sample.test_batch_size = 4
+    config.sample.test_batch_size = 1
     config.sample.train_batch_size = config.sample.batch_size
     
     # Test split configuration
     config.test_ratio = 0.2  # 20% of prompts for testing
+    config.distributed_eval = True  # Distribute test set across GPUs to reduce computation
     
     # Training configuration
     config.train.batch_size = config.sample.train_batch_size
