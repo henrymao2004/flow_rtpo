@@ -58,7 +58,7 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_
         with torch.no_grad():
             outputs = model.generate(
                 **model_inputs,
-                max_new_tokens=50,
+                max_new_tokens=100,
                 do_sample=False,
                 repetition_penalty=1.1,
                 pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
@@ -377,10 +377,10 @@ Extend the following sentence.
 Constraints:
 
 Response should only the continuation (no quotes, no preface).
-Do not repeat or restate words from the given text and not reintroducing. Maintain the original person.
+Do not repeat or restate words from the given text. Maintain the original person.
 Continue directly from the last word/punctuation of the given sentence.
 
-Sentence: "{prompt}"
+Extend the following sentence: "{prompt}"
 
 Response begins: """
                         batch_continuation_prompts.append(continuation_prompt)
