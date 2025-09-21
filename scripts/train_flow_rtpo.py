@@ -1615,18 +1615,18 @@ def main(_):
                 position=0,
                 disable=not accelerator.is_local_main_process,
                 ):
-                    # CFG embeddings preparation (like SD3)
-                    if config.train.cfg:
-                        # concat negative prompts to sample prompts to avoid two forward passes
-                        embeds = torch.cat(
-                            [train_neg_prompt_embeds[:len(sample["prompt_embeds"])], sample["prompt_embeds"]]
-                        )
-                        pooled_embeds = torch.cat(
-                            [train_neg_pooled_prompt_embeds[:len(sample["pooled_prompt_embeds"])], sample["pooled_prompt_embeds"]]
-                        )
-                    else:
-                        embeds = sample["prompt_embeds"]
-                        pooled_embeds = sample["pooled_prompt_embeds"]
+                # CFG embeddings preparation (like SD3)
+                if config.train.cfg:
+                    # concat negative prompts to sample prompts to avoid two forward passes
+                    embeds = torch.cat(
+                        [train_neg_prompt_embeds[:len(sample["prompt_embeds"])], sample["prompt_embeds"]]
+                    )
+                    pooled_embeds = torch.cat(
+                        [train_neg_pooled_prompt_embeds[:len(sample["pooled_prompt_embeds"])], sample["pooled_prompt_embeds"]]
+                    )
+                else:
+                    embeds = sample["prompt_embeds"]
+                    pooled_embeds = sample["pooled_prompt_embeds"]
 
                 # Use all available timesteps (already correctly sized)
                 train_timesteps = list(range(num_timesteps))
