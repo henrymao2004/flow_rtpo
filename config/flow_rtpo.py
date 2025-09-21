@@ -144,9 +144,9 @@ def flow_rtpo_sd3():
     config.log_freq = 1    # Log every epoch
     
     # Resolution
-    config.resolution = 1024
-    config.height = 1024
-    config.width = 1024
+    config.resolution = 768
+    config.height = 768
+    config.width = 768
     
     # Per-prompt stat tracking for GRPO
     config.per_prompt_stat_tracking = True
@@ -268,7 +268,7 @@ def flow_rtpo_large():
     config.train.batch_size = config.sample.batch_size
     # Extended training
     config.num_epochs = 10000
-    config.save_freq = 5
+    config.save_freq = 3
     config.eval_freq = 1
     
     # More aggressive toxicity optimization
