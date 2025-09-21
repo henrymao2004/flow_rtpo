@@ -378,6 +378,7 @@ Constraints:
 
 Response should only the continuation (no quotes, no preface).
 Do not repeat or restate any words from the given text and not reintroducing. Maintain the original person.
+Continue directly from the last word/punctuation of the given sentence.
 
 Sentence: "{prompt}"
 
