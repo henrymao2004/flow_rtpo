@@ -6,7 +6,7 @@ torchaudio
 transformers
 accelerate
 diffusers
-peft
+peft>=0.17.0
 deepspeed
 bitsandbytes
 
