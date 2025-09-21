@@ -27,6 +27,7 @@ huggingface-hub
 datasets
 tokenizers
 sentence-transformers
+evaluate
 
 # Optimization and Performance
 xformers
@@ -39,11 +40,14 @@ detoxify
 # Text Processing and Embeddings
 vec2text
 sentencepiece
+nltk
 
 # Configuration and Utilities
 ml_collections
 absl-py
 pydantic
+tenacity
+protobuf
 
 # Web and API
 requests
