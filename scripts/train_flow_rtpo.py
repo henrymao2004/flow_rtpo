@@ -345,7 +345,10 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                 print(f"[TEST EVAL] Process {accelerator.process_index}: CLIP scoring failed for prompt: {e}")
                 clip_scores.append(0.0)
         
-        # Assign scores to samples
+        # Store original batch size before gathering
+        original_batch_size = len(batch_samples)
+        
+        # Assign scores to samples (only for current process samples)
         for i, sample in enumerate(batch_samples):
             sample["reward"] = batch_rewards[i]
             sample["toxicity_scores"] = {
@@ -357,8 +360,18 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                 "identity_attack": toxicity_scores["identity_attack"][i],
             }
             sample["clip_score"] = clip_scores[i]
-            sample["vlm_response"] = batch_reward_metadata["vlm_responses"][i]
-            sample["continuation_text"] = batch_reward_metadata.get("continuation_texts", [""])[i]
+            # Safely access metadata with bounds checking
+            vlm_responses = batch_reward_metadata.get("vlm_responses", [])
+            if i < len(vlm_responses):
+                sample["vlm_response"] = vlm_responses[i]
+            else:
+                sample["vlm_response"] = ""
+            
+            continuation_texts = batch_reward_metadata.get("continuation_texts", [])
+            if i < len(continuation_texts):
+                sample["continuation_text"] = continuation_texts[i]
+            else:
+                sample["continuation_text"] = ""
         
         # Synchronize scores across processes
         if accelerator.num_processes > 1:
@@ -506,8 +519,9 @@ def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, em
 def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled_embeds, config):
     """Compute log probability for a single timestep using the flow controller."""
     with torch.autocast("cuda", dtype=torch.bfloat16):
-        timesteps = sample["timesteps"][timestep_idx].view(1)
-        latents = sample["latents"][timestep_idx].unsqueeze(0)
+        # Use SD3-style batch indexing: sample["timesteps"][:, j] instead of sample["timesteps"][j]
+        timesteps = sample["timesteps"][:, timestep_idx]
+        latents = sample["latents"][:, timestep_idx]
 
         # Use transformer (buffer broadcasting disabled at DDP level)
         noise_pred = transformer(
@@ -518,16 +532,17 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
             return_dict=False,
         )[0]
 
-        # previous latent (if any) should also be [1, C, H, W]
-        prev_latent = sample["latents"][timestep_idx - 1].unsqueeze(0) if timestep_idx > 0 else None
+        # previous latent (if any) should also be [batch_size, C, H, W]
+        prev_latent = sample["latents"][:, timestep_idx - 1] if timestep_idx > 0 else None
 
+        # compute the log prob of next_latents given latents under the current model (like SD3)
         prev_sample, log_prob, prev_sample_mean, std_dev_t = sde_step_with_logprob(
             pipeline.scheduler,
-            noise_pred,
+            noise_pred.float(),
             timesteps,
-            latents,
+            latents.float(),
+            prev_sample=sample["next_latents"][:, timestep_idx].float(),
             noise_level=config.sample.get("noise_level", 0.7),
-            prev_sample=prev_latent,
         )
         return prev_sample, log_prob, prev_sample_mean, std_dev_t
 
@@ -741,7 +756,8 @@ def main(_):
         config.run_name += "_" + unique_id
     
     # Number of timesteps within each trajectory to train on
-    num_train_timesteps = int(config.sample.num_steps * config.train.timestep_fraction)
+    # We use num_steps - 1 timesteps for training (like SD3)
+    num_train_timesteps = int((config.sample.num_steps - 1) * config.train.timestep_fraction)
     
     accelerator_config = ProjectConfiguration(
         project_dir=os.path.join(config.save_dir),
@@ -1263,11 +1279,16 @@ def main(_):
                 # Assign rewards to samples
                 for i, sample in enumerate(samples):
                     sample["reward"] = batch_rewards[i]
-                    sample["final_toxicity"] = batch_reward_metadata["toxicity_scores"]["primary"][i]
+                    # Safely access toxicity scores with bounds checking
+                    toxicity_scores = batch_reward_metadata.get("toxicity_scores", {})
+                    primary_scores = toxicity_scores.get("primary", [])
+                    sample["final_toxicity"] = primary_scores[i] if i < len(primary_scores) else 0.0
                 
                 # Collect CLIP similarity scores for epoch quality_mean (only on main process to avoid duplication)
                 if accelerator.is_main_process:
-                    epoch_clip_scores.extend(batch_reward_metadata["quality_scores"]["clip_similarity"])
+                    quality_scores = batch_reward_metadata.get("quality_scores", {})
+                    clip_similarity = quality_scores.get("clip_similarity", [])
+                    epoch_clip_scores.extend(clip_similarity)
                 
                 # Synchronize across all processes
                 if accelerator.num_processes > 1:
@@ -1280,24 +1301,33 @@ def main(_):
                     # logger.info("=" * 80)
                     
                     for i, sample in enumerate(samples):
-                        vlm_response = batch_reward_metadata["vlm_responses"][i]
-                        continuation_text = batch_reward_metadata.get("continuation_texts", [""])[i]
+                        # Safely access metadata with bounds checking
+                        vlm_responses = batch_reward_metadata.get("vlm_responses", [])
+                        vlm_response = vlm_responses[i] if i < len(vlm_responses) else ""
                         
-                        # Complete toxicity breakdown with all 6 categories
+                        continuation_texts = batch_reward_metadata.get("continuation_texts", [])
+                        continuation_text = continuation_texts[i] if i < len(continuation_texts) else ""
+                        
+                        # Complete toxicity breakdown with all 6 categories (with bounds checking)
+                        toxicity_scores = batch_reward_metadata.get("toxicity_scores", {})
                         toxicity_breakdown = {
-                            "toxicity": batch_reward_metadata["toxicity_scores"]["primary"][i],
-                            "severe_toxicity": batch_reward_metadata["toxicity_scores"]["severe_toxicity"][i],
-                            "obscene": batch_reward_metadata["toxicity_scores"]["obscene"][i],
-                            "threat": batch_reward_metadata["toxicity_scores"]["threat"][i],
-                            "insult": batch_reward_metadata["toxicity_scores"]["insult"][i],
-                            "identity_attack": batch_reward_metadata["toxicity_scores"]["identity_attack"][i],
+                            "toxicity": toxicity_scores.get("primary", [])[i] if i < len(toxicity_scores.get("primary", [])) else 0.0,
+                            "severe_toxicity": toxicity_scores.get("severe_toxicity", [])[i] if i < len(toxicity_scores.get("severe_toxicity", [])) else 0.0,
+                            "obscene": toxicity_scores.get("obscene", [])[i] if i < len(toxicity_scores.get("obscene", [])) else 0.0,
+                            "threat": toxicity_scores.get("threat", [])[i] if i < len(toxicity_scores.get("threat", [])) else 0.0,
+                            "insult": toxicity_scores.get("insult", [])[i] if i < len(toxicity_scores.get("insult", [])) else 0.0,
+                            "identity_attack": toxicity_scores.get("identity_attack", [])[i] if i < len(toxicity_scores.get("identity_attack", [])) else 0.0,
                         }
                         
+                        quality_scores_data = batch_reward_metadata.get("quality_scores", {})
+                        clip_similarity = quality_scores_data.get("clip_similarity", [])
                         quality_scores = {
-                            "clip": batch_reward_metadata["quality_scores"]["clip_similarity"][i],
+                            "clip": clip_similarity[i] if i < len(clip_similarity) else 0.0,
                             # aesthetic scoring removed
                         }
-                        cvar_bonus = batch_reward_metadata["cvar_bonus"][i]
+                        
+                        cvar_bonus_data = batch_reward_metadata.get("cvar_bonus", [])
+                        cvar_bonus = cvar_bonus_data[i] if i < len(cvar_bonus_data) else 0.0
                         
                         # logger.info(f"Sample {i+1}/{len(samples)}:")
                         # logger.info(f"  original_prompt: \"{sample['original_prompt'][:80]}{'...' if len(sample['original_prompt']) > 80 else ''}\"")
@@ -1497,13 +1527,21 @@ def main(_):
         # First, organize samples into the same format as SD3
         flow_samples = []
         for sample in epoch_samples:
+            # Create next_latents like SD3: latents[1:] (each entry is the latent after timestep t)
+            latents_full = sample["latents"]  # [T, C, H, W]
+            latents_before = latents_full[:-1]  # [T-1, C, H, W] - latent before each timestep
+            latents_after = latents_full[1:]   # [T-1, C, H, W] - latent after each timestep
+            
+            # Ensure all data uses the same number of timesteps (num_train_timesteps)
+            # Take only the first num_train_timesteps from each sequence
             flow_sample = {
                 "prompt_embeds": sample["prompt_embeds"],
                 "pooled_prompt_embeds": sample["pooled_prompt_embeds"],
-                "timesteps": sample["timesteps"].unsqueeze(0),  # Add batch dimension
-                "latents": sample["latents"].unsqueeze(0),      # Add batch dimension  
-                "log_probs": sample["log_probs"].unsqueeze(0),  # Add batch dimension
-                "advantages": sample["advantages"].unsqueeze(0), # Add batch dimension
+                "timesteps": sample["timesteps"][:num_train_timesteps].unsqueeze(0),  # [num_train_timesteps] -> [1, num_train_timesteps]
+                "latents": latents_before[:num_train_timesteps].unsqueeze(0),         # [num_train_timesteps, C, H, W] -> [1, num_train_timesteps, C, H, W]
+                "next_latents": latents_after[:num_train_timesteps].unsqueeze(0),     # [num_train_timesteps, C, H, W] -> [1, num_train_timesteps, C, H, W]
+                "log_probs": sample["log_probs"][:num_train_timesteps].unsqueeze(0),  # [num_train_timesteps] -> [1, num_train_timesteps]
+                "advantages": sample["advantages"].unsqueeze(0),                      # [num_train_timesteps] -> [1, num_train_timesteps] (already correct size)
             }
             flow_samples.append(flow_sample)
         
@@ -1516,7 +1554,7 @@ def main(_):
         
         # Get total batch size and timesteps (like SD3)
         total_batch_size, num_timesteps = samples["timesteps"].shape
-        assert num_timesteps == config.sample.num_steps
+        assert num_timesteps == num_train_timesteps  # We use num_train_timesteps for training
         
         train_info = defaultdict(list)
         current_beta = config.train.beta  # Fixed beta value
@@ -1552,7 +1590,8 @@ def main(_):
                 embeds = sample["prompt_embeds"]
                 pooled_embeds = sample["pooled_prompt_embeds"]
 
-                train_timesteps = list(range(num_train_timesteps))
+                # Use all available timesteps (already correctly sized)
+                train_timesteps = list(range(num_timesteps))
                 for j in tqdm(
                     train_timesteps,
                     desc="Timestep",
@@ -1617,7 +1656,7 @@ def main(_):
                     # Checks if the accelerator has performed an optimization step behind the scenes (like SD3)
                     if accelerator.sync_gradients:
                         # Log training-related stuff (like SD3)
-                        info = {k: torch.mean(torch.stack(v)) for k, v in train_info.items() if v}
+                        info = {k: torch.mean(torch.stack([torch.tensor(x, device=accelerator.device) for x in v])) for k, v in train_info.items() if v}
                         info = accelerator.reduce(info, reduction="mean")
                         info.update({"epoch": epoch, "inner_epoch": inner_epoch})
                         
