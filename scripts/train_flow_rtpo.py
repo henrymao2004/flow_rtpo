@@ -525,9 +525,15 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
 
         # CFG implementation (exactly like SD3)
         if config.train.cfg:
+            # In CFG mode, embeds and pooled_embeds are concatenated [negative, positive]
+            # We need to duplicate latents and timesteps to match the doubled batch size
+            duplicated_latents = torch.cat([latents] * 2)
+            duplicated_timesteps = torch.cat([timesteps] * 2)
+            
+            
             noise_pred = transformer(
-                hidden_states=torch.cat([latents] * 2),
-                timestep=torch.cat([timesteps] * 2),
+                hidden_states=duplicated_latents,
+                timestep=duplicated_timesteps,
                 encoder_hidden_states=embeds,
                 pooled_projections=pooled_embeds,
                 return_dict=False,
@@ -966,22 +972,6 @@ def main(_):
         local_models=config.model_loading.local_models.to_dict(),
         hf_models=config.model_loading.hf_models.to_dict()
     )
-
-    # Prepare negative prompt embeddings for CFG (like SD3)
-    neg_prompt_embed, neg_pooled_prompt_embed = encode_prompt(
-        text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
-        tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
-        prompt="",  # Empty string for unconditional prompt
-        max_sequence_length=256,
-        device=accelerator.device,
-        num_images_per_prompt=1
-    )
-
-    # Prepare negative embeddings for different batch sizes (like SD3)
-    sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.train_batch_size, 1, 1)
-    train_neg_prompt_embeds = neg_prompt_embed.repeat(config.train.batch_size, 1, 1)
-    sample_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(config.sample.train_batch_size, 1)
-    train_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(config.train.batch_size, 1)
     
 
     
@@ -1158,6 +1148,24 @@ def main(_):
     pipeline.text_encoder.to(accelerator.device)
     pipeline.text_encoder_2.to(accelerator.device)
     pipeline.text_encoder_3.to(accelerator.device)
+    
+    # Prepare negative prompt embeddings for CFG (like SD3) - after moving to device
+    neg_prompt_embed, neg_pooled_prompt_embed = encode_prompt(
+        text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
+        tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
+        prompt="",  # Empty string for unconditional prompt
+        max_sequence_length=256,
+        device=accelerator.device,
+        num_images_per_prompt=1
+    )
+
+    # Prepare negative embeddings for different batch sizes (like SD3)
+    # Use a larger size to accommodate dynamic batch sizes
+    max_batch_size = max(config.sample.train_batch_size, config.train.batch_size, 16)  # Use 16 as a safe maximum
+    sample_neg_prompt_embeds = neg_prompt_embed.repeat(max_batch_size, 1, 1)
+    train_neg_prompt_embeds = neg_prompt_embed.repeat(max_batch_size, 1, 1)
+    sample_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(max_batch_size, 1)
+    train_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(max_batch_size, 1)
     
     global_step = 0
     
@@ -1618,12 +1626,12 @@ def main(_):
                 # CFG embeddings preparation (like SD3)
                 if config.train.cfg:
                     # concat negative prompts to sample prompts to avoid two forward passes
-                    embeds = torch.cat(
-                        [train_neg_prompt_embeds[:len(sample["prompt_embeds"])], sample["prompt_embeds"]]
-                    )
-                    pooled_embeds = torch.cat(
-                        [train_neg_pooled_prompt_embeds[:len(sample["pooled_prompt_embeds"])], sample["pooled_prompt_embeds"]]
-                    )
+                    batch_size = len(sample["prompt_embeds"])
+                    neg_embeds = train_neg_prompt_embeds[:batch_size]
+                    neg_pooled = train_neg_pooled_prompt_embeds[:batch_size]
+                    
+                    embeds = torch.cat([neg_embeds, sample["prompt_embeds"]])
+                    pooled_embeds = torch.cat([neg_pooled, sample["pooled_prompt_embeds"]])
                 else:
                     embeds = sample["prompt_embeds"]
                     pooled_embeds = sample["pooled_prompt_embeds"]
