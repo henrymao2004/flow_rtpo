@@ -1484,7 +1484,7 @@ def main(_):
                 
                 # Set timeout for gather operation (60 seconds)
                 signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(60)
+                signal.alarm(1800)
                 
                 # Gather from all processes
                 gathered_rewards = accelerator.gather(rewards_tensor)
