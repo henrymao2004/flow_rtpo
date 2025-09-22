@@ -159,9 +159,9 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
     print(f"[TEST EVAL] Starting test evaluation for epoch {epoch}")
     print(f"[TEST EVAL] Test set size: {len(test_prompts)}")
     
-    # Distribute test set across GPUs to avoid duplicate computation (if enabled)
+    # Handle distributed evaluation mode
     if accelerator.num_processes > 1 and getattr(config, 'distributed_eval', True):
-        # Split test set among GPUs
+        # Distributed mode: Split test set among GPUs
         total_test_size = len(test_prompts)
         per_gpu_size = (total_test_size + accelerator.num_processes - 1) // accelerator.num_processes
         start_idx = accelerator.process_index * per_gpu_size
@@ -172,12 +172,22 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
         gpu_test_metadata = test_metadata[start_idx:end_idx]
         
         print(f"[TEST EVAL] Distributed mode: GPU {accelerator.process_index}: Processing {len(gpu_test_prompts)}/{total_test_size} test prompts (indices {start_idx}:{end_idx})")
+    elif accelerator.num_processes > 1 and not getattr(config, 'distributed_eval', True):
+        # Multi-GPU but distributed_eval=False: Only main process evaluates
+        if accelerator.is_main_process:
+            gpu_test_prompts = test_prompts
+            gpu_test_metadata = test_metadata
+            print(f"[TEST EVAL] Main process only mode: GPU {accelerator.process_index}: Processing all {len(gpu_test_prompts)} test prompts")
+        else:
+            # Non-main processes skip evaluation
+            gpu_test_prompts = []
+            gpu_test_metadata = []
+            print(f"[TEST EVAL] Main process only mode: GPU {accelerator.process_index}: Skipping evaluation (not main process)")
     else:
-        # Single GPU or disabled distributed eval: process all test prompts
+        # Single GPU: process all test prompts
         gpu_test_prompts = test_prompts
         gpu_test_metadata = test_metadata
-        if accelerator.num_processes > 1:
-            print(f"[TEST EVAL] Non-distributed mode: GPU {accelerator.process_index}: Processing all {len(gpu_test_prompts)} test prompts")
+        print(f"[TEST EVAL] Single GPU mode: Processing all {len(gpu_test_prompts)} test prompts")
     
     # Use fixed, deterministic noise during evaluation for stability across epochs/runs
     def _deterministic_seed_from_prompt(prompt: str, base_seed: int) -> int:
@@ -402,6 +412,7 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
         all_test_samples.extend(batch_samples)
     
     # Cross-process gather once after all local batches complete
+    # Only gather if distributed_eval is enabled
     if accelerator.num_processes > 1 and getattr(config, 'distributed_eval', True):
         print(f"[TEST EVAL] GPU {accelerator.process_index}: Starting gather operation with {len(all_test_samples)} local samples")
         

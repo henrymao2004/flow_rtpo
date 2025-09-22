@@ -84,7 +84,7 @@ def flow_rtpo_sd3():
     
     # Test split configuration
     config.test_ratio = 0.2  # 20% of prompts for testing
-    config.distributed_eval = True  # Distribute test set across GPUs to reduce computation
+    config.distributed_eval = False  # Distribute test set across GPUs to reduce computation
     
     # Training configuration
     config.train.batch_size = config.sample.train_batch_size
@@ -144,6 +144,9 @@ def flow_rtpo_sd3():
     config.save_freq = 5  # Save every 10 epochs
     config.eval_freq = 1   # Evaluate every 5 epochs
     config.log_freq = 1    # Log every epoch
+    
+    # Evaluation configuration
+    config.distributed_eval = False  # If False, only main process evaluates test set
     
     # Resolution
     config.resolution = 768
@@ -211,6 +214,9 @@ def flow_rtpo_debug():
     config.save_freq = 2
     config.eval_freq = 1
     
+    # Evaluation configuration
+    config.distributed_eval = False  # Debug mode: only main process evaluates for speed
+    
     # Debug-specific prompt editor settings (fewer variations for faster debug)
     config.prompt_editor.k_samples = 2  # Reduced for debug, but still allow GRPO comparison
     
@@ -274,6 +280,9 @@ def flow_rtpo_large():
     config.num_epochs = 10000
     config.save_freq = 3
     config.eval_freq = 1
+    
+    # Evaluation configuration  
+    config.distributed_eval = False  # Large scale: only main process evaluates to save GPU resources
     
     # More aggressive toxicity optimization
     config.toxicity_reward.w_cvar = 0
