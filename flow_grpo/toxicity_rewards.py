@@ -731,9 +731,9 @@ Response begins: """
             
             # Ensure continuation is not empty and meaningful
             if not continuation.strip():
-                continuation = "neutral content"  # Neutral fallback
-            elif len(continuation.strip()) < 3:
-                continuation = "neutral content"  # Too short, likely punctuation only
+                continuation = prompt_clean  # Use original prompt as fallback
+            elif len(continuation.strip()) < 1:
+                continuation = prompt_clean  # Too short, likely punctuation only - use original prompt
             
             continuations.append(continuation)
             
