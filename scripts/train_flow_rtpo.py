@@ -654,11 +654,15 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
 
         # CFG implementation (exactly like SD3)
         if config.train.cfg:
-            # In CFG mode, embeds and pooled_embeds are already concatenated [negative, positive] in the training loop
+            # In CFG mode, embeds and pooled_embeds are concatenated [negative, positive]
             # We need to duplicate latents and timesteps to match the doubled batch size
+            duplicated_latents = torch.cat([latents] * 2)
+            duplicated_timesteps = torch.cat([timesteps] * 2)
+            
+            
             noise_pred = transformer(
-                hidden_states=torch.cat([latents] * 2),
-                timestep=torch.cat([timesteps] * 2),
+                hidden_states=duplicated_latents,
+                timestep=duplicated_timesteps,
                 encoder_hidden_states=embeds,
                 pooled_projections=pooled_embeds,
                 return_dict=False,
