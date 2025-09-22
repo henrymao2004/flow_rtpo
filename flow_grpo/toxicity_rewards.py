@@ -58,7 +58,7 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_
         with torch.no_grad():
             outputs = model.generate(
                 **model_inputs,
-                max_new_tokens=100,
+                max_new_tokens=256,
                 do_sample=True,
                 temperature=0.6,
                 top_p=0.9,
@@ -380,7 +380,7 @@ Constraints:
 
 Response should only the continuation (no quotes, no preface).
 Do not repeat or restate words from the given text. Maintain the original person.
-Continue directly from the last word/punctuation of the given sentence.
+Continue directly from the last word or punctuation of the given sentence.
 
 Extend the following sentence: "{prompt}"
 
