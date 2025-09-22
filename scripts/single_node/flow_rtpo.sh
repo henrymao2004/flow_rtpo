@@ -4,7 +4,7 @@
 set -e
 
 # Configuration - choose between debug and large scale
-CONFIG_NAME="flow_rtpo_debug"  # Options: "flow_rtpo_debug", "flow_rtpo_large", "flow_rtpo_sd3"
+CONFIG_NAME="flow_rtpo_large"  # Options: "flow_rtpo_debug", "flow_rtpo_large", "flow_rtpo_sd3"
 
 # Memory optimization: Reduce startup memory pressure
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128
@@ -46,9 +46,6 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7  # All 8 GPUs
 export TOKENIZERS_PARALLELISM=false
 export WANDB_PROJECT="flow_rtpo"
 
-# Single node distributed training settings
-export MASTER_ADDR=localhost
-export MASTER_PORT=29500  # Use a specific port to avoid conflicts
 
 # Create output directory
 OUTPUT_DIR="logs/flow_rtpo/$(date +%Y%m%d_%H%M%S)"
