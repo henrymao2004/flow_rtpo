@@ -1888,17 +1888,101 @@ def main(_):
                         # Backward pass (like SD3)
                         accelerator.backward(flow_loss)
                         
+                        # Initialize variables for logging
+                        pre_clip_norm = 0.0
+                        total_weight_change = 0.0
+                        relative_weight_change = 0.0
+                        
+                        # Detailed gradient and training state logging
+                        if accelerator.sync_gradients and accelerator.is_main_process:
+                            # Calculate pre-clipping gradient norm
+                            for p in transformer_trainable_parameters:
+                                if p.grad is not None:
+                                    param_norm = p.grad.data.norm(2)
+                                    pre_clip_norm += param_norm.item() ** 2
+                            pre_clip_norm = pre_clip_norm ** 0.5
+                            
+                            # Get current learning rate
+                            current_lr = optimizer.param_groups[0]['lr']
+                            
+                            # EMA difference calculation (if EMA is enabled)
+                            ema_diff = 0.0
+                            if config.train.ema and ema is not None:
+                                ema_diff = 0.0
+                                for param, ema_param in zip(transformer_trainable_parameters, ema.parameters):
+                                    if param.data is not None and ema_param is not None:
+                                        ema_diff += (param.data - ema_param).norm(2).item() ** 2
+                                ema_diff = ema_diff ** 0.5
+                            
+                            logger.info(f"[EPOCH {epoch}][STEP {global_step}] Pre-clip grad norm: {pre_clip_norm:.6f}")
+                            logger.info(f"[EPOCH {epoch}][STEP {global_step}] Learning rate: {current_lr:.2e}")
+                            logger.info(f"[EPOCH {epoch}][STEP {global_step}] Flow loss: {flow_loss.item():.6f}")
+                            logger.info(f"[EPOCH {epoch}][STEP {global_step}] Policy loss: {policy_loss.item():.6f}")
+                            logger.info(f"[EPOCH {epoch}][STEP {global_step}] KL loss: {kl_loss.item():.6f}")
+                            if config.train.ema and ema is not None:
+                                logger.info(f"[EPOCH {epoch}][STEP {global_step}] EMA difference: {ema_diff:.6f}")
+                        
                         # Gradient clipping (like SD3)
                         if accelerator.sync_gradients:
-                            torch.nn.utils.clip_grad_norm_(transformer_trainable_parameters, 1.0)
+                            torch.nn.utils.clip_grad_norm_(transformer_trainable_parameters, 0.1)
+                            
+                            # Calculate post-clipping gradient norm for verification
+                            if accelerator.is_main_process:
+                                post_clip_norm = 0.0
+                                for p in transformer_trainable_parameters:
+                                    if p.grad is not None:
+                                        post_clip_norm += p.grad.data.norm(2).item() ** 2
+                                post_clip_norm = post_clip_norm ** 0.5
+                                
+                                logger.info(f"[EPOCH {epoch}][STEP {global_step}] Post-clip grad norm: {post_clip_norm:.6f}")
+                                
+                                # Check if clipping actually occurred
+                                clipping_occurred = pre_clip_norm > 0.1
+                                logger.info(f"[EPOCH {epoch}][STEP {global_step}] Gradient clipping occurred: {clipping_occurred}")
+                                if clipping_occurred:
+                                    clipping_ratio = post_clip_norm / pre_clip_norm
+                                    logger.info(f"[EPOCH {epoch}][STEP {global_step}] Clipping ratio: {clipping_ratio:.4f}")
+                        
+                        # Store pre-step weights for weight change tracking
+                        if accelerator.sync_gradients and accelerator.is_main_process:
+                            pre_step_weights = {}
+                            for name, param in pipeline.transformer.named_parameters():
+                                if param.requires_grad:
+                                    pre_step_weights[name] = param.data.clone()
                         
                         # Optimizer step
                         optimizer.step()
                         optimizer.zero_grad()
                         
+                        # Calculate weight change magnitude
+                        if accelerator.sync_gradients and accelerator.is_main_process:
+                            total_weight_change = 0.0
+                            total_weight_norm = 0.0
+                            for name, param in pipeline.transformer.named_parameters():
+                                if param.requires_grad and name in pre_step_weights:
+                                    weight_change = (param.data - pre_step_weights[name]).norm(2).item()
+                                    weight_norm = param.data.norm(2).item()
+                                    total_weight_change += weight_change ** 2
+                                    total_weight_norm += weight_norm ** 2
+                            
+                            total_weight_change = total_weight_change ** 0.5
+                            total_weight_norm = total_weight_norm ** 0.5
+                            relative_weight_change = total_weight_change / total_weight_norm if total_weight_norm > 0 else 0.0
+                            
+                            logger.info(f"[EPOCH {epoch}][STEP {global_step}] Weight change magnitude: {total_weight_change:.6f}")
+                            logger.info(f"[EPOCH {epoch}][STEP {global_step}] Relative weight change: {relative_weight_change:.6f}")
+                            
+                            # Alert if weight changes are too large (potential instability)
+                            if relative_weight_change > 0.01:  # 1% threshold
+                                logger.warning(f"[EPOCH {epoch}][STEP {global_step}] Large weight change detected! Relative change: {relative_weight_change:.6f}")
+                        
                         # Track metrics
                         train_info["flow_policy_loss"].append(policy_loss.item())
                         train_info["kl_loss"].append(kl_loss.item())
+                        if accelerator.sync_gradients and accelerator.is_main_process:
+                            train_info["gradient_norm"].append(pre_clip_norm)
+                            train_info["weight_change"].append(total_weight_change)
+                            train_info["relative_weight_change"].append(relative_weight_change)
                     
                     # Checks if the accelerator has performed an optimization step behind the scenes (like SD3)
                     if accelerator.sync_gradients:
