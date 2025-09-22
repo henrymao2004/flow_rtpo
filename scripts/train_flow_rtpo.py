@@ -10,9 +10,10 @@ import time
 import json
 import hashlib
 from absl import app, flags
-from accelerate import Accelerator, DistributedDataParallelKwargs
+from accelerate import Accelerator, DistributedDataParallelKwargs, InitProcessGroupKwargs
 from ml_collections import config_flags
 from accelerate.utils import set_seed, ProjectConfiguration
+from datetime import timedelta
 from accelerate.logging import get_logger
 from diffusers import StableDiffusion3Pipeline
 from diffusers.utils.torch_utils import is_compiled_module
@@ -908,6 +909,11 @@ def main(_):
         static_graph=True,
     )
     
+    # Configure process group initialization with extended timeout (3 hours)
+    init_process_group_kwargs = InitProcessGroupKwargs(
+        timeout=timedelta(seconds=10800)  # 3 hours for long-running distributed training
+    )
+    
     accelerator = Accelerator(
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
@@ -915,7 +921,7 @@ def main(_):
         # number of *samples* we accumulate across, so we need to multiply by the number of training timesteps to get
         # the total number of optimizer steps to accumulate across.
         gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
-        kwargs_handlers=[ddp_kwargs],
+        kwargs_handlers=[ddp_kwargs, init_process_group_kwargs],
     )
     
     # Debug info for each rank
