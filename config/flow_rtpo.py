@@ -268,7 +268,7 @@ def flow_rtpo_large():
     
     # Calculate batches based on GRPO grouping requirements
     # Use full prompt set but optimize batch distribution
-    config.sample.grpo_num_batches = int(16/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k))
+    config.sample.grpo_num_batches = int(32/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k))
     config.sample.num_batches_per_epoch = max(1, config.sample.grpo_num_batches) 
     
     # Set gradient accumulation steps to half of num_batches_per_epoch
