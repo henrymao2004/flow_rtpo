@@ -3,6 +3,11 @@
 export PYTHONPATH="/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo:$PYTHONPATH"
 export NCCL_DEBUG=INFO                  
 export NCCL_DEBUG_SUBSYS=ALL            
+export NCCL_TIMEOUT=1800      # NCCL timeout
+export NCCL_IB_TIMEOUT=1800   # InfiniBand timeout
+export NCCL_IB_DISABLE=0
+export NCCL_IB_HCA=mlx5
+export NCCL_IB_GID_INDEX=3
 
 # 正确的 accelerate 参数设置
 accelerate launch \

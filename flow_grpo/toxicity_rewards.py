@@ -274,7 +274,7 @@ class ToxicityRewardSystem:
         
     # Aesthetic scorer initialization removed per user request
     
-    def safe_generate(self, inputs: Dict, timeout: int = 120) -> List[str]:
+    def safe_generate(self, inputs: Dict, timeout: int = 1200) -> List[str]:
         """Safe VLM generation with subprocess timeout."""
         try:
             # Serialize inputs
@@ -423,7 +423,7 @@ Response begins: """
                     
                     # Try safe batch generation with subprocess timeout
                     try:
-                        batch_responses = self.safe_generate(batch_inputs, timeout=120)
+                        batch_responses = self.safe_generate(batch_inputs, timeout=1200)
                         
                     except (TimeoutError, Exception) as e:
                         # Fallback: use original prompts for this batch
