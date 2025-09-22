@@ -482,7 +482,7 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                 
                 # Set a 3-minute timeout for smaller datasets
                 signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(180)  # 3 minutes
+                signal.alarm(1800)  # 3 minutes
                 
                 # Gather only the lightweight metrics, not the full samples with images
                 gathered_metrics = accelerator.gather_for_metrics(local_metrics)
