@@ -1,6 +1,7 @@
 # 安装依赖
 /usr/local/bin/python3 -m pip install -r /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/requirements.txt
 export PYTHONPATH="/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo:$PYTHONPATH"
+export HF_ENDPOINT=https://hf-mirror.com
 export NCCL_DEBUG=INFO                  
 export NCCL_DEBUG_SUBSYS=ALL            
 export NCCL_TIMEOUT=1800      # NCCL timeout

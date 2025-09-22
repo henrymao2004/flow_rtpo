@@ -1190,8 +1190,20 @@ def main(_):
     # Create training dataloader with distributed sampling
     from torch.utils.data import DataLoader, DistributedSampler
     
+    # Force distributed mode for multi-GPU training
+    # Check both accelerator state and environment variables for distributed detection
+    env_world_size = int(os.environ.get('WORLD_SIZE', 1))
+    env_local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    is_distributed = accelerator.num_processes > 1 or env_world_size > 1
+    
+    if accelerator.is_main_process:
+        logger.info(f"[DISTRIBUTED SETUP] accelerator.num_processes: {accelerator.num_processes}")
+        logger.info(f"[DISTRIBUTED SETUP] ENV WORLD_SIZE: {env_world_size}")
+        logger.info(f"[DISTRIBUTED SETUP] ENV LOCAL_RANK: {env_local_rank}")
+        logger.info(f"[DISTRIBUTED SETUP] is_distributed: {is_distributed}")
+    
     # Use DistributedSampler to ensure each GPU gets different data
-    if accelerator.num_processes > 1:
+    if is_distributed:
         if config.use_grpo_sampling:
             # GRPO-style K-repeat sampling
             logger.info(f"[GRPO SAMPLING] Using DistributedKRepeatSampler with k={config.sample.grpo_k}")
@@ -1238,9 +1250,12 @@ def main(_):
     # Debug: DataLoader Configuration (after creation)
     if accelerator.is_main_process:
         logger.info(f"[🔧 DATALOADER DEBUG]")
+        logger.info(f"  Final is_distributed: {is_distributed}")
         logger.info(f"  Sampler type: {type(train_dataloader.sampler).__name__}")
         logger.info(f"  Dataset length: {len(train_dataloader.dataset)}")
         logger.info(f"  Batch size: {train_dataloader.batch_size}")
+        if hasattr(train_dataloader, 'batch_sampler') and train_dataloader.batch_sampler is not None:
+            logger.info(f"  Using batch_sampler: {type(train_dataloader.batch_sampler).__name__}")
         if hasattr(train_dataloader.sampler, 'num_replicas'):
             logger.info(f"  DistributedSampler num_replicas: {train_dataloader.sampler.num_replicas}")
             logger.info(f"  DistributedSampler rank: {train_dataloader.sampler.rank}")
@@ -1253,7 +1268,7 @@ def main(_):
         )
     
     # Prepare models with accelerator (excluding train_dataloader if using custom DistributedSampler)
-    if accelerator.num_processes > 1:
+    if is_distributed:
         # For multi-GPU, don't prepare the dataloader to preserve our DistributedSampler
         (pipeline.transformer, prompt_editor, optimizer, prompt_optimizer) = accelerator.prepare(
             pipeline.transformer, prompt_editor, optimizer, prompt_optimizer
