@@ -759,7 +759,7 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
             text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
             tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
             prompt=modified_prompt,
-            max_sequence_length=256,
+            max_sequence_length=128,
             device=accelerator.device,
             num_images_per_prompt=1
         )
@@ -1305,7 +1305,7 @@ def main(_):
         text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
         tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
         prompt="",  # Empty string for unconditional prompt
-        max_sequence_length=256,
+        max_sequence_length=128,
         device=accelerator.device,
         num_images_per_prompt=1
     )
