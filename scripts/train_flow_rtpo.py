@@ -1689,25 +1689,75 @@ def main(_):
         # This avoids duplicate reward computation while maintaining real-time visibility.
         
         #################### ADVANTAGE COMPUTATION ####################
+        # SD3-style distributed advantage computation with gather-compute-ungather pattern
+        
+        # First, organize samples into SD3-style format for gathering
+        samples_for_advantage = {
+            "rewards": all_rewards_expanded,  # [batch, timesteps]
+            "prompt_ids": [],  # Will store prompt IDs for per-prompt tracking
+        }
+        
+        # Create prompt IDs for gathering (similar to SD3)
+        try:
+            # Use pipeline tokenizer for consistency
+            tokenizer = pipeline.tokenizer
+            prompt_ids = tokenizer(
+                epoch_prompts,
+                padding="max_length",
+                max_length=256,
+                truncation=True,
+                return_tensors="pt",
+            ).input_ids.to(accelerator.device)
+            samples_for_advantage["prompt_ids"] = prompt_ids
+        except Exception as e:
+            logger.warning(f"Failed to tokenize prompts for advantage computation: {e}")
+            # Fallback: create dummy prompt IDs
+            samples_for_advantage["prompt_ids"] = torch.zeros(
+                (len(epoch_prompts), 256), dtype=torch.long, device=accelerator.device
+            )
+        
+        # Gather rewards and prompts across processes (like SD3)
+        gathered_rewards = accelerator.gather(samples_for_advantage["rewards"])
+        gathered_prompt_ids = accelerator.gather(samples_for_advantage["prompt_ids"])
+        
+        # Convert gathered data for advantage computation (like SD3)
+        gathered_rewards_dict = {"avg": gathered_rewards}
+        gathered_prompts = tokenizer.batch_decode(
+            gathered_prompt_ids.cpu().numpy(), skip_special_tokens=True
+        )
+        
+        # Compute advantages on gathered data (like SD3)
         if config.per_prompt_stat_tracking:
-            # Use expanded rewards for advantage computation (like SD3)
-            advantages = stat_tracker.update(epoch_prompts, all_rewards_expanded.cpu().numpy())
+            advantages = stat_tracker.update(gathered_prompts, gathered_rewards_dict['avg'].cpu().numpy())
         else:
-            # Compute advantages using expanded rewards (like SD3)
-            rewards_flat = all_rewards_expanded.flatten()
-            advantages = (rewards_flat - rewards_flat.mean()) / (rewards_flat.std() + 1e-4)
-            advantages = advantages.reshape(all_rewards_expanded.shape)  # [batch, timesteps]
+            # Global advantage computation like SD3
+            gathered_rewards_flat = gathered_rewards_dict['avg'].flatten()
+            advantages = (gathered_rewards_flat - gathered_rewards_flat.mean()) / (gathered_rewards_flat.std() + 1e-4)
+            advantages = advantages.reshape(gathered_rewards_dict['avg'].shape)  # [total_batch, timesteps]
         
-        # Convert to tensor format
-        advantages_tensor = torch.tensor(advantages, device=accelerator.device, dtype=torch.float32)
+        # Ungather advantages: redistribute to corresponding samples on each process (like SD3)
+        advantages = torch.as_tensor(advantages, dtype=torch.float32)
+        if accelerator.num_processes > 1:
+            # Multi-GPU: ungather advantages to each process
+            local_advantages = advantages.reshape(
+                accelerator.num_processes, -1, advantages.shape[-1]
+            )[accelerator.process_index].to(accelerator.device)
+        else:
+            # Single GPU: use all advantages directly
+            local_advantages = advantages.to(accelerator.device)
         
-        # Log advantage statistics (condensed)
+        # Log advantage statistics (using local advantages)
         if accelerator.is_main_process:
-            logger.info(f"Advantage computation: mean={advantages_tensor.mean():.6f}, std={advantages_tensor.std():.6f}, max_abs={advantages_tensor.abs().max():.6f}")
+            logger.info(f"Global advantage computation: mean={advantages.mean():.6f}, std={advantages.std():.6f}")
+        logger.info(f"Local advantages (GPU {accelerator.process_index}): mean={local_advantages.mean():.6f}, std={local_advantages.std():.6f}, max_abs={local_advantages.abs().max():.6f}")
         
-        # Assign advantages to samples (now in 2D format like SD3)
+        # Assign ungathered advantages to local samples (like SD3)
         for i, sample in enumerate(epoch_samples):
-            sample["advantages"] = advantages_tensor[i]  # [timesteps] - already in correct shape
+            if i < local_advantages.shape[0]:
+                sample["advantages"] = local_advantages[i]  # [timesteps]
+            else:
+                # Handle edge case where local samples exceed expected count
+                sample["advantages"] = torch.zeros(num_train_timesteps, device=accelerator.device)
         
         #################### TRAINING ####################
         

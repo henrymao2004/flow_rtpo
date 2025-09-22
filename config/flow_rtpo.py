@@ -273,7 +273,8 @@ def flow_rtpo_large():
     
     # Set gradient accumulation steps to half of num_batches_per_epoch
     # This ensures gradients are updated twice per epoch for stability
-    config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch // 2
+    # Use max(1, ...) to ensure at least 1 gradient accumulation step
+    config.train.gradient_accumulation_steps = max(1, config.sample.num_batches_per_epoch // 2)
     config.train.batch_size = config.sample.batch_size
     config.train.cfg = True  # Enable CFG (like SD3)
     # Extended training
