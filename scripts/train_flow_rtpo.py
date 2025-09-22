@@ -654,15 +654,11 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
 
         # CFG implementation (exactly like SD3)
         if config.train.cfg:
-            # In CFG mode, embeds and pooled_embeds are concatenated [negative, positive]
+            # In CFG mode, embeds and pooled_embeds are already concatenated [negative, positive] in the training loop
             # We need to duplicate latents and timesteps to match the doubled batch size
-            duplicated_latents = torch.cat([latents] * 2)
-            duplicated_timesteps = torch.cat([timesteps] * 2)
-            
-            
             noise_pred = transformer(
-                hidden_states=duplicated_latents,
-                timestep=duplicated_timesteps,
+                hidden_states=torch.cat([latents] * 2),
+                timestep=torch.cat([timesteps] * 2),
                 encoder_hidden_states=embeds,
                 pooled_projections=pooled_embeds,
                 return_dict=False,
@@ -759,7 +755,7 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
             text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
             tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
             prompt=modified_prompt,
-            max_sequence_length=128,
+            max_sequence_length=256,
             device=accelerator.device,
             num_images_per_prompt=1
         )
@@ -1305,32 +1301,14 @@ def main(_):
         text_encoders=[pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3],
         tokenizers=[pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3],
         prompt="",  # Empty string for unconditional prompt
-        max_sequence_length=128,
+        max_sequence_length=256,
         device=accelerator.device,
         num_images_per_prompt=1
     )
 
     # Prepare negative embeddings for different batch sizes (like SD3)
-    # Use a larger size to accommodate dynamic batch sizes, especially in distributed training
-    # Calculate a safe maximum considering GRPO k-repeat factor and distributed sampling
-    
-    # Get k_samples correctly - check both config locations
-    k_samples = config.prompt_editor.get('k_samples', 2)  # Default to 4 like other files
-    grpo_k = getattr(config.sample, 'grpo_k', config.sample.num_image_per_prompt * k_samples)
-    distributed_factor = max(accelerator.num_processes, 1)
-    
-    # Be more conservative for large-scale configs
-    max_batch_size = max(
-        config.sample.train_batch_size * grpo_k,  # GRPO expansion
-        config.train.batch_size * distributed_factor,  # Distributed expansion
-        64  # Conservative minimum for large-scale training (increased from 32)
-    )
-    
-    if accelerator.is_main_process:
-        logger.info(f"[BATCH SIZE CALC] k_samples: {k_samples}, grpo_k: {grpo_k}")
-        logger.info(f"[BATCH SIZE CALC] train_batch_size: {config.sample.train_batch_size}")
-        logger.info(f"[BATCH SIZE CALC] distributed_factor: {distributed_factor}")
-        logger.info(f"[BATCH SIZE CALC] max_batch_size: {max_batch_size}")
+    # Use a larger size to accommodate dynamic batch sizes
+    max_batch_size = max(config.sample.train_batch_size, config.train.batch_size, 16)  # Use 16 as a safe maximum
     sample_neg_prompt_embeds = neg_prompt_embed.repeat(max_batch_size, 1, 1)
     train_neg_prompt_embeds = neg_prompt_embed.repeat(max_batch_size, 1, 1)
     sample_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(max_batch_size, 1)
@@ -1846,21 +1824,8 @@ def main(_):
                 if config.train.cfg:
                     # concat negative prompts to sample prompts to avoid two forward passes
                     batch_size = len(sample["prompt_embeds"])
-                    
-                    # Safety check: ensure batch_size doesn't exceed pre-allocated negative embeddings
-                    if batch_size > train_neg_prompt_embeds.size(0):
-                        logger.warning(f"Batch size {batch_size} exceeds pre-allocated negative embeddings size {train_neg_prompt_embeds.size(0)}. "
-                                     f"This may indicate a distributed training configuration issue.")
-                        # Create additional negative embeddings on-the-fly if needed
-                        additional_neg_embeds = neg_prompt_embed.repeat(batch_size - train_neg_prompt_embeds.size(0), 1, 1)
-                        extended_neg_embeds = torch.cat([train_neg_prompt_embeds, additional_neg_embeds], dim=0)
-                        additional_neg_pooled = neg_pooled_prompt_embed.repeat(batch_size - train_neg_pooled_prompt_embeds.size(0), 1)
-                        extended_neg_pooled = torch.cat([train_neg_pooled_prompt_embeds, additional_neg_pooled], dim=0)
-                        neg_embeds = extended_neg_embeds[:batch_size]
-                        neg_pooled = extended_neg_pooled[:batch_size]
-                    else:
-                        neg_embeds = train_neg_prompt_embeds[:batch_size]
-                        neg_pooled = train_neg_pooled_prompt_embeds[:batch_size]
+                    neg_embeds = train_neg_prompt_embeds[:batch_size]
+                    neg_pooled = train_neg_pooled_prompt_embeds[:batch_size]
                     
                     embeds = torch.cat([neg_embeds, sample["prompt_embeds"]])
                     pooled_embeds = torch.cat([neg_pooled, sample["pooled_prompt_embeds"]])

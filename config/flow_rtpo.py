@@ -230,7 +230,7 @@ def flow_rtpo_debug():
     # Gradient accumulation for debug
     config.train.gradient_accumulation_steps = max(1, config.sample.num_batches_per_epoch // 2)
     config.train.batch_size = config.sample.batch_size
-    config.train.cfg = True  # Enable CFG (like SD3)
+    config.train.cfg = False  # Enable CFG (like SD3)
     
     config.run_name = "flow_rtpo_debug"
     
@@ -276,7 +276,7 @@ def flow_rtpo_large():
     # Use max(1, ...) to ensure at least 1 gradient accumulation step
     config.train.gradient_accumulation_steps = max(1, config.sample.num_batches_per_epoch // 2)
     config.train.batch_size = config.sample.batch_size
-    config.train.cfg = True  # Enable CFG (like SD3)
+    config.train.cfg = False  # Enable CFG (like SD3)
     # Extended training
     config.num_epochs = 10000
     config.save_freq = 3
