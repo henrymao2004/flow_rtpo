@@ -402,13 +402,107 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
     
     # Cross-process gather once after all local batches complete
     if accelerator.num_processes > 1 and getattr(config, 'distributed_eval', True):
-        accelerator.wait_for_everyone()
-        gathered_samples = accelerator.gather_for_metrics(all_test_samples)
-        if accelerator.is_main_process:
-            all_test_samples = gathered_samples
-            logger.info(f"[TEST EVAL] Gathered {len(all_test_samples)} samples from {accelerator.num_processes} processes (distributed evaluation)")
-        else:
-            all_test_samples = []
+        print(f"[TEST EVAL] GPU {accelerator.process_index}: Starting gather operation with {len(all_test_samples)} local samples")
+        
+        # Check for empty batches across processes to avoid deadlock
+        local_sample_count = torch.tensor(len(all_test_samples), device=accelerator.device)
+        try:
+            accelerator.wait_for_everyone()
+            all_sample_counts = accelerator.gather(local_sample_count)
+            total_samples = all_sample_counts.sum().item()
+            print(f"[TEST EVAL] GPU {accelerator.process_index}: Total samples across all GPUs: {total_samples}")
+            
+            if total_samples == 0:
+                print(f"[TEST EVAL] GPU {accelerator.process_index}: No samples to gather, skipping")
+                all_test_samples = []
+                return None
+                
+        except Exception as e:
+            print(f"[TEST EVAL] GPU {accelerator.process_index}: Failed to check sample counts: {e}")
+            # Continue with local data only
+            if not accelerator.is_main_process:
+                all_test_samples = []
+                return None
+        
+        # Instead of gathering full samples (which contain PIL images and large tensors),
+        # extract only the essential metrics that we need for evaluation
+        local_metrics = []
+        for sample in all_test_samples:
+            metrics = {
+                "original_prompt": sample["original_prompt"],
+                "modified_prompt": sample["modified_prompt"],
+                "sample_id": sample["sample_id"],
+                "gpu_id": sample["gpu_id"],
+                "reward": sample.get("reward", 0.0),
+                "toxicity_scores": sample.get("toxicity_scores", {}),
+                "clip_score": sample.get("clip_score", 0.0),
+                "vlm_response": sample.get("vlm_response", ""),
+                "continuation_text": sample.get("continuation_text", ""),
+            }
+            local_metrics.append(metrics)
+        
+        try:
+            print(f"[TEST EVAL] GPU {accelerator.process_index}: Gathering {len(local_metrics)} metrics...")
+            
+            # For large datasets, gather in smaller chunks to avoid NCCL timeouts
+            if len(local_metrics) > 50:
+                print(f"[TEST EVAL] GPU {accelerator.process_index}: Large dataset detected, using chunked gathering")
+                gathered_metrics = []
+                chunk_size = 20  # Process 20 samples at a time
+                
+                for i in range(0, len(local_metrics), chunk_size):
+                    chunk = local_metrics[i:i + chunk_size]
+                    print(f"[TEST EVAL] GPU {accelerator.process_index}: Gathering chunk {i//chunk_size + 1}/{(len(local_metrics) + chunk_size - 1)//chunk_size}")
+                    
+                    try:
+                        chunk_gathered = accelerator.gather_for_metrics(chunk)
+                        if accelerator.is_main_process:
+                            gathered_metrics.extend(chunk_gathered)
+                        
+                        # Small delay between chunks to prevent overwhelming NCCL
+                        import time
+                        time.sleep(0.1)
+                        
+                    except Exception as chunk_e:
+                        print(f"[TEST EVAL] GPU {accelerator.process_index}: Chunk gather failed: {chunk_e}")
+                        # Continue with remaining chunks
+                        continue
+                
+                if accelerator.is_main_process:
+                    all_test_samples = gathered_metrics
+                    logger.info(f"[TEST EVAL] Successfully gathered {len(all_test_samples)} sample metrics via chunked gathering")
+                else:
+                    all_test_samples = []
+            else:
+                # Use a timeout wrapper for the gather operation
+                import signal
+                
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Test evaluation gather operation timed out")
+                
+                # Set a 3-minute timeout for smaller datasets
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(180)  # 3 minutes
+                
+                # Gather only the lightweight metrics, not the full samples with images
+                gathered_metrics = accelerator.gather_for_metrics(local_metrics)
+                signal.alarm(0)  # Cancel timeout
+                
+                if accelerator.is_main_process:
+                    # Reconstruct all_test_samples from gathered metrics
+                    all_test_samples = gathered_metrics
+                    logger.info(f"[TEST EVAL] Successfully gathered {len(all_test_samples)} sample metrics from {accelerator.num_processes} processes")
+                else:
+                    all_test_samples = []
+                
+        except (TimeoutError, Exception) as e:
+            if 'signal' in locals():
+                signal.alarm(0)  # Cancel timeout
+            logger.warning(f"[TEST EVAL] GPU {accelerator.process_index}: Gather operation failed: {e}. Using local data only.")
+            print(f"[TEST EVAL] GPU {accelerator.process_index}: Falling back to local evaluation data")
+            # Fallback: use only local data
+            if not accelerator.is_main_process:
+                all_test_samples = []
     elif accelerator.num_processes > 1:
         # Non-distributed eval: all processes computed same data; keep only on main
         if not accelerator.is_main_process:

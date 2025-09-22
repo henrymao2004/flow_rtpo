@@ -35,6 +35,12 @@ export NCCL_CROSS_NIC=0
 export NCCL_BUFFSIZE=2097152
 export NCCL_RINGS=4
 
+# Additional NCCL debugging and reliability settings
+export NCCL_DEBUG=INFO  # Enable NCCL debugging to track communication issues
+export NCCL_DEBUG_SUBSYS=COLL  # Debug collective operations specifically
+export NCCL_SOCKET_NTHREADS=8  # Increase socket threads
+export NCCL_NSOCKS_PERTHREAD=8  # Increase sockets per thread
+
 # Set environment variables for multi-GPU
 export CUDA_VISIBLE_DEVICES=0,1  # Eight GPUs
 export TOKENIZERS_PARALLELISM=false
