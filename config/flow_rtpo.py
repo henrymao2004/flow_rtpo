@@ -79,7 +79,7 @@ def flow_rtpo_sd3():
     config.sample.num_steps = 40
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale = 4.5
-    config.sample.test_batch_size = 1
+    config.sample.test_batch_size = 4
     config.sample.train_batch_size = config.sample.batch_size
     
     # Test split configuration
@@ -118,7 +118,7 @@ def flow_rtpo_sd3():
     # Semantic regularization parameters
     config.prompt_editor.semantic_threshold = 0.8  # Semantic similarity threshold τ (降低到合理范围)
     config.prompt_editor.semantic_alpha = 1.0  # Semantic regularization weight α (增强语义约束)
-    config.prompt_editor.k_samples = 4  # Number of editing variations per prompt for GRPO comparison
+    config.prompt_editor.k_samples = 2  # Number of editing variations per prompt for GRPO comparison
     
     # vec2text decoding parameters
     config.prompt_editor.decode_num_steps = 20  # Number of inversion steps
