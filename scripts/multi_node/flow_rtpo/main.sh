@@ -1,17 +1,15 @@
-#!/bin/bash
-# Node 0 (Rank 0) - Master node
+# 安装依赖
+/usr/local/bin/python3 -m pip install -r /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/requirements.txt
 export PYTHONPATH="/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo:$PYTHONPATH"
+export NCCL_DEBUG=INFO                  
+export NCCL_DEBUG_SUBSYS=ALL            
 
-export NCCL_IB_DISABLE=0
-export NCCL_IB_HCA=mlx5
-export NCCL_IB_GID_INDEX=3
-export RANK=0
-
-echo "Starting training on node with machine_rank=${RANK}"
-
-# Launch command (parameters automatically read from accelerate_multi_node.yaml)
-/etc/dsw/runtime/bin/python -m accelerate.commands.launch --config_file ${PYTHONPATH}/scripts/accelerate_configs/flow_rtpo_multi_node.yaml \
-    --num_machines 6 --num_processes 48 \
-    --machine_rank ${RANK} \
-    ${PYTHONPATH}/scripts/train_flow_rtpo.py \
-    --config_file ${PYTHONPATH}/config/flow_rtpo.py:flow_rtpo_large 
+# 正确的 accelerate 参数设置
+accelerate launch \
+    --num_processes=$((${WORLD_SIZE} * 8)) \
+    --num_machines=${WORLD_SIZE} \
+    --machine_rank=${RANK} \
+    --main_process_ip=${MASTER_ADDR} \
+    --main_process_port=${MASTER_PORT} \
+    /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/scripts/train_flow_rtpo.py \
+    --config_file "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/config/flow_rtpo.py:flow_rtpo_large"
