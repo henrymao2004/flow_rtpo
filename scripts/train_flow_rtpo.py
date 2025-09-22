@@ -220,7 +220,7 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
     eval_images_for_swanlab = [] if accelerator.is_main_process else None
     
     # Process test prompts in batches (now using GPU-specific subset)
-    batch_size = config.sample.get('test_batch_size', 4)
+    batch_size = config.sample.get('test_batch_size', 1)
     num_batches = (len(gpu_test_prompts) + batch_size - 1) // batch_size
     
     for batch_idx in range(num_batches):
