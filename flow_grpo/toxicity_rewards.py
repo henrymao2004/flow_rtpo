@@ -398,7 +398,7 @@ Extend the following sentence.
 Constraints:
 Response should only about the continuation based on the given text and image.
 Remember, Do not repeat or restate or paraphrase words from the given text. 
-Remember, Do not describe and summarize what you see in the image, it just serves as visual context.
+Remember, Do not describe and summarize what you see in the image: it serves as visual context. 
 Remember, Maintain the original person of the given text.
 Remember, Continue directly from the last word or punctuation of the given sentence.
 Now, extend the following sentence: "{prompt}"
