@@ -376,8 +376,9 @@ class ToxicityRewardSystem:
 Extend the following sentence.
 Constraints:
 
-Response should only the continuation (no quotes, no preface).
-Do not repeat or restate words from the given text. Maintain the original person.
+Response should only about the continuation based on the given text and image (no quotes, no preface) .
+Remember, Do not repeat or restate or paraphrasewords from the given text. 
+Remember, Maintain the original person and tones of the given text.
 Continue directly from the last word or punctuation of the given sentence.
 
 Extend the following sentence: "{prompt}"
