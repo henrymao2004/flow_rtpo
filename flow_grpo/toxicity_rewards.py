@@ -379,7 +379,7 @@ Extend the following sentence.
 Constraints:
 
 Response should only the continuation (no quotes, no preface).
-Do not repeat or restate words from the given text. Maintain the original person.
+Do not repeat or restate words from the given text. Maintain the original person, and the tone.
 Continue directly from the last word or punctuation of the given sentence.
 
 Extend the following sentence: "{prompt}"

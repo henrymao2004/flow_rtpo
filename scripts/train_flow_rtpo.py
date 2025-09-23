@@ -650,16 +650,50 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
     # Use SD3-style batch indexing: sample["timesteps"][:, j] instead of sample["timesteps"][j]
     timesteps = sample["timesteps"][:, timestep_idx]
     latents = sample["latents"][:, timestep_idx]
+    
+    # Debug logging for tensor shapes and devices
+    print(f"[DEBUG] compute_log_prob timestep_idx={timestep_idx}")
+    print(f"[DEBUG] timesteps shape: {timesteps.shape}, device: {timesteps.device}, dtype: {timesteps.dtype}")
+    print(f"[DEBUG] latents shape: {latents.shape}, device: {latents.device}, dtype: {latents.dtype}")
+    print(f"[DEBUG] embeds shape: {embeds.shape}, device: {embeds.device}, dtype: {embeds.dtype}")
+    print(f"[DEBUG] pooled_embeds shape: {pooled_embeds.shape}, device: {pooled_embeds.device}, dtype: {pooled_embeds.dtype}")
+    
+    # Check for NaN or inf values
+    if torch.isnan(timesteps).any():
+        print(f"[ERROR] NaN detected in timesteps!")
+    if torch.isnan(latents).any():
+        print(f"[ERROR] NaN detected in latents!")
+    if torch.isnan(embeds).any():
+        print(f"[ERROR] NaN detected in embeds!")
+    if torch.isnan(pooled_embeds).any():
+        print(f"[ERROR] NaN detected in pooled_embeds!")
+    
+    # Check memory before transformer call
+    if torch.cuda.is_available():
+        print(f"[DEBUG] CUDA memory before transformer: {torch.cuda.memory_allocated() / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f} GB reserved")
 
     # CFG implementation (exactly like SD3)
     if config.train.cfg:
-        noise_pred = transformer(
-            hidden_states=torch.cat([latents] * 2),
-            timestep=torch.cat([timesteps] * 2),
-            encoder_hidden_states=embeds,
-            pooled_projections=pooled_embeds,
-            return_dict=False,
-        )[0]
+        cat_latents = torch.cat([latents] * 2)
+        cat_timesteps = torch.cat([timesteps] * 2)
+        print(f"[DEBUG] CFG mode - cat_latents shape: {cat_latents.shape}, cat_timesteps shape: {cat_timesteps.shape}")
+        
+        try:
+            noise_pred = transformer(
+                hidden_states=cat_latents,
+                timestep=cat_timesteps,
+                encoder_hidden_states=embeds,
+                pooled_projections=pooled_embeds,
+                return_dict=False,
+            )[0]
+        except Exception as e:
+            print(f"[ERROR] Transformer forward pass failed in CFG mode: {e}")
+            print(f"[ERROR] cat_latents stats: min={cat_latents.min()}, max={cat_latents.max()}, mean={cat_latents.mean()}")
+            print(f"[ERROR] cat_timesteps stats: min={cat_timesteps.min()}, max={cat_timesteps.max()}, mean={cat_timesteps.mean()}")
+            print(f"[ERROR] embeds stats: min={embeds.min()}, max={embeds.max()}, mean={embeds.mean()}")
+            print(f"[ERROR] pooled_embeds stats: min={pooled_embeds.min()}, max={pooled_embeds.max()}, mean={pooled_embeds.mean()}")
+            raise e
+            
         noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
         noise_pred_uncond = noise_pred_uncond.detach()
         noise_pred = (
@@ -668,13 +702,24 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
             * (noise_pred_text - noise_pred_uncond)
         )
     else:
-        noise_pred = transformer(
-            hidden_states=latents,
-            timestep=timesteps,
-            encoder_hidden_states=embeds,
-            pooled_projections=pooled_embeds,
-            return_dict=False,
-        )[0]
+        print(f"[DEBUG] Non-CFG mode")
+        try:
+            noise_pred = transformer(
+                hidden_states=latents,
+                timestep=timesteps,
+                encoder_hidden_states=embeds,
+                pooled_projections=pooled_embeds,
+                return_dict=False,
+            )[0]
+        except Exception as e:
+            print(f"[ERROR] Transformer forward pass failed in non-CFG mode: {e}")
+            print(f"[ERROR] latents stats: min={latents.min()}, max={latents.max()}, mean={latents.mean()}")
+            print(f"[ERROR] timesteps stats: min={timesteps.min()}, max={timesteps.max()}, mean={timesteps.mean()}")
+            print(f"[ERROR] embeds stats: min={embeds.min()}, max={embeds.max()}, mean={embeds.mean()}")
+            print(f"[ERROR] pooled_embeds stats: min={pooled_embeds.min()}, max={pooled_embeds.max()}, mean={pooled_embeds.mean()}")
+            raise e
+    
+    print(f"[DEBUG] noise_pred shape: {noise_pred.shape}, device: {noise_pred.device}, dtype: {noise_pred.dtype}")
 
     # compute the log prob of next_latents given latents under the current model (like SD3)
     prev_sample, log_prob, prev_sample_mean, std_dev_t = sde_step_with_logprob(
@@ -1778,10 +1823,25 @@ def main(_):
         
         # Collate samples into dict where each entry has shape (num_samples, ...)
         # This matches SD3's data organization exactly
-        samples = {
-            k: torch.cat([s[k] for s in flow_samples], dim=0)
-            for k in flow_samples[0].keys()
-        }
+        print(f"[DEBUG] Collating {len(flow_samples)} flow samples")
+        for i, flow_sample in enumerate(flow_samples[:3]):  # Debug first 3 samples
+            print(f"[DEBUG] Flow sample {i} shapes:")
+            for k, v in flow_sample.items():
+                print(f"  {k}: {v.shape}")
+        
+        samples = {}
+        for k in flow_samples[0].keys():
+            tensors_to_cat = [s[k] for s in flow_samples]
+            print(f"[DEBUG] Concatenating {len(tensors_to_cat)} tensors for key '{k}'")
+            print(f"[DEBUG] Tensor shapes for '{k}': {[t.shape for t in tensors_to_cat[:3]]}")  # Show first 3
+            
+            try:
+                samples[k] = torch.cat(tensors_to_cat, dim=0)
+                print(f"[DEBUG] Successfully concatenated '{k}' to shape: {samples[k].shape}")
+            except Exception as e:
+                print(f"[ERROR] Failed to concatenate tensors for key '{k}': {e}")
+                print(f"[ERROR] All tensor shapes for '{k}': {[t.shape for t in tensors_to_cat]}")
+                raise e
         
         # Get total batch size and timesteps (like SD3)
         total_batch_size, num_timesteps = samples["timesteps"].shape
@@ -1799,10 +1859,31 @@ def main(_):
             samples = {k: v[perm] for k, v in samples.items()}
 
             # Rebatch for training (like SD3)
-            samples_batched = {
-                k: v.reshape(-1, total_batch_size//config.sample.num_batches_per_epoch, *v.shape[1:])
-                for k, v in samples.items()
-            }
+            print(f"[DEBUG] Reshaping samples for training")
+            print(f"[DEBUG] total_batch_size: {total_batch_size}, num_batches_per_epoch: {config.sample.num_batches_per_epoch}")
+            print(f"[DEBUG] Expected batch size per training batch: {total_batch_size//config.sample.num_batches_per_epoch}")
+            
+            # Check if division is exact
+            if total_batch_size % config.sample.num_batches_per_epoch != 0:
+                print(f"[WARNING] total_batch_size ({total_batch_size}) is not divisible by num_batches_per_epoch ({config.sample.num_batches_per_epoch})")
+                # Truncate to make it divisible
+                new_total_batch_size = (total_batch_size // config.sample.num_batches_per_epoch) * config.sample.num_batches_per_epoch
+                print(f"[FIX] Truncating total_batch_size from {total_batch_size} to {new_total_batch_size}")
+                # Truncate all samples
+                samples = {k: v[:new_total_batch_size] for k, v in samples.items()}
+                total_batch_size = new_total_batch_size
+            
+            samples_batched = {}
+            for k, v in samples.items():
+                target_shape = (-1, total_batch_size//config.sample.num_batches_per_epoch, *v.shape[1:])
+                print(f"[DEBUG] Reshaping '{k}' from {v.shape} to {target_shape}")
+                try:
+                    samples_batched[k] = v.reshape(target_shape)
+                    print(f"[DEBUG] Successfully reshaped '{k}' to {samples_batched[k].shape}")
+                except Exception as e:
+                    print(f"[ERROR] Failed to reshape '{k}': {e}")
+                    print(f"[ERROR] Original shape: {v.shape}, target shape: {target_shape}")
+                    raise e
 
             # Dict of lists -> list of dicts for easier iteration (like SD3)
             samples_batched = [
@@ -1811,6 +1892,13 @@ def main(_):
 
             # Train (like SD3)
             pipeline.transformer.train()
+            
+            # Debug: Check device consistency before training
+            print(f"[DEBUG] Before training - transformer device: {next(pipeline.transformer.parameters()).device}")
+            print(f"[DEBUG] Before training - accelerator device: {accelerator.device}")
+            if torch.cuda.is_available():
+                print(f"[DEBUG] CUDA memory before training loop: {torch.cuda.memory_allocated() / 1024**3:.2f} GB allocated")
+            
             for i, sample in tqdm(
                 list(enumerate(samples_batched)),
                 desc=f"Epoch {epoch}.{inner_epoch}: training",
@@ -1824,11 +1912,32 @@ def main(_):
                     neg_embeds = train_neg_prompt_embeds[:batch_size]
                     neg_pooled = train_neg_pooled_prompt_embeds[:batch_size]
                     
-                    embeds = torch.cat([neg_embeds, sample["prompt_embeds"]])
-                    pooled_embeds = torch.cat([neg_pooled, sample["pooled_prompt_embeds"]])
+                    # Debug: Check device consistency for CFG embeddings
+                    print(f"[DEBUG] CFG embeds - neg_embeds device: {neg_embeds.device}, sample prompt_embeds device: {sample['prompt_embeds'].device}")
+                    print(f"[DEBUG] CFG pooled - neg_pooled device: {neg_pooled.device}, sample pooled_prompt_embeds device: {sample['pooled_prompt_embeds'].device}")
+                    
+                    # Ensure all tensors are on the same device
+                    sample_prompt_embeds = sample["prompt_embeds"].to(accelerator.device)
+                    sample_pooled_embeds = sample["pooled_prompt_embeds"].to(accelerator.device)
+                    neg_embeds = neg_embeds.to(accelerator.device)
+                    neg_pooled = neg_pooled.to(accelerator.device)
+                    
+                    embeds = torch.cat([neg_embeds, sample_prompt_embeds])
+                    pooled_embeds = torch.cat([neg_pooled, sample_pooled_embeds])
                 else:
-                    embeds = sample["prompt_embeds"]
-                    pooled_embeds = sample["pooled_prompt_embeds"]
+                    embeds = sample["prompt_embeds"].to(accelerator.device)
+                    pooled_embeds = sample["pooled_prompt_embeds"].to(accelerator.device)
+                
+                # Debug: Final embedding device check
+                print(f"[DEBUG] Final embeds device: {embeds.device}, pooled_embeds device: {pooled_embeds.device}")
+                
+                # Ensure all sample tensors are on correct device
+                for key in ["timesteps", "latents", "next_latents", "log_probs", "advantages"]:
+                    if key in sample:
+                        sample[key] = sample[key].to(accelerator.device)
+                        print(f"[DEBUG] Moved sample['{key}'] to device: {sample[key].device}")
+                    else:
+                        print(f"[WARNING] Key '{key}' not found in sample")
 
                 # Use all available timesteps (already correctly sized)
                 train_timesteps = list(range(num_timesteps))
@@ -1840,6 +1949,15 @@ def main(_):
                     disable=not accelerator.is_local_main_process,
                 ):
                     with accelerator.accumulate(pipeline.transformer):
+                        # Debug: Check sample data structure before compute_log_prob
+                        print(f"[DEBUG] Training step - batch {i}, timestep {j}")
+                        print(f"[DEBUG] sample keys: {sample.keys()}")
+                        print(f"[DEBUG] sample['timesteps'] shape: {sample['timesteps'].shape}")
+                        print(f"[DEBUG] sample['latents'] shape: {sample['latents'].shape}")
+                        print(f"[DEBUG] sample['next_latents'] shape: {sample['next_latents'].shape}")
+                        print(f"[DEBUG] embeds shape: {embeds.shape}")
+                        print(f"[DEBUG] pooled_embeds shape: {pooled_embeds.shape}")
+                        
                         # Compute log probabilities (like SD3)
                         prev_sample, log_prob, prev_sample_mean, std_dev_t = compute_log_prob(
                             pipeline.transformer, pipeline, sample, j, embeds, pooled_embeds, config
