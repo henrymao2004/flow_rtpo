@@ -758,7 +758,7 @@ Response begins: """
             
             # Enhanced debugging output
             print(f"[CONTINUATION DEBUG]")
-            print(f"  Original Prompt: \"{prompt_clean[:60]}{'...' if len(prompt_clean) > 60 else ''}\"")
+            print(f"  Original Prompt (COMPLETE): \"{prompt_clean}\"")
             print(f"  VLM Full Response: \"{response_clean[:80]}{'...' if len(response_clean) > 80 else ''}\"")
             print(f"  Extracted Continuation: \"{continuation[:70]}{'...' if len(continuation) > 70 else ''}\"")
             print(f"  Continuation Length: {len(continuation)} chars")
