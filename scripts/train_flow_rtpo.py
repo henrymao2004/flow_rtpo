@@ -238,7 +238,8 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
         use_local=config.model_loading.use_local,
         local_base_path=config.model_loading.local_base_path,
         local_models=config.model_loading.local_models.to_dict(),
-        hf_models=config.model_loading.hf_models.to_dict()
+        hf_models=config.model_loading.hf_models.to_dict(),
+        vlm_greedy=True
     )
     
     # Set models to eval mode
