@@ -1103,50 +1103,9 @@ class PromptEditorPolicy(nn.Module):
             # Manual backward pass
             total_loss.backward()
             
-            # Detailed gradient logging for prompt editor
-            if accelerator.sync_gradients and accelerator.is_main_process:
-                # Calculate pre-clipping gradient norm
-                pre_clip_norm = 0.0
-                for p in self.parameters():
-                    if p.grad is not None:
-                        param_norm = p.grad.data.norm(2)
-                        pre_clip_norm += param_norm.item() ** 2
-                pre_clip_norm = pre_clip_norm ** 0.5
-                
-                # Get current learning rate
-                if hasattr(optimizer, 'optimizer'):
-                    current_lr = optimizer.optimizer.param_groups[0]['lr']
-                elif hasattr(optimizer, '_optimizer'):
-                    current_lr = optimizer._optimizer.param_groups[0]['lr']
-                else:
-                    current_lr = optimizer.param_groups[0]['lr']
-                
-                print(f"[PROMPT EDITOR] Pre-clip grad norm: {pre_clip_norm:.6f}")
-                print(f"[PROMPT EDITOR] Learning rate: {current_lr:.2e}")
-                print(f"[PROMPT EDITOR] Total loss: {total_loss.item():.6f}")
-                print(f"[PROMPT EDITOR] Policy loss: {metrics.get('policy_loss', 0.0):.6f}")
-                print(f"[PROMPT EDITOR] Regularization loss: {metrics.get('regularization_loss', 0.0):.6f}")
-            
             # Gradient clipping - only when syncing gradients
             if accelerator.sync_gradients:
                 torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
-                
-                # Calculate post-clipping gradient norm for verification
-                if accelerator.is_main_process:
-                    post_clip_norm = 0.0
-                    for p in self.parameters():
-                        if p.grad is not None:
-                            post_clip_norm += p.grad.data.norm(2).item() ** 2
-                    post_clip_norm = post_clip_norm ** 0.5
-                    
-                    print(f"[PROMPT EDITOR] Post-clip grad norm: {post_clip_norm:.6f}")
-                    
-                    # Check if clipping actually occurred
-                    clipping_occurred = pre_clip_norm > 1.0
-                    print(f"[PROMPT EDITOR] Gradient clipping occurred: {clipping_occurred}")
-                    if clipping_occurred:
-                        clipping_ratio = post_clip_norm / pre_clip_norm
-                        print(f"[PROMPT EDITOR] Clipping ratio: {clipping_ratio:.4f}")
             
             # Get the underlying optimizer and step directly
             if hasattr(optimizer, 'optimizer'):

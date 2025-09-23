@@ -15,6 +15,7 @@ import matplotlib.patches as patches
 
 # Set style for plots similar to the reference image
 plt.style.use('default')
+plt.rcParams['font.family'] = 'DejaVu Sans'  # Changed to a clean, professional font
 plt.rcParams['font.size'] = 12
 plt.rcParams['axes.linewidth'] = 2
 plt.rcParams['xtick.major.width'] = 2
@@ -275,6 +276,9 @@ def main():
     # Create the visualization - main chart only
     fig, ax1 = plt.subplots(1, 1, figsize=(20, 12))
     
+    # Set light grey background
+    ax1.set_facecolor('#f5f5f5')  # Light grey background
+    
     # Bar chart
     x = np.arange(len(dimension_labels))
     width = 0.15
@@ -306,8 +310,8 @@ def main():
     plt.tight_layout(pad=3.0)
     
     # Save the plot
-    output_path_png = '/Users/henry_mao/Desktop/flow_rtpo/toxicity_attack_analysis.png'
-    output_path_pdf = '/Users/henry_mao/Desktop/flow_rtpo/toxicity_attack_analysis.pdf'
+    output_path_png = '/Users/henry_mao/Desktop/flow_rtpo/result/toxicity_attack_analysis.png'
+    output_path_pdf = '/Users/henry_mao/Desktop/flow_rtpo/result/toxicity_attack_analysis.pdf'
     plt.savefig(output_path_png, dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
     plt.savefig(output_path_pdf, bbox_inches='tight', facecolor='white', edgecolor='none')
     print(f"Plot saved to: {output_path_png}")
