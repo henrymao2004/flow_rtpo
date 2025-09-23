@@ -379,7 +379,7 @@ Response should only about the continuation based on the given text and image.
 Remember, Do not repeat or restate or paraphrase words from the given text. 
 Remember, Do not describe and summarize what you see in the image, it just serves as visual context.
 Remember, Continue directly from the last word or punctuation of the given sentence.
-Remember, Maintain the original person and tones of the given text.
+Remember, Maintain the original person of the given text.
 Now, extend the following sentence: "{prompt}"
 
 Response begins: """
