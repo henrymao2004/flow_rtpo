@@ -647,52 +647,45 @@ def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, em
 
 def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled_embeds, config):
     """Compute log probability for a single timestep using the flow controller."""
-    with torch.autocast("cuda", dtype=torch.bfloat16):
-        # Use SD3-style batch indexing: sample["timesteps"][:, j] instead of sample["timesteps"][j]
-        timesteps = sample["timesteps"][:, timestep_idx]
-        latents = sample["latents"][:, timestep_idx]
+    # Use SD3-style batch indexing: sample["timesteps"][:, j] instead of sample["timesteps"][j]
+    timesteps = sample["timesteps"][:, timestep_idx]
+    latents = sample["latents"][:, timestep_idx]
 
-        # CFG implementation (exactly like SD3)
-        if config.train.cfg:
-            # In CFG mode, embeds and pooled_embeds are concatenated [negative, positive]
-            # We need to duplicate latents and timesteps to match the doubled batch size
-            duplicated_latents = torch.cat([latents] * 2)
-            duplicated_timesteps = torch.cat([timesteps] * 2)
-            
-            
-            noise_pred = transformer(
-                hidden_states=duplicated_latents,
-                timestep=duplicated_timesteps,
-                encoder_hidden_states=embeds,
-                pooled_projections=pooled_embeds,
-                return_dict=False,
-            )[0]
-            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-            noise_pred_uncond = noise_pred_uncond.detach()
-            noise_pred = (
-                noise_pred_uncond
-                + config.sample.guidance_scale
-                * (noise_pred_text - noise_pred_uncond)
-            )
-        else:
-            noise_pred = transformer(
-                hidden_states=latents,
-                timestep=timesteps,
-                encoder_hidden_states=embeds,
-                pooled_projections=pooled_embeds,
-                return_dict=False,
-            )[0]
-
-        # compute the log prob of next_latents given latents under the current model (like SD3)
-        prev_sample, log_prob, prev_sample_mean, std_dev_t = sde_step_with_logprob(
-            pipeline.scheduler,
-            noise_pred.float(),
-            timesteps,
-            latents.float(),
-            prev_sample=sample["next_latents"][:, timestep_idx].float(),
-            noise_level=config.sample.get("noise_level", 0.7),
+    # CFG implementation (exactly like SD3)
+    if config.train.cfg:
+        noise_pred = transformer(
+            hidden_states=torch.cat([latents] * 2),
+            timestep=torch.cat([timesteps] * 2),
+            encoder_hidden_states=embeds,
+            pooled_projections=pooled_embeds,
+            return_dict=False,
+        )[0]
+        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+        noise_pred_uncond = noise_pred_uncond.detach()
+        noise_pred = (
+            noise_pred_uncond
+            + config.sample.guidance_scale
+            * (noise_pred_text - noise_pred_uncond)
         )
-        return prev_sample, log_prob, prev_sample_mean, std_dev_t
+    else:
+        noise_pred = transformer(
+            hidden_states=latents,
+            timestep=timesteps,
+            encoder_hidden_states=embeds,
+            pooled_projections=pooled_embeds,
+            return_dict=False,
+        )[0]
+
+    # compute the log prob of next_latents given latents under the current model (like SD3)
+    prev_sample, log_prob, prev_sample_mean, std_dev_t = sde_step_with_logprob(
+        pipeline.scheduler,
+        noise_pred.float(),
+        timesteps,
+        latents.float(),
+        prev_sample=sample["next_latents"][:, timestep_idx].float(),
+        noise_level=config.sample.get("noise_level", 0.7),
+    )
+    return prev_sample, log_prob, prev_sample_mean, std_dev_t
 
 
 def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0, batch_idx=0, reward_variance=None):

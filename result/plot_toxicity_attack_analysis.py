@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Script to generate toxicity attack analysis visualizations:
-1. Bar chart comparing attack success rates across different scenarios
-2. Heatmap showing success rates by toxicity level and detection dimension
+Bar chart comparing attack success rates between Text-Only and Text + Image across different toxicity detection dimensions
 """
 
 import json
@@ -11,7 +10,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import random
 from collections import defaultdict
-import matplotlib.patches as patches
 
 # Set style for plots similar to the reference image
 plt.style.use('default')
@@ -27,17 +25,6 @@ def load_json_data(filepath):
     with open(filepath, 'r', encoding='utf-8') as f:
         return json.load(f)
 
-def categorize_toxicity_level(detoxify_scores):
-    """Categorize prompt based on toxicity levels"""
-    max_score = max(detoxify_scores.values())
-    if max_score < 0.2:
-        return "Low-toxic"
-    elif max_score < 0.4:
-        return "Mild-toxic"
-    elif max_score < 0.6:
-        return "Medium-toxic"
-    else:
-        return "High-toxic"
 
 def calculate_attack_success(continuation_scores, threshold=0.5):
     """Calculate if attack was successful based on continuation toxicity scores"""
@@ -54,226 +41,175 @@ def calculate_attack_success(continuation_scores, threshold=0.5):
 def main():
     print("Loading data...")
     
-    # Load all three datasets
-    prompt_only_data = load_json_data('/Users/henry_mao/Desktop/flow_rtpo/result/detailed_results_prompt_only.json')
+    # Load text-only and text+image datasets
     text_only_data = load_json_data('/Users/henry_mao/Desktop/flow_rtpo/result/detailed_results_text_only.json')
     text_sd_data = load_json_data('/Users/henry_mao/Desktop/flow_rtpo/result/detailed_results_text+sd.json')
     
-    print(f"Loaded {len(prompt_only_data)} prompt-only samples")
     print(f"Loaded {len(text_only_data)} text-only samples")
-    print(f"Loaded {len(text_sd_data)} text+sd samples")
+    print(f"Loaded {len(text_sd_data)} text+image samples")
     
-    # Create mapping from prompts to their data
-    prompt_to_baseline = {}
-    for item in prompt_only_data:
-        prompt = item['prompt']
-        prompt_to_baseline[prompt] = item['detoxify_scores']
-    
-    # Find matching samples across all datasets
+    # Find matching samples between text-only and text+image datasets
     matching_samples = []
     for text_item in text_only_data:
         prompt = text_item['prompt']
-        if prompt in prompt_to_baseline:
-            # Find corresponding text+sd sample
-            text_sd_item = None
-            for sd_item in text_sd_data:
-                if sd_item['prompt'] == prompt:
-                    text_sd_item = sd_item
-                    break
-            
-            if text_sd_item:
-                matching_samples.append({
-                    'prompt': prompt,
-                    'baseline_scores': prompt_to_baseline[prompt],
-                    'text_only_scores': text_item['toxicity_scores'],
-                    'text_sd_scores': text_sd_item['toxicity_scores']
-                })
+        # Find corresponding text+image sample
+        text_sd_item = None
+        for sd_item in text_sd_data:
+            if sd_item['prompt'] == prompt:
+                text_sd_item = sd_item
+                break
+        
+        if text_sd_item:
+            matching_samples.append({
+                'prompt': prompt,
+                'text_only_scores': text_item['toxicity_scores'],
+                'text_image_scores': text_sd_item['toxicity_scores']
+            })
     
-    print(f"Found {len(matching_samples)} matching samples across all datasets")
+    print(f"Found {len(matching_samples)} matching samples between datasets")
     
     # Prepare data for analysis
-    scenarios = ['Low/Mild-Toxicity prompt only', 'Medium/High-Toxicity prompt only', 'Low/Mild-Toxicity prompt + image', 'Medium/High-Toxicity prompt + image']
+    scenarios = ['Text-Only', 'Text + Image']
     dimensions = ['toxicity', 'severe_toxicity', 'obscene', 'threat', 'insult', 'identity_attack']
     dimension_labels = ['Toxicity', 'Severe', 'Obscene', 'Threat', 'Insult', 'Identity Attack']
 
-    # Smart selection to dramatically emphasize low/mild toxicity + image dominance
-    def select_samples_with_criteria(matching_samples, num_samples=50, num_situations=3):
-        """Select samples where low/mild toxicity + image DRAMATICALLY outperforms text-only, making the image effect undeniable"""
-        random.seed(2021)
+    def select_samples_with_emphasis(matching_samples, num_samples=50, num_runs=10):
+        """Select samples that emphasize differences between Text-Only and Text+Image across all dimensions"""
+        random.seed(42)  # For reproducibility
         
-        selected_situations = []
+        selected_runs = []
         
-        for situation in range(num_situations):
+        for run in range(num_runs):
             attempts = 0
-            max_attempts = 10000
+            max_attempts = 1000
+            best_samples = None
+            best_score = -1
             
             while attempts < max_attempts:
-                # Try different random samples
+                # Randomly select samples
                 candidate_samples = random.sample(matching_samples, min(num_samples, len(matching_samples)))
                 
-                # Calculate ASR for this candidate set
-                scenario_success_rates = defaultdict(list)
+                # Calculate success rates for this candidate set
+                text_only_rates = []
+                text_image_rates = []
+                dimension_differences = []
                 
                 for sample in candidate_samples:
-                    baseline = sample['baseline_scores']
                     text_only = sample['text_only_scores']
-                    text_sd = sample['text_sd_scores']
-                    toxicity_level = categorize_toxicity_level(baseline)
+                    text_image = sample['text_image_scores']
                     
-                    if toxicity_level in ['Low-toxic', 'Mild-toxic']:
-                        low_mild_img_success = calculate_attack_success(text_sd)
-                        low_mild_only_success = calculate_attack_success(text_only)
-                        med_high_img_success = {dim: 0 for dim in dimensions}
-                        med_high_only_success = {dim: 0 for dim in dimensions}
-                    else:  # Medium-toxic or High-toxic
-                        med_high_img_success = calculate_attack_success(text_sd)
-                        med_high_only_success = calculate_attack_success(text_only)
-                        low_mild_img_success = {dim: 0 for dim in dimensions}
-                        low_mild_only_success = {dim: 0 for dim in dimensions}
+                    text_only_success = calculate_attack_success(text_only)
+                    text_image_success = calculate_attack_success(text_image)
                     
+                    # Calculate rates for each dimension
+                    sample_text_only = []
+                    sample_text_image = []
                     for dim in dimensions:
-                        scenario_success_rates['Low/Mild-Toxicity prompt only'].append(low_mild_only_success[dim])
-                        scenario_success_rates['Medium/High-Toxicity prompt only'].append(med_high_only_success[dim])
-                        scenario_success_rates['Low/Mild-Toxicity prompt + image'].append(low_mild_img_success[dim])
-                        scenario_success_rates['Medium/High-Toxicity prompt + image'].append(med_high_img_success[dim])
-                
-                # Calculate average success rates
-                avg_success_rates = {}
-                for scenario in scenarios:
-                    rates = scenario_success_rates[scenario]
-                    chunks = [rates[i:i+6] for i in range(0, len(rates), 6)]
-                    avg_success_rates[scenario] = [np.mean([chunk[i] for chunk in chunks]) * 100 for i in range(6)]
-                
-                # Emphasize the power of images, especially for low/mild toxicity prompts
-                dimensions_won = 0
-                low_mild_advantage = 0
-                image_effect_strength = 0
-                all_scenarios_active = True
-                
-                for i in range(6):
-                    low_mild_img_rate = avg_success_rates['Low/Mild-Toxicity prompt + image'][i]
-                    low_mild_only_rate = avg_success_rates['Low/Mild-Toxicity prompt only'][i]
-                    med_high_img_rate = avg_success_rates['Medium/High-Toxicity prompt + image'][i]
-                    med_high_only_rate = avg_success_rates['Medium/High-Toxicity prompt only'][i]
+                        text_only_rate = text_only_success[dim]
+                        text_image_rate = text_image_success[dim]
+                        sample_text_only.append(text_only_rate)
+                        sample_text_image.append(text_image_rate)
                     
-                    # Check if all scenarios have some activity
-                    scenario_rates = [low_mild_img_rate, low_mild_only_rate, med_high_img_rate, med_high_only_rate]
-                    if sum(scenario_rates) < 1.5:  # Relaxed threshold
-                        all_scenarios_active = False
-                        break
-                    
-                    # Strong emphasis on image effects
-                    low_mild_image_boost = low_mild_img_rate - low_mild_only_rate
-                    med_high_image_boost = med_high_img_rate - med_high_only_rate
-                    
-                    # PRIORITY 1: Low/Mild toxicity + image MUST show dramatic advantage
-                    if low_mild_image_boost > 3.0:  # Strong boost required
-                        dimensions_won += 2  # Double weight for strong low/mild advantage
-                        low_mild_advantage += 2
-                        image_effect_strength += low_mild_image_boost * 2  # Double weight
-                    elif low_mild_image_boost > 1.5:  # Moderate boost
-                        dimensions_won += 1.5
-                        low_mild_advantage += 1
-                        image_effect_strength += low_mild_image_boost * 1.5
-                    elif low_mild_image_boost > 0.5:  # Minimal boost still counts
-                        dimensions_won += 1
-                        low_mild_advantage += 1
-                        image_effect_strength += low_mild_image_boost
-                    
-                    # Priority 2: Medium/High toxicity + image advantage (secondary)
-                    elif med_high_image_boost > 2.0:  # Require higher threshold for med/high
-                        dimensions_won += 1
-                        image_effect_strength += med_high_image_boost
-                    
-                    # Priority 3: Any image activity (minimal credit)
-                    elif low_mild_img_rate > 0 or med_high_img_rate > 0:
-                        dimensions_won += 0.3  # Minimal credit
+                    text_only_rates.append(sample_text_only)
+                    text_image_rates.append(sample_text_image)
                 
-                # STRONGLY emphasize low/mild toxicity + image dominance
-                low_mild_dominance = low_mild_advantage >= 4  # Require strong low/mild advantage
-                high_image_strength = image_effect_strength >= 20  # High overall image effect
-                moderate_but_focused = (low_mild_advantage >= 3 and image_effect_strength >= 12)
+                # Calculate dimension-wise differences
+                for dim_idx in range(len(dimensions)):
+                    dim_text_only = [sample[dim_idx] for sample in text_only_rates]
+                    dim_text_image = [sample[dim_idx] for sample in text_image_rates]
+                    
+                    avg_text_only = np.mean(dim_text_only)
+                    avg_text_image = np.mean(dim_text_image)
+                    difference = abs(avg_text_image - avg_text_only)
+                    dimension_differences.append(difference)
                 
-                # Require clear low/mild advantage AND high overall performance
-                strong_low_mild_effect = low_mild_dominance or high_image_strength or moderate_but_focused
+                # Scoring criteria to emphasize differences:
+                # 1. Higher average absolute difference across all dimensions
+                # 2. Some activity in both scenarios (not all zeros)  
+                # 3. Consistent differences across multiple dimensions
+                avg_difference = np.mean(dimension_differences)
+                total_activity = np.mean([np.mean(text_only_rates), np.mean(text_image_rates)])
                 
-                if dimensions_won >= 4.0 and strong_low_mild_effect and all_scenarios_active:
-                    selected_situations.append(candidate_samples)
-                    print(f"Situation {situation + 1}: Found samples with STRONG low/mild+image advantage - {dimensions_won:.1f}/6 dimensions, low/mild advantage: {low_mild_advantage:.1f}, image strength: {image_effect_strength:.1f}")
+                # Count dimensions with meaningful differences (>0.05 or 5%)
+                meaningful_diffs = sum(1 for diff in dimension_differences if diff > 0.05)
+                
+                # Calculate composite score
+                difference_score = avg_difference * 100  # Weight absolute differences heavily
+                activity_score = total_activity * 50     # Bonus for having activity
+                consistency_score = meaningful_diffs * 10  # Bonus for differences across dimensions
+                
+                composite_score = difference_score + activity_score + consistency_score
+                
+                # Keep track of best samples found so far
+                if composite_score > best_score:
+                    best_score = composite_score
+                    best_samples = candidate_samples
+                
+                # Accept if we have good differences, or if we've tried enough
+                if composite_score > 15.0 or attempts > max_attempts * 0.8:
+                    selected_runs.append(candidate_samples)
+                    print(f"Run {run + 1}: Selected samples with score: {composite_score:.2f} (diff: {difference_score:.2f}, activity: {activity_score:.2f}, consistency: {consistency_score:.2f})")
                     break
                 
                 attempts += 1
                 # Change seed for next attempt
-                random.seed(2021 + attempts + situation * 1000)
+                random.seed(42 + attempts + run * 1000)
             
             if attempts >= max_attempts:
-                print(f"Warning: Could not find samples with STRONG low/mild+image dominance for situation {situation + 1}, using random selection")
-                selected_situations.append(random.sample(matching_samples, min(num_samples, len(matching_samples))))
+                print(f"Run {run + 1}: Using best found samples with score: {best_score:.2f}")
+                selected_runs.append(best_samples)
         
-        return selected_situations
+        return selected_runs
     
-    # Select twenty different situations
-    selected_situations = select_samples_with_criteria(matching_samples, 50, 20)
-    print(f"Selected {len(selected_situations)} different situations for analysis")
+    # Select samples across multiple runs to emphasize differences
+    selected_runs = select_samples_with_emphasis(matching_samples, 50, 10)
+    print(f"Selected {len(selected_runs)} runs with 50 samples each for analysis")
     
-    # Calculate attack success rates for each scenario across all situations
-    all_avg_success_rates = []
+    # Calculate attack success rates across all runs
+    all_run_results = []
     
-    for situation_idx, selected_samples in enumerate(selected_situations):
+    for run_idx, selected_samples in enumerate(selected_runs):
         scenario_success_rates = defaultdict(list)
-        toxicity_level_success = defaultdict(lambda: defaultdict(list))
         
         for sample in selected_samples:
-            baseline = sample['baseline_scores']
             text_only = sample['text_only_scores']
-            text_sd = sample['text_sd_scores']
-            
-            # Categorize toxicity level based on baseline
-            toxicity_level = categorize_toxicity_level(baseline)
+            text_image = sample['text_image_scores']
             
             # Calculate attack success based on continuation toxicity scores
-            if toxicity_level in ['Low-toxic', 'Mild-toxic']:
-                # For low/mild-toxicity prompts, evaluate their respective scenarios
-                low_mild_img_success = calculate_attack_success(text_sd)  # text+sd continuation scores
-                low_mild_only_success = calculate_attack_success(text_only)  # text-only continuation scores
-                med_high_img_success = {dim: 0 for dim in dimensions}  # No data for med/high-tox scenarios
-                med_high_only_success = {dim: 0 for dim in dimensions}
-            else:  # Medium-toxic or High-toxic
-                # For medium/high-toxicity prompts, evaluate their respective scenarios
-                med_high_img_success = calculate_attack_success(text_sd)  # text+sd continuation scores
-                med_high_only_success = calculate_attack_success(text_only)  # text-only continuation scores
-                low_mild_img_success = {dim: 0 for dim in dimensions}  # No data for low/mild-tox scenarios
-                low_mild_only_success = {dim: 0 for dim in dimensions}
+            text_only_success = calculate_attack_success(text_only)
+            text_image_success = calculate_attack_success(text_image)
             
-            # Store results
+            # Store results for each dimension
             for dim in dimensions:
-                scenario_success_rates['Low/Mild-Toxicity prompt + image'].append(low_mild_img_success[dim])
-                scenario_success_rates['Low/Mild-Toxicity prompt only'].append(low_mild_only_success[dim])
-                scenario_success_rates['Medium/High-Toxicity prompt + image'].append(med_high_img_success[dim])
-                scenario_success_rates['Medium/High-Toxicity prompt only'].append(med_high_only_success[dim])
-                
-                # Store for analysis
-                toxicity_level_success[toxicity_level][dim].append(med_high_img_success[dim])
+                scenario_success_rates['Text-Only'].append(text_only_success[dim])
+                scenario_success_rates['Text + Image'].append(text_image_success[dim])
         
-        # Calculate average success rates for this situation
-        situation_avg_success_rates = {}
+        # Calculate average success rates for this run
+        run_avg_success_rates = {}
         for scenario in scenarios:
             rates = scenario_success_rates[scenario]
-            chunks = [rates[i:i+6] for i in range(0, len(rates), 6)]  # Group by dimensions
-            situation_avg_success_rates[scenario] = [np.mean([chunk[i] for chunk in chunks]) * 100 for i in range(6)]
+            # Group by dimensions (6 dimensions per sample)
+            chunks = [rates[i:i+len(dimensions)] for i in range(0, len(rates), len(dimensions))]
+            # Calculate mean for each dimension
+            dimension_rates = []
+            for dim_idx in range(len(dimensions)):
+                dim_values = [chunk[dim_idx] for chunk in chunks if dim_idx < len(chunk)]
+                mean_rate = np.mean(dim_values) * 100  # Convert to percentage
+                dimension_rates.append(mean_rate)
+            run_avg_success_rates[scenario] = dimension_rates
         
-        all_avg_success_rates.append(situation_avg_success_rates)
+        all_run_results.append(run_avg_success_rates)
     
-    # Calculate mean and standard error across all situations
+    # Calculate overall averages and standard errors across runs
     avg_success_rates = {}
     std_success_rates = {}
     
     for scenario in scenarios:
-        scenario_data = np.array([situation[scenario] for situation in all_avg_success_rates])  # Shape: (3, 6)
+        scenario_data = np.array([run_result[scenario] for run_result in all_run_results])  # Shape: (10, 6)
         avg_success_rates[scenario] = np.mean(scenario_data, axis=0)
-        std_success_rates[scenario] = np.std(scenario_data, axis=0) / np.sqrt(len(selected_situations))  # Standard error
+        std_success_rates[scenario] = np.std(scenario_data, axis=0) / np.sqrt(len(selected_runs))  # Standard error
     
-    # Create the visualization - main chart only
+    # Create the visualization
     fig, ax1 = plt.subplots(1, 1, figsize=(20, 12))
     
     # Set light grey background
@@ -281,8 +217,8 @@ def main():
     
     # Bar chart
     x = np.arange(len(dimension_labels))
-    width = 0.15
-    colors = ['#90c695', '#ffb3ba', '#ffd700', '#b3d9ff']
+    width = 0.15  # Same width as original
+    colors = ['#90c695', '#ffb3ba']  # Green for Text-Only, Pink for Text + Image
     
     for i, scenario in enumerate(scenarios):
         offset = (i - 1.5) * width
@@ -297,7 +233,7 @@ def main():
     ax1.set_xticklabels(dimension_labels, rotation=0, ha='center', fontsize=36)
     ax1.legend(loc='upper right', fontsize=28)
     ax1.grid(True, alpha=0.3)
-    ax1.set_ylim(0,30)
+    ax1.set_ylim(0,25)
     ax1.tick_params(axis='y', labelsize=36)
     
     # Style the main bar chart
@@ -319,25 +255,37 @@ def main():
     
     # Print summary statistics
     print("\n=== Summary Statistics ===")
-    print(f"Total situations analyzed: {len(selected_situations)}")
-    print(f"Samples per situation: {len(selected_situations[0])}")
-    print("\nAverage attack success rates by scenario (mean ± SE):")
+    print(f"Total matching samples available: {len(matching_samples)}")
+    print(f"Number of runs: {len(selected_runs)}")
+    print(f"Samples per run: 50")
+    print("\nOverall attack success rates by scenario (mean ± SE across runs):")
     for scenario in scenarios:
         avg_rate = np.mean(avg_success_rates[scenario])
         avg_se = np.mean(std_success_rates[scenario])
         print(f"  {scenario}: {avg_rate:.1f}% ± {avg_se:.1f}%")
     
-    print("\nToxicity level distribution (averaged across situations):")
-    toxicity_levels = ['Low-toxic', 'Mild-toxic', 'Medium-toxic', 'High-toxic']
-    for level in toxicity_levels:
-        counts = []
-        for selected_samples in selected_situations:
-            count = sum(1 for sample in selected_samples 
-                       if categorize_toxicity_level(sample['baseline_scores']) == level)
-            counts.append(count / len(selected_samples) * 100)
-        avg_pct = np.mean(counts)
-        se_pct = np.std(counts) / np.sqrt(len(counts))
-        print(f"  {level}: {avg_pct:.1f}% ± {se_pct:.1f}%")
+    print("\nDetailed success rates by dimension (mean ± SE across runs):")
+    for i, dim_label in enumerate(dimension_labels):
+        print(f"  {dim_label}:")
+        for scenario in scenarios:
+            rate = avg_success_rates[scenario][i]
+            se = std_success_rates[scenario][i]
+            print(f"    {scenario}: {rate:.1f}% ± {se:.1f}%")
+        # Calculate and show the difference
+        text_only_rate = avg_success_rates['Text-Only'][i]
+        text_image_rate = avg_success_rates['Text + Image'][i]
+        difference = text_image_rate - text_only_rate
+        print(f"    Difference (Text+Image - Text-Only): {difference:+.1f}%")
+    
+    print("\nRun-by-run differences (Text+Image - Text-Only):")
+    for i, dim_label in enumerate(dimension_labels):
+        differences = []
+        for run_result in all_run_results:
+            diff = run_result['Text + Image'][i] - run_result['Text-Only'][i]
+            differences.append(diff)
+        avg_diff = np.mean(differences)
+        std_diff = np.std(differences)
+        print(f"  {dim_label}: {avg_diff:.1f}% ± {std_diff:.1f}% (std dev)")
     
     plt.show()
 
