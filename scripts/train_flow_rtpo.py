@@ -672,6 +672,31 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
     if torch.cuda.is_available():
         print(f"[DEBUG] CUDA memory before transformer: {torch.cuda.memory_allocated() / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f} GB reserved")
 
+    # Ensure tensors are contiguous and have correct dtype
+    timesteps = timesteps.contiguous().float()
+    latents = latents.contiguous().float()
+    embeds = embeds.contiguous().float()
+    pooled_embeds = pooled_embeds.contiguous().float()
+    
+    print(f"[DEBUG] After making contiguous - timesteps device: {timesteps.device}, latents device: {latents.device}")
+    print(f"[DEBUG] After making contiguous - embeds device: {embeds.device}, pooled_embeds device: {pooled_embeds.device}")
+    
+    # Additional validation for tensor compatibility
+    if timesteps.device != latents.device:
+        print(f"[ERROR] Device mismatch: timesteps on {timesteps.device}, latents on {latents.device}")
+        timesteps = timesteps.to(latents.device)
+        print(f"[FIX] Moved timesteps to {timesteps.device}")
+    
+    if embeds.device != latents.device:
+        print(f"[ERROR] Device mismatch: embeds on {embeds.device}, latents on {latents.device}")
+        embeds = embeds.to(latents.device)
+        print(f"[FIX] Moved embeds to {embeds.device}")
+    
+    if pooled_embeds.device != latents.device:
+        print(f"[ERROR] Device mismatch: pooled_embeds on {pooled_embeds.device}, latents on {latents.device}")
+        pooled_embeds = pooled_embeds.to(latents.device)
+        print(f"[FIX] Moved pooled_embeds to {pooled_embeds.device}")
+
     # CFG implementation (exactly like SD3)
     if config.train.cfg:
         cat_latents = torch.cat([latents] * 2)
@@ -679,13 +704,20 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
         print(f"[DEBUG] CFG mode - cat_latents shape: {cat_latents.shape}, cat_timesteps shape: {cat_timesteps.shape}")
         
         try:
-            noise_pred = transformer(
-                hidden_states=cat_latents,
-                timestep=cat_timesteps,
-                encoder_hidden_states=embeds,
-                pooled_projections=pooled_embeds,
-                return_dict=False,
-            )[0]
+            # Clear CUDA cache before expensive operation
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()  # Ensure all operations are completed
+            
+            # Use autocast for better numerical stability
+            with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
+                noise_pred = transformer(
+                    hidden_states=cat_latents,
+                    timestep=cat_timesteps,
+                    encoder_hidden_states=embeds,
+                    pooled_projections=pooled_embeds,
+                    return_dict=False,
+                )[0]
         except Exception as e:
             print(f"[ERROR] Transformer forward pass failed in CFG mode: {e}")
             print(f"[ERROR] cat_latents stats: min={cat_latents.min()}, max={cat_latents.max()}, mean={cat_latents.mean()}")
@@ -704,13 +736,20 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
     else:
         print(f"[DEBUG] Non-CFG mode")
         try:
-            noise_pred = transformer(
-                hidden_states=latents,
-                timestep=timesteps,
-                encoder_hidden_states=embeds,
-                pooled_projections=pooled_embeds,
-                return_dict=False,
-            )[0]
+            # Clear CUDA cache before expensive operation
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()  # Ensure all operations are completed
+            
+            # Use autocast for better numerical stability
+            with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
+                noise_pred = transformer(
+                    hidden_states=latents,
+                    timestep=timesteps,
+                    encoder_hidden_states=embeds,
+                    pooled_projections=pooled_embeds,
+                    return_dict=False,
+                )[0]
         except Exception as e:
             print(f"[ERROR] Transformer forward pass failed in non-CFG mode: {e}")
             print(f"[ERROR] latents stats: min={latents.min()}, max={latents.max()}, mean={latents.mean()}")
@@ -1905,128 +1944,128 @@ def main(_):
                 position=0,
                 disable=not accelerator.is_local_main_process,
                 ):
-                # CFG embeddings preparation (like SD3)
-                if config.train.cfg:
-                    # concat negative prompts to sample prompts to avoid two forward passes
-                    batch_size = len(sample["prompt_embeds"])
-                    neg_embeds = train_neg_prompt_embeds[:batch_size]
-                    neg_pooled = train_neg_pooled_prompt_embeds[:batch_size]
-                    
-                    # Debug: Check device consistency for CFG embeddings
-                    print(f"[DEBUG] CFG embeds - neg_embeds device: {neg_embeds.device}, sample prompt_embeds device: {sample['prompt_embeds'].device}")
-                    print(f"[DEBUG] CFG pooled - neg_pooled device: {neg_pooled.device}, sample pooled_prompt_embeds device: {sample['pooled_prompt_embeds'].device}")
-                    
-                    # Ensure all tensors are on the same device
-                    sample_prompt_embeds = sample["prompt_embeds"].to(accelerator.device)
-                    sample_pooled_embeds = sample["pooled_prompt_embeds"].to(accelerator.device)
-                    neg_embeds = neg_embeds.to(accelerator.device)
-                    neg_pooled = neg_pooled.to(accelerator.device)
-                    
-                    embeds = torch.cat([neg_embeds, sample_prompt_embeds])
-                    pooled_embeds = torch.cat([neg_pooled, sample_pooled_embeds])
+        # Ensure all sample tensors are on correct device first
+        for key in ["timesteps", "latents", "next_latents", "log_probs", "advantages"]:
+            if key in sample:
+                sample[key] = sample[key].to(accelerator.device)
+                print(f"[DEBUG] Moved sample['{key}'] to device: {sample[key].device}")
+            else:
+                print(f"[WARNING] Key '{key}' not found in sample")
+        
+        # CFG embeddings preparation (like SD3)
+        if config.train.cfg:
+            # concat negative prompts to sample prompts to avoid two forward passes
+            batch_size = len(sample["prompt_embeds"])
+            neg_embeds = train_neg_prompt_embeds[:batch_size]
+            neg_pooled = train_neg_pooled_prompt_embeds[:batch_size]
+            
+            # Debug: Check device consistency for CFG embeddings
+            print(f"[DEBUG] CFG embeds - neg_embeds device: {neg_embeds.device}, sample prompt_embeds device: {sample['prompt_embeds'].device}")
+            print(f"[DEBUG] CFG pooled - neg_pooled device: {neg_pooled.device}, sample pooled_prompt_embeds device: {sample['pooled_prompt_embeds'].device}")
+            
+            # Ensure all tensors are on the same device
+            sample_prompt_embeds = sample["prompt_embeds"].to(accelerator.device)
+            sample_pooled_embeds = sample["pooled_prompt_embeds"].to(accelerator.device)
+            neg_embeds = neg_embeds.to(accelerator.device)
+            neg_pooled = neg_pooled.to(accelerator.device)
+            
+            embeds = torch.cat([neg_embeds, sample_prompt_embeds])
+            pooled_embeds = torch.cat([neg_pooled, sample_pooled_embeds])
+        else:
+            embeds = sample["prompt_embeds"].to(accelerator.device)
+            pooled_embeds = sample["pooled_prompt_embeds"].to(accelerator.device)
+        
+        # Debug: Final embedding device check
+        print(f"[DEBUG] Final embeds device: {embeds.device}, pooled_embeds device: {pooled_embeds.device}")
+
+        # Use all available timesteps (already correctly sized)
+        train_timesteps = list(range(num_timesteps))
+        for j in tqdm(
+            train_timesteps,
+            desc="Timestep",
+            position=1,
+            leave=False,
+            disable=not accelerator.is_local_main_process,
+        ):
+            with accelerator.accumulate(pipeline.transformer):
+                # Debug: Check sample data structure before compute_log_prob
+                print(f"[DEBUG] Training step - batch {i}, timestep {j}")
+                print(f"[DEBUG] sample keys: {sample.keys()}")
+                print(f"[DEBUG] sample['timesteps'] shape: {sample['timesteps'].shape}")
+                print(f"[DEBUG] sample['latents'] shape: {sample['latents'].shape}")
+                print(f"[DEBUG] sample['next_latents'] shape: {sample['next_latents'].shape}")
+                print(f"[DEBUG] embeds shape: {embeds.shape}")
+                print(f"[DEBUG] pooled_embeds shape: {pooled_embeds.shape}")
+                
+                # Compute log probabilities (like SD3)
+                prev_sample, log_prob, prev_sample_mean, std_dev_t = compute_log_prob(
+                    pipeline.transformer, pipeline, sample, j, embeds, pooled_embeds, config
+                )
+                
+                # Reference log probs for KL regularization (like SD3)
+                if config.train.beta > 0:
+                    with torch.no_grad():
+                        with pipeline.transformer.module.disable_adapter():
+                            _, _, prev_sample_mean_ref, _ = compute_log_prob(
+                                pipeline.transformer, pipeline, sample, j, embeds, pooled_embeds, config
+                            )
+
+                # GRPO loss computation (exactly like SD3)
+                advantages = torch.clamp(
+                    sample["advantages"][:, j],  # [batch_size] (like SD3)
+                    -config.train.adv_clip_max,
+                    config.train.adv_clip_max,
+                )
+                
+                ratio = torch.exp(log_prob - sample["log_probs"][:, j])
+                unclipped_loss = -advantages * ratio
+                clipped_loss = -advantages * torch.clamp(
+                    ratio,
+                    1.0 - config.train.clip_range,
+                    1.0 + config.train.clip_range,
+                )
+                policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+                
+                # KL regularization (exactly like SD3)
+                if config.train.beta > 0:
+                    kl_loss = ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean(dim=(1,2,3), keepdim=True) / (2 * std_dev_t ** 2)
+                    kl_loss = torch.mean(kl_loss)
+                    flow_loss = policy_loss + config.train.beta * kl_loss
                 else:
-                    embeds = sample["prompt_embeds"].to(accelerator.device)
-                    pooled_embeds = sample["pooled_prompt_embeds"].to(accelerator.device)
+                    flow_loss = policy_loss
+                    kl_loss = torch.tensor(0.0)
                 
-                # Debug: Final embedding device check
-                print(f"[DEBUG] Final embeds device: {embeds.device}, pooled_embeds device: {pooled_embeds.device}")
+                # Backward pass (like SD3)
+                accelerator.backward(flow_loss)
                 
-                # Ensure all sample tensors are on correct device
-                for key in ["timesteps", "latents", "next_latents", "log_probs", "advantages"]:
-                    if key in sample:
-                        sample[key] = sample[key].to(accelerator.device)
-                        print(f"[DEBUG] Moved sample['{key}'] to device: {sample[key].device}")
-                    else:
-                        print(f"[WARNING] Key '{key}' not found in sample")
-
-                # Use all available timesteps (already correctly sized)
-                train_timesteps = list(range(num_timesteps))
-                for j in tqdm(
-                    train_timesteps,
-                    desc="Timestep",
-                    position=1,
-                    leave=False,
-                    disable=not accelerator.is_local_main_process,
-                ):
-                    with accelerator.accumulate(pipeline.transformer):
-                        # Debug: Check sample data structure before compute_log_prob
-                        print(f"[DEBUG] Training step - batch {i}, timestep {j}")
-                        print(f"[DEBUG] sample keys: {sample.keys()}")
-                        print(f"[DEBUG] sample['timesteps'] shape: {sample['timesteps'].shape}")
-                        print(f"[DEBUG] sample['latents'] shape: {sample['latents'].shape}")
-                        print(f"[DEBUG] sample['next_latents'] shape: {sample['next_latents'].shape}")
-                        print(f"[DEBUG] embeds shape: {embeds.shape}")
-                        print(f"[DEBUG] pooled_embeds shape: {pooled_embeds.shape}")
-                        
-                        # Compute log probabilities (like SD3)
-                        prev_sample, log_prob, prev_sample_mean, std_dev_t = compute_log_prob(
-                            pipeline.transformer, pipeline, sample, j, embeds, pooled_embeds, config
-                        )
-                        
-                        # Reference log probs for KL regularization (like SD3)
-                        if config.train.beta > 0:
-                            with torch.no_grad():
-                                with pipeline.transformer.module.disable_adapter():
-                                    _, _, prev_sample_mean_ref, _ = compute_log_prob(
-                                        pipeline.transformer, pipeline, sample, j, embeds, pooled_embeds, config
-                                    )
-
-                        # GRPO loss computation (exactly like SD3)
-                        advantages = torch.clamp(
-                            sample["advantages"][:, j],  # [batch_size] (like SD3)
-                            -config.train.adv_clip_max,
-                            config.train.adv_clip_max,
-                        )
-                        
-                        ratio = torch.exp(log_prob - sample["log_probs"][:, j])
-                        unclipped_loss = -advantages * ratio
-                        clipped_loss = -advantages * torch.clamp(
-                            ratio,
-                            1.0 - config.train.clip_range,
-                            1.0 + config.train.clip_range,
-                        )
-                        policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
-                        
-                        # KL regularization (exactly like SD3)
-                        if config.train.beta > 0:
-                            kl_loss = ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean(dim=(1,2,3), keepdim=True) / (2 * std_dev_t ** 2)
-                            kl_loss = torch.mean(kl_loss)
-                            flow_loss = policy_loss + config.train.beta * kl_loss
-                        else:
-                            flow_loss = policy_loss
-                            kl_loss = torch.tensor(0.0)
-                        
-                        # Backward pass (like SD3)
-                        accelerator.backward(flow_loss)
-                        
-                        # Gradient clipping (like SD3)
-                        if accelerator.sync_gradients:
-                            torch.nn.utils.clip_grad_norm_(transformer_trainable_parameters, 1.0)
-                        
-                        # Optimizer step
-                        optimizer.step()
-                        optimizer.zero_grad()
-                        
-                        # Track metrics
-                        train_info["flow_policy_loss"].append(policy_loss.item())
-                        train_info["kl_loss"].append(kl_loss.item())
-                    
-                    # Checks if the accelerator has performed an optimization step behind the scenes (like SD3)
-                    if accelerator.sync_gradients:
-                        # Log training-related stuff (like SD3)
-                        info = {k: torch.mean(torch.stack([torch.tensor(x, device=accelerator.device) for x in v])) for k, v in train_info.items() if v}
-                        info = accelerator.reduce(info, reduction="mean")
-                        info.update({"epoch": epoch, "inner_epoch": inner_epoch})
-                        
-                        if accelerator.is_main_process:
-                            swanlab.log(info, step=global_step)
-                            logger.info(f"Flow Controller Step {global_step}: {info}")
-                        
-                        global_step += 1
-                        train_info = defaultdict(list)  # Reset for next step
-                        
-                        if config.train.ema:
-                            ema.step(transformer_trainable_parameters, global_step)
+                # Gradient clipping (like SD3)
+                if accelerator.sync_gradients:
+                    torch.nn.utils.clip_grad_norm_(transformer_trainable_parameters, 1.0)
+                
+                # Optimizer step
+                optimizer.step()
+                optimizer.zero_grad()
+                
+                # Track metrics
+                train_info["flow_policy_loss"].append(policy_loss.item())
+                train_info["kl_loss"].append(kl_loss.item())
+            
+            # Checks if the accelerator has performed an optimization step behind the scenes (like SD3)
+            if accelerator.sync_gradients:
+                # Log training-related stuff (like SD3)
+                info = {k: torch.mean(torch.stack([torch.tensor(x, device=accelerator.device) for x in v])) for k, v in train_info.items() if v}
+                info = accelerator.reduce(info, reduction="mean")
+                info.update({"epoch": epoch, "inner_epoch": inner_epoch})
+                
+                if accelerator.is_main_process:
+                    swanlab.log(info, step=global_step)
+                    logger.info(f"Flow Controller Step {global_step}: {info}")
+                
+                global_step += 1
+                train_info = defaultdict(list)  # Reset for next step
+                
+                if config.train.ema:
+                    ema.step(transformer_trainable_parameters, global_step)
             
             # Training for Prompt Editor 
             if len(epoch_samples) > 0:
