@@ -119,36 +119,58 @@ def log_json_entry(log_path, entry):
         f.write('\n')
 
 
-def create_train_test_datasets(max_prompts=180, test_ratio=0.2, seed=42, config=None):
-    """Create train and test datasets from the RTP dataset."""
-    # Load full dataset with loading configuration
+def create_train_test_datasets(max_prompts=5000, test_ratio=0.2, seed=42, config=None):
+    """Create train and test datasets from the RTP dataset using new split system."""
+    # Load train dataset
     if config is not None:
-        full_dataset = RealToxicityPromptsDataset(
+        train_dataset = RealToxicityPromptsDataset(
             max_prompts=max_prompts,
+            split="train",
             use_local=config.dataset_loading.use_local,
             local_base_path=config.dataset_loading.local_base_path,
             local_dataset_name=config.dataset_loading.local_datasets.rtp,
-            hf_dataset_name=config.dataset_loading.hf_datasets.rtp
+            hf_dataset_name=config.dataset_loading.hf_datasets.rtp,
+            random_seed=seed,
+            heldout_test_size=getattr(config, 'heldout_test_size', 1000),
+            training_test_size=getattr(config, 'training_test_size', 40)
+        )
+        
+        # Load training test dataset
+        test_dataset = RealToxicityPromptsDataset(
+            max_prompts=max_prompts,
+            split="training_test",
+            use_local=config.dataset_loading.use_local,
+            local_base_path=config.dataset_loading.local_base_path,
+            local_dataset_name=config.dataset_loading.local_datasets.rtp,
+            hf_dataset_name=config.dataset_loading.hf_datasets.rtp,
+            random_seed=seed,
+            heldout_test_size=getattr(config, 'heldout_test_size', 1000),
+            training_test_size=getattr(config, 'training_test_size', 40)
         )
     else:
-        full_dataset = RealToxicityPromptsDataset(max_prompts=max_prompts)
+        train_dataset = RealToxicityPromptsDataset(max_prompts=max_prompts, split="train", random_seed=seed)
+        test_dataset = RealToxicityPromptsDataset(max_prompts=max_prompts, split="training_test", random_seed=seed)
     
-    # Get all prompts
-    all_prompts = [prompt.text for prompt in full_dataset.prompts]
-    all_metadata = [{
+    # Extract prompts and metadata
+    train_prompts = [prompt.text for prompt in train_dataset.prompts]
+    train_metadata = [{
         'prompt_id': prompt.prompt_id,
         'toxicity_scores': prompt.toxicity_scores,
         'is_challenging': prompt.is_challenging,
         'source_info': prompt.source_info
-    } for prompt in full_dataset.prompts]
+    } for prompt in train_dataset.prompts]
     
-    # Split into train and test
-    train_prompts, test_prompts, train_metadata, test_metadata = train_test_split(
-        all_prompts, all_metadata, test_size=test_ratio, random_state=seed
-    )
+    test_prompts = [prompt.text for prompt in test_dataset.prompts]
+    test_metadata = [{
+        'prompt_id': prompt.prompt_id,
+        'toxicity_scores': prompt.toxicity_scores,
+        'is_challenging': prompt.is_challenging,
+        'source_info': prompt.source_info
+    } for prompt in test_dataset.prompts]
     
     print(f"Train set: {len(train_prompts)} prompts")
     print(f"Test set: {len(test_prompts)} prompts")
+    print(f"Heldout test: {len(test_dataset.heldout_test_prompts)} prompts")
     
     return train_prompts, test_prompts, train_metadata, test_metadata
 

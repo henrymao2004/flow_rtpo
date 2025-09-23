@@ -246,69 +246,52 @@ def flow_rtpo_debug():
 
 
 def flow_rtpo_large():
-    """Large-scale configuration for full training with 5000 prompts."""
+    """Large-scale configuration for full training."""
     config = flow_rtpo_sd3()
     
     # Large mode: Use local loading for better performance
     config.model_loading.use_local = True
     config.dataset_loading.use_local = True
     
-    # Full dataset (already set to 5000 in base config)
+    # Full dataset
     config.max_prompts = 5000
     config.heldout_test_size = 1000  # 20% for heldout evaluation
     config.training_test_size = 40   # Fixed 40 for training evaluation
     
     # Sampling strategy configuration
-    config.use_grpo_sampling = True  # GRPO MODE ENABLED
+    config.use_grpo_sampling = True  # Flag to switch between sampling modes - GRPO MODE ENABLED
     
-    # Increased batch sizes for large-scale training
-    config.sample.batch_size = 4  # Increased from 2 to 8 for efficiency
-    config.sample.num_image_per_prompt = 4  # Multiple samples per prompt for ranking
-    config.sample.test_batch_size = 10  # Increased test batch size
+    # Keep batch size as requested but increase batches for GRPO grouping
+    config.sample.batch_size = 4 # Changed to 2 as requested
+    config.sample.num_image_per_prompt = 4 # Multiple samples per prompt for ranking
     
-    # GRPO sampling configuration for large scale (32 GPUs)
+    # GRPO sampling configuration for large scale
     gpu_number = 32
-    config.sample.train_batch_size = config.sample.batch_size
+    config.sample.train_batch_size = config.sample.batch_size  # For GRPO compatibility
     config.sample.grpo_k = config.sample.num_image_per_prompt * config.prompt_editor.k_samples  # Total K-repeat
     
-    # Calculate batches based on training set size (3960 prompts after splits)
-    # With 32 GPUs, 8 batch_size, grpo_k=8: total samples per batch = 32*8/8 = 32 unique prompts
-    # For 3960 prompts: 3960/32 = 123.75, so use ~124 batches per epoch
-    total_train_prompts = config.max_prompts - config.heldout_test_size - config.training_test_size  # 3960
-    samples_per_batch = gpu_number * config.sample.batch_size // config.sample.grpo_k
-    config.sample.num_batches_per_epoch = max(1, total_train_prompts // samples_per_batch)
+    # Calculate batches based on GRPO grouping requirements
+    # Use full prompt set but optimize batch distribution
+    config.sample.grpo_num_batches = int(32/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k))
+    config.sample.num_batches_per_epoch = max(1, config.sample.grpo_num_batches) 
     
-    # Training configuration
+    # Set gradient accumulation steps to half of num_batches_per_epoch
+    # This ensures gradients are updated twice per epoch for stability
+    # Use max(1, ...) to ensure at least 1 gradient accumulation step
+    config.train.gradient_accumulation_steps = max(1, config.sample.num_batches_per_epoch // 2)
     config.train.batch_size = config.sample.batch_size
-    config.train.gradient_accumulation_steps = max(1, config.sample.num_batches_per_epoch // 8)  # 8 gradient updates per epoch
-    config.train.cfg = False  # Disable CFG for faster training
+    config.train.cfg = False  # Enable CFG (like SD3)
+    # Extended training
+    config.num_epochs = 10000
+    config.save_freq = 3
+    config.eval_freq = 1
     
-    # Extended training with more frequent evaluation
-    config.num_epochs = 5000  # Reduced from 10000 for practical training
-    config.save_freq = 5     # Save every 5 epochs
-    config.eval_freq = 1     # Evaluate every 2 epochs
+    # Evaluation configuration  
+    config.distributed_eval = False  # Large scale: only main process evaluates to save GPU resources
     
-    # Evaluation configuration
-    config.distributed_eval = True  # Enable distributed evaluation for large scale
-    
-    # Enhanced toxicity optimization for large scale
-    config.toxicity_reward.w_cvar = 0.0   # Enable CVaR for tail optimization
-    config.toxicity_reward.w_quality = 0.2  # Increased quality weight
-    config.toxicity_reward.tau = 0.1     # CVaR threshold
-    
-    # More aggressive prompt editing for better exploration
-    config.prompt_editor.epsilon_p = 0.03   # Slightly larger editing radius
-    config.prompt_editor.epsilon_min = 0.05  # Higher minimum editing radius
-    config.prompt_editor.k_samples = 2      # More editing variations
-    config.prompt_editor.semantic_alpha = 0.8  # Slightly relaxed semantic constraint
-    
-    # Enhanced learning rates for large scale
-    config.train.learning_rate = 1e-5       # Increased transformer learning rate
-    config.prompt_editor.learning_rate = 1e-4  # Increased prompt editor learning rate
-    
-    # Memory and performance optimizations
-    config.mixed_precision = "fp16"  # Use bf16 for better numerical stability at scale
-    config.train.ema = True          # Keep EMA for stability
+    # More aggressive toxicity optimization
+    config.toxicity_reward.w_cvar = 0
+    config.toxicity_reward.tau = 0.2  
     
     config.run_name = "flow_rtpo_large"
     
