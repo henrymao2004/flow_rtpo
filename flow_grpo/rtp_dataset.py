@@ -18,18 +18,21 @@ class RTPPromptData:
 
 class RealToxicityPromptsDataset(Dataset):
     """
-    Dataset for Real Toxicity Prompts challenge subset.
-    Loads the first 180 prompts as specified for Flow-RTPO training.
+    Dataset for Real Toxicity Prompts.
+    Randomly selects up to max_prompts prompts from the dataset.
     """
     
     def __init__(self, 
-                 max_prompts: int = 180,
+                 max_prompts: int = 5000,
                  split: str = "train",
                  cache_dir: Optional[str] = None,
                  use_local: bool = False,
                  local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
                  local_dataset_name: str = "real-toxicity-prompts",
-                 hf_dataset_name: str = "allenai/real-toxicity-prompts"):
+                 hf_dataset_name: str = "allenai/real-toxicity-prompts",
+                 random_seed: int = 42,
+                 heldout_test_size: int = 1000,  # 20% of 5000
+                 training_test_size: int = 40):
         self.max_prompts = max_prompts
         self.split = split
         self.cache_dir = cache_dir
@@ -37,15 +40,41 @@ class RealToxicityPromptsDataset(Dataset):
         self.local_base_path = local_base_path
         self.local_dataset_name = local_dataset_name
         self.hf_dataset_name = hf_dataset_name
+        self.random_seed = random_seed
+        self.heldout_test_size = heldout_test_size
+        self.training_test_size = training_test_size
         
         # Load dataset
-        self.prompts = self._load_dataset()
+        all_prompts = self._load_dataset()
         
-        # Limit to specified number of prompts
-        if len(self.prompts) > self.max_prompts:
-            self.prompts = self.prompts[:self.max_prompts]
+        # Randomly select prompts if we have more than max_prompts
+        if len(all_prompts) > self.max_prompts:
+            import random
+            random.seed(self.random_seed)
+            all_prompts = random.sample(all_prompts, self.max_prompts)
         
-        print(f"Loaded {len(self.prompts)} prompts from Real Toxicity Prompts dataset")
+        # Split into heldout test, training test, and training sets
+        import random
+        random.seed(self.random_seed)
+        shuffled_prompts = all_prompts.copy()
+        random.shuffle(shuffled_prompts)
+        
+        # Split: heldout_test (20%) | training_test (40 prompts) | train (rest)
+        self.heldout_test_prompts = shuffled_prompts[:self.heldout_test_size]
+        remaining_prompts = shuffled_prompts[self.heldout_test_size:]
+        self.training_test_prompts = remaining_prompts[:self.training_test_size]
+        self.train_prompts = remaining_prompts[self.training_test_size:]
+        
+        # Set prompts based on split
+        if split == "heldout_test":
+            self.prompts = self.heldout_test_prompts
+        elif split == "training_test":
+            self.prompts = self.training_test_prompts
+        else:  # train
+            self.prompts = self.train_prompts
+        
+        print(f"Loaded {len(self.prompts)} prompts from Real Toxicity Prompts dataset (split: {split})")
+        print(f"Dataset splits - Heldout test: {len(self.heldout_test_prompts)}, Training test: {len(self.training_test_prompts)}, Train: {len(self.train_prompts)}")
         print(f"Loading mode: {'Local' if self.use_local else 'HuggingFace'}")
     
     def _load_dataset(self) -> List[RTPPromptData]:
@@ -94,9 +123,6 @@ class RealToxicityPromptsDataset(Dataset):
                 if not prompt_data or "text" not in prompt_data:
                     continue
                 
-                # Only include challenging prompts
-                if not item.get("challenging", False):
-                    continue
                 
                 # Create RTPPromptData
                 prompt = RTPPromptData(
@@ -112,7 +138,7 @@ class RealToxicityPromptsDataset(Dataset):
                         "sexually_explicit": prompt_data.get("sexually_explicit", 0.0),
                         "flirtation": prompt_data.get("flirtation", 0.0),
                     },
-                    is_challenging=item.get("challenging", True),
+                    is_challenging=item.get("challenging", False),
                     source_info={
                         "filename": item.get("filename", ""),
                         "begin": item.get("begin", 0),
@@ -142,9 +168,6 @@ class RealToxicityPromptsDataset(Dataset):
                 if not prompt_data or "text" not in prompt_data:
                     continue
                 
-                # Only include challenging prompts
-                if not item.get("challenging", False):
-                    continue
                 
                 # Create RTPPromptData
                 prompt = RTPPromptData(
@@ -160,7 +183,7 @@ class RealToxicityPromptsDataset(Dataset):
                         "sexually_explicit": prompt_data.get("sexually_explicit", 0.0),
                         "flirtation": prompt_data.get("flirtation", 0.0),
                     },
-                    is_challenging=item.get("challenging", True),
+                    is_challenging=item.get("challenging", False),
                     source_info={
                         "filename": item.get("filename", ""),
                         "begin": item.get("begin", 0),
@@ -239,9 +262,15 @@ class RealToxicityPromptsDataset(Dataset):
         challenging_count = sum(1 for p in self.prompts if p.is_challenging)
         
         stats = {
+            "split": self.split,
             "total_prompts": len(self.prompts),
             "challenging_prompts": challenging_count,
             "non_challenging_prompts": len(self.prompts) - challenging_count,
+            "dataset_splits": {
+                "heldout_test": len(self.heldout_test_prompts),
+                "training_test": len(self.training_test_prompts),
+                "train": len(self.train_prompts)
+            },
             "toxicity_stats": {
                 "mean": sum(toxicity_scores) / len(toxicity_scores) if toxicity_scores else 0.0,
                 "min": min(toxicity_scores) if toxicity_scores else 0.0,
@@ -252,6 +281,14 @@ class RealToxicityPromptsDataset(Dataset):
         }
         
         return stats
+    
+    def get_all_splits(self) -> Dict[str, List[RTPPromptData]]:
+        """Get all dataset splits."""
+        return {
+            "heldout_test": self.heldout_test_prompts,
+            "training_test": self.training_test_prompts,
+            "train": self.train_prompts
+        }
     
     def save_prompts_to_file(self, filepath: str):
         """Save loaded prompts to a JSON file for inspection."""
@@ -300,14 +337,18 @@ class RTPromptsDataLoader:
         return len(self.dataloader)
 
 
-def create_rtp_dataset_and_loader(max_prompts: int = 180,
+def create_rtp_dataset_and_loader(max_prompts: int = 5000,
                                   batch_size: int = 8,
                                   shuffle: bool = True,
                                   cache_dir: Optional[str] = None,
                                   use_local: bool = False,
                                   local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
                                   local_dataset_name: str = "real-toxicity-prompts",
-                                  hf_dataset_name: str = "allenai/real-toxicity-prompts") -> tuple:
+                                  hf_dataset_name: str = "allenai/real-toxicity-prompts",
+                                  random_seed: int = 42,
+                                  split: str = "train",
+                                  heldout_test_size: int = 1000,
+                                  training_test_size: int = 40) -> tuple:
     """
     Convenience function to create RTP dataset and dataloader.
     
@@ -316,11 +357,15 @@ def create_rtp_dataset_and_loader(max_prompts: int = 180,
     """
     dataset = RealToxicityPromptsDataset(
         max_prompts=max_prompts,
+        split=split,
         cache_dir=cache_dir,
         use_local=use_local,
         local_base_path=local_base_path,
         local_dataset_name=local_dataset_name,
-        hf_dataset_name=hf_dataset_name
+        hf_dataset_name=hf_dataset_name,
+        random_seed=random_seed,
+        heldout_test_size=heldout_test_size,
+        training_test_size=training_test_size
     )
     
     dataloader = RTPromptsDataLoader(
