@@ -5,7 +5,7 @@ import datetime
 from concurrent import futures
 
 # Set CUDA memory allocation configuration to reduce fragmentation
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:128'
 import time
 import json
 import hashlib
@@ -645,87 +645,15 @@ def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, em
             ema.copy_temp_to(transformer_trainable_parameters)
 
 
-def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled_embeds, config):
-    """Compute log probability for a single timestep using the flow controller."""
-    # Use SD3-style batch indexing: sample["timesteps"][:, j] instead of sample["timesteps"][j]
-    timesteps = sample["timesteps"][:, timestep_idx]
-    latents = sample["latents"][:, timestep_idx]
-    
-    # Debug logging for tensor shapes and devices
-    print(f"[DEBUG] compute_log_prob timestep_idx={timestep_idx}")
-    print(f"[DEBUG] timesteps shape: {timesteps.shape}, device: {timesteps.device}, dtype: {timesteps.dtype}")
-    print(f"[DEBUG] latents shape: {latents.shape}, device: {latents.device}, dtype: {latents.dtype}")
-    print(f"[DEBUG] embeds shape: {embeds.shape}, device: {embeds.device}, dtype: {embeds.dtype}")
-    print(f"[DEBUG] pooled_embeds shape: {pooled_embeds.shape}, device: {pooled_embeds.device}, dtype: {pooled_embeds.dtype}")
-    
-    # Check for NaN or inf values
-    if torch.isnan(timesteps).any():
-        print(f"[ERROR] NaN detected in timesteps!")
-    if torch.isnan(latents).any():
-        print(f"[ERROR] NaN detected in latents!")
-    if torch.isnan(embeds).any():
-        print(f"[ERROR] NaN detected in embeds!")
-    if torch.isnan(pooled_embeds).any():
-        print(f"[ERROR] NaN detected in pooled_embeds!")
-    
-    # Check memory before transformer call
-    if torch.cuda.is_available():
-        print(f"[DEBUG] CUDA memory before transformer: {torch.cuda.memory_allocated() / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f} GB reserved")
-
-    # Ensure tensors are contiguous and have correct dtype
-    timesteps = timesteps.contiguous().float()
-    latents = latents.contiguous().float()
-    embeds = embeds.contiguous().float()
-    pooled_embeds = pooled_embeds.contiguous().float()
-    
-    print(f"[DEBUG] After making contiguous - timesteps device: {timesteps.device}, latents device: {latents.device}")
-    print(f"[DEBUG] After making contiguous - embeds device: {embeds.device}, pooled_embeds device: {pooled_embeds.device}")
-    
-    # Additional validation for tensor compatibility
-    if timesteps.device != latents.device:
-        print(f"[ERROR] Device mismatch: timesteps on {timesteps.device}, latents on {latents.device}")
-        timesteps = timesteps.to(latents.device)
-        print(f"[FIX] Moved timesteps to {timesteps.device}")
-    
-    if embeds.device != latents.device:
-        print(f"[ERROR] Device mismatch: embeds on {embeds.device}, latents on {latents.device}")
-        embeds = embeds.to(latents.device)
-        print(f"[FIX] Moved embeds to {embeds.device}")
-    
-    if pooled_embeds.device != latents.device:
-        print(f"[ERROR] Device mismatch: pooled_embeds on {pooled_embeds.device}, latents on {latents.device}")
-        pooled_embeds = pooled_embeds.to(latents.device)
-        print(f"[FIX] Moved pooled_embeds to {pooled_embeds.device}")
-
-    # CFG implementation (exactly like SD3)
+def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config):
     if config.train.cfg:
-        cat_latents = torch.cat([latents] * 2)
-        cat_timesteps = torch.cat([timesteps] * 2)
-        print(f"[DEBUG] CFG mode - cat_latents shape: {cat_latents.shape}, cat_timesteps shape: {cat_timesteps.shape}")
-        
-        try:
-            # Clear CUDA cache before expensive operation
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()  # Ensure all operations are completed
-            
-            # Use autocast for better numerical stability
-            with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
-                noise_pred = transformer(
-                    hidden_states=cat_latents,
-                    timestep=cat_timesteps,
-                    encoder_hidden_states=embeds,
-                    pooled_projections=pooled_embeds,
-                    return_dict=False,
-                )[0]
-        except Exception as e:
-            print(f"[ERROR] Transformer forward pass failed in CFG mode: {e}")
-            print(f"[ERROR] cat_latents stats: min={cat_latents.min()}, max={cat_latents.max()}, mean={cat_latents.mean()}")
-            print(f"[ERROR] cat_timesteps stats: min={cat_timesteps.min()}, max={cat_timesteps.max()}, mean={cat_timesteps.mean()}")
-            print(f"[ERROR] embeds stats: min={embeds.min()}, max={embeds.max()}, mean={embeds.mean()}")
-            print(f"[ERROR] pooled_embeds stats: min={pooled_embeds.min()}, max={pooled_embeds.max()}, mean={pooled_embeds.mean()}")
-            raise e
-            
+        noise_pred = transformer(
+            hidden_states=torch.cat([sample["latents"][:, j]] * 2),
+            timestep=torch.cat([sample["timesteps"][:, j]] * 2),
+            encoder_hidden_states=embeds,
+            pooled_projections=pooled_embeds,
+            return_dict=False,
+        )[0]
         noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
         noise_pred_uncond = noise_pred_uncond.detach()
         noise_pred = (
@@ -734,41 +662,24 @@ def compute_log_prob(transformer, pipeline, sample, timestep_idx, embeds, pooled
             * (noise_pred_text - noise_pred_uncond)
         )
     else:
-        print(f"[DEBUG] Non-CFG mode")
-        try:
-            # Clear CUDA cache before expensive operation
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()  # Ensure all operations are completed
-            
-            # Use autocast for better numerical stability
-            with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
-                noise_pred = transformer(
-                    hidden_states=latents,
-                    timestep=timesteps,
-                    encoder_hidden_states=embeds,
-                    pooled_projections=pooled_embeds,
-                    return_dict=False,
-                )[0]
-        except Exception as e:
-            print(f"[ERROR] Transformer forward pass failed in non-CFG mode: {e}")
-            print(f"[ERROR] latents stats: min={latents.min()}, max={latents.max()}, mean={latents.mean()}")
-            print(f"[ERROR] timesteps stats: min={timesteps.min()}, max={timesteps.max()}, mean={timesteps.mean()}")
-            print(f"[ERROR] embeds stats: min={embeds.min()}, max={embeds.max()}, mean={embeds.mean()}")
-            print(f"[ERROR] pooled_embeds stats: min={pooled_embeds.min()}, max={pooled_embeds.max()}, mean={pooled_embeds.mean()}")
-            raise e
+        noise_pred = transformer(
+            hidden_states=sample["latents"][:, j],
+            timestep=sample["timesteps"][:, j],
+            encoder_hidden_states=embeds,
+            pooled_projections=pooled_embeds,
+            return_dict=False,
+        )[0]
     
-    print(f"[DEBUG] noise_pred shape: {noise_pred.shape}, device: {noise_pred.device}, dtype: {noise_pred.dtype}")
-
-    # compute the log prob of next_latents given latents under the current model (like SD3)
+    # compute the log prob of next_latents given latents under the current model
     prev_sample, log_prob, prev_sample_mean, std_dev_t = sde_step_with_logprob(
         pipeline.scheduler,
         noise_pred.float(),
-        timesteps,
-        latents.float(),
-        prev_sample=sample["next_latents"][:, timestep_idx].float(),
-        noise_level=config.sample.get("noise_level", 0.7),
+        sample["timesteps"][:, j],
+        sample["latents"][:, j].float(),
+        prev_sample=sample["next_latents"][:, j].float(),
+        noise_level=config.sample.noise_level,
     )
+
     return prev_sample, log_prob, prev_sample_mean, std_dev_t
 
 
@@ -1133,9 +1044,9 @@ def main(_):
         pipeline.transformer.train()
     
     # Enable gradient checkpointing to save memory
-    if config.get('gradient_checkpointing', False):
-        pipeline.transformer.enable_gradient_checkpointing()
-        logger.info("Gradient checkpointing enabled for memory optimization")
+
+    pipeline.transformer.enable_gradient_checkpointing()
+    logger.info("Gradient checkpointing enabled for memory optimization")
     
     # Initialize enhanced prompt editor with adaptive constraints and semantic regularization
     prompt_editor = PromptEditorPolicy(
