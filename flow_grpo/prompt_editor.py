@@ -631,7 +631,7 @@ class PromptEditorPolicy(nn.Module):
         """Disable simple noise injection."""
         self.use_simple_noise = False
     
-    def enable_modification_noise(self, max_std: float = 0.005):
+    def enable_modification_noise(self, max_std: float = 0.01):
         """Enable random noise injection during embedding modification for sampling diversity.
         
         Each sample will get a randomly selected noise strength between 0 and max_std.
