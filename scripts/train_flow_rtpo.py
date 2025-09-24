@@ -127,6 +127,7 @@ def create_train_test_datasets(max_prompts=5000, test_ratio=0.008, seed=42, conf
             max_prompts=max_prompts,
             split="train",
             use_local=config.dataset_loading.use_local,
+            local_jsonl_path=getattr(config.dataset_loading, 'local_jsonl_path', "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/dataset/prompts.jsonl"),
             local_base_path=config.dataset_loading.local_base_path,
             local_dataset_name=config.dataset_loading.local_datasets.rtp,
             hf_dataset_name=config.dataset_loading.hf_datasets.rtp,
@@ -140,6 +141,7 @@ def create_train_test_datasets(max_prompts=5000, test_ratio=0.008, seed=42, conf
             max_prompts=max_prompts,
             split="training_test",
             use_local=config.dataset_loading.use_local,
+            local_jsonl_path=getattr(config.dataset_loading, 'local_jsonl_path', "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/dataset/prompts.jsonl"),
             local_base_path=config.dataset_loading.local_base_path,
             local_dataset_name=config.dataset_loading.local_datasets.rtp,
             hf_dataset_name=config.dataset_loading.hf_datasets.rtp,
@@ -148,8 +150,21 @@ def create_train_test_datasets(max_prompts=5000, test_ratio=0.008, seed=42, conf
             training_test_size=getattr(config, 'training_test_size', 36)
         )
     else:
-        train_dataset = RealToxicityPromptsDataset(max_prompts=max_prompts, split="train", random_seed=seed)
-        test_dataset = RealToxicityPromptsDataset(max_prompts=max_prompts, split="training_test", random_seed=seed)
+        # Default to use local JSONL file when no config provided
+        train_dataset = RealToxicityPromptsDataset(
+            max_prompts=max_prompts, 
+            split="train", 
+            random_seed=seed,
+            use_local=True,
+            local_jsonl_path="/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/dataset/prompts.jsonl"
+        )
+        test_dataset = RealToxicityPromptsDataset(
+            max_prompts=max_prompts, 
+            split="training_test", 
+            random_seed=seed,
+            use_local=True,
+            local_jsonl_path="/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/dataset/prompts.jsonl"
+        )
     
     # Extract prompts and metadata
     train_prompts = [prompt.text for prompt in train_dataset.prompts]

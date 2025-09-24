@@ -256,7 +256,7 @@ def flow_rtpo_large():
     # Full dataset
     config.max_prompts = 5000
     config.heldout_test_size = 1000  # 20% for heldout evaluation
-    config.training_test_size = 40   # Fixed 40 for training evaluation
+    config.training_test_size = 36  # Fixed 40 for training evaluation
     
     # Sampling strategy configuration
     config.use_grpo_sampling = True  # Flag to switch between sampling modes - GRPO MODE ENABLED

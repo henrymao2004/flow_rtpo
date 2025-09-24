@@ -26,7 +26,8 @@ class RealToxicityPromptsDataset(Dataset):
                  max_prompts: int = 5000,
                  split: str = "train",
                  cache_dir: Optional[str] = None,
-                 use_local: bool = False,
+                 use_local: bool = True,
+                 local_jsonl_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/dataset/prompts.jsonl",
                  local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
                  local_dataset_name: str = "real-toxicity-prompts",
                  hf_dataset_name: str = "allenai/real-toxicity-prompts",
@@ -37,6 +38,7 @@ class RealToxicityPromptsDataset(Dataset):
         self.split = split
         self.cache_dir = cache_dir
         self.use_local = use_local
+        self.local_jsonl_path = local_jsonl_path
         self.local_base_path = local_base_path
         self.local_dataset_name = local_dataset_name
         self.hf_dataset_name = hf_dataset_name
@@ -85,49 +87,55 @@ class RealToxicityPromptsDataset(Dataset):
             return self._load_from_huggingface()
     
     def _load_from_local(self) -> List[RTPPromptData]:
-        """Load RTP dataset from local path."""
+        """Load RTP dataset from local JSONL file."""
         try:
-            local_dataset_path = os.path.join(self.local_base_path, self.local_dataset_name)
-            print(f"[LOCAL] Loading dataset from: {local_dataset_path}")
+            print(f"[LOCAL] Loading dataset from JSONL: {self.local_jsonl_path}")
             
-            if not os.path.exists(local_dataset_path):
-                print(f"[LOCAL] Local dataset path does not exist: {local_dataset_path}")
+            if not os.path.exists(self.local_jsonl_path):
+                print(f"[LOCAL] JSONL file does not exist: {self.local_jsonl_path}")
                 print("[LOCAL] Falling back to HuggingFace loading...")
                 return self._load_from_huggingface()
             
-            # Try to load from local HuggingFace cache format
-            try:
-                dataset = load_dataset(local_dataset_path, cache_dir=self.cache_dir)
-                train_data = dataset["train"]
-                print(f"[LOCAL] Successfully loaded local dataset with {len(train_data)} samples")
-            except Exception as e:
-                print(f"[LOCAL] Failed to load as HuggingFace format: {e}")
-                # Try to load from JSONL file
-                jsonl_path = os.path.join(local_dataset_path, "prompts.jsonl")
-                if os.path.exists(jsonl_path):
-                    print(f"[LOCAL] Loading from JSONL file: {jsonl_path}")
-                    train_data = []
-                    with open(jsonl_path, 'r', encoding='utf-8') as f:
-                        for line in f:
-                            train_data.append(json.loads(line.strip()))
-                    print(f"[LOCAL] Successfully loaded {len(train_data)} records from JSONL")
-                else:
-                    print(f"[LOCAL] No JSONL file found at: {jsonl_path}")
-                    print("[LOCAL] Falling back to HuggingFace loading...")
-                    return self._load_from_huggingface()
+            # Load directly from JSONL file
+            train_data = []
+            with open(self.local_jsonl_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip():  # Skip empty lines
+                        train_data.append(json.loads(line.strip()))
+            print(f"[LOCAL] Successfully loaded {len(train_data)} records from JSONL")
             
             prompts = []
             for i, item in enumerate(train_data):
-                # Extract prompt data
-                prompt_data = item.get("prompt", {})
-                if not prompt_data or "text" not in prompt_data:
-                    continue
+                # Handle different possible data formats
+                # Check if it's direct text or nested prompt structure
+                if isinstance(item, str):
+                    # Simple text format
+                    text = item
+                    prompt_data = {}
+                elif "prompt" in item and isinstance(item["prompt"], dict):
+                    # Original RTP format with nested prompt
+                    prompt_data = item["prompt"]
+                    text = prompt_data.get("text", "")
+                elif "prompt" in item and isinstance(item["prompt"], str):
+                    # Simple prompt string format
+                    text = item["prompt"]
+                    prompt_data = {}
+                elif "text" in item:
+                    # Direct text field
+                    text = item["text"]
+                    prompt_data = item
+                else:
+                    # Try to find any text field
+                    text = item.get("prompt", item.get("text", ""))
+                    prompt_data = item
                 
+                if not text or len(text.strip()) == 0:
+                    continue
                 
                 # Create RTPPromptData
                 prompt = RTPPromptData(
                     prompt_id=f"rtp_{i}",
-                    text=prompt_data["text"],
+                    text=text.strip(),
                     toxicity_scores={
                         "toxicity": prompt_data.get("toxicity", 0.0),
                         "severe_toxicity": prompt_data.get("severe_toxicity", 0.0),
@@ -341,7 +349,8 @@ def create_rtp_dataset_and_loader(max_prompts: int = 5000,
                                   batch_size: int = 8,
                                   shuffle: bool = True,
                                   cache_dir: Optional[str] = None,
-                                  use_local: bool = False,
+                                  use_local: bool = True,
+                                  local_jsonl_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/dataset/prompts.jsonl",
                                   local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
                                   local_dataset_name: str = "real-toxicity-prompts",
                                   hf_dataset_name: str = "allenai/real-toxicity-prompts",
@@ -360,6 +369,7 @@ def create_rtp_dataset_and_loader(max_prompts: int = 5000,
         split=split,
         cache_dir=cache_dir,
         use_local=use_local,
+        local_jsonl_path=local_jsonl_path,
         local_base_path=local_base_path,
         local_dataset_name=local_dataset_name,
         hf_dataset_name=hf_dataset_name,
