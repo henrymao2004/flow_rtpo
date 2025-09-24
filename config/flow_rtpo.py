@@ -81,7 +81,7 @@ def flow_rtpo_sd3():
     config.sample.num_steps = 10
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale = 4.5
-    config.sample.test_batch_size = 6
+    config.sample.test_batch_size = 4
     config.sample.train_batch_size = config.sample.batch_size
     
     # Test split configuration
@@ -266,13 +266,13 @@ def flow_rtpo_large():
     config.sample.num_image_per_prompt = 4 # Multiple samples per prompt for ranking
     
     # GRPO sampling configuration for large scale
-    gpu_number = 32
+    gpu_number = 64
     config.sample.train_batch_size = config.sample.batch_size  # For GRPO compatibility
     config.sample.grpo_k = config.sample.num_image_per_prompt * config.prompt_editor.k_samples  # Total K-repeat
     
     # Calculate batches based on GRPO grouping requirements
     # Use full prompt set but optimize batch distribution
-    config.sample.grpo_num_batches = int(16/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k))
+    config.sample.grpo_num_batches = int(32/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k))
     config.sample.num_batches_per_epoch = max(1, config.sample.grpo_num_batches) 
     
     # Set gradient accumulation steps to half of num_batches_per_epoch
