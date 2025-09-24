@@ -358,7 +358,7 @@ class ToxicityRewardSystem:
         
         
         # Process images in batches of 8
-        batch_size = 6
+        batch_size = 12
         all_batch_responses = []
         
         # OOM Debug: Print batch processing info

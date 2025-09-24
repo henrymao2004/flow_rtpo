@@ -262,11 +262,11 @@ def flow_rtpo_large():
     config.use_grpo_sampling = True  # Flag to switch between sampling modes - GRPO MODE ENABLED
     
     # Keep batch size as requested but increase batches for GRPO grouping
-    config.sample.batch_size = 2 # Changed to 2 as requested
+    config.sample.batch_size = 4 # Changed to 2 as requested
     config.sample.num_image_per_prompt = 4 # Multiple samples per prompt for ranking
     
     # GRPO sampling configuration for large scale
-    gpu_number = 64
+    gpu_number = 32
     config.sample.train_batch_size = config.sample.batch_size  # For GRPO compatibility
     config.sample.grpo_k = config.sample.num_image_per_prompt * config.prompt_editor.k_samples  # Total K-repeat
     
