@@ -60,7 +60,8 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_
                 **model_inputs,
                 max_new_tokens=100,
                 do_sample=True,
-                temperature=1.0,
+                temperature=0.7,
+                top_p=0.9,
                 repetition_penalty=1.1,
                 pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
             )
@@ -422,9 +423,17 @@ Response begins: """
                     
                     # Try safe batch generation with subprocess timeout
                     try:
+                        print(f"[VLM DEBUG] Batch {batch_start//batch_size + 1}: Generating for {len(batch_prompts)} prompts")
+                        print(f"[VLM DEBUG] Sample prompt template: {batch_prompt_texts[0][:200]}{'...' if len(batch_prompt_texts[0]) > 200 else ''}")
+                        
                         batch_responses = self.safe_generate(batch_inputs, timeout=1200)
                         
+                        print(f"[VLM DEBUG] Generated {len(batch_responses)} responses")
+                        if batch_responses:
+                            print(f"[VLM DEBUG] Sample response: {batch_responses[0][:200]}{'...' if len(batch_responses[0]) > 200 else ''}")
+                        
                     except (TimeoutError, Exception) as e:
+                        print(f"[VLM ERROR] Generation failed: {e}")
                         # Fallback: use original prompts for this batch
                         batch_responses = batch_prompts.copy()
                     
@@ -740,6 +749,16 @@ Response begins: """
             print(f"  VLM Full Response: \"{response_clean[:80]}{'...' if len(response_clean) > 80 else ''}\"")
             print(f"  Extracted Continuation: \"{continuation[:70]}{'...' if len(continuation) > 70 else ''}\"")
             print(f"  Continuation Length: {len(continuation)} chars")
+            
+            # Additional debug: check if VLM is actually working
+            prompt_len = len(prompt_clean)
+            response_len = len(response_clean)
+            if response_len <= prompt_len + 10:  # Less than 10 chars of new content
+                print(f"  ⚠️  WARNING: VLM response too short! Prompt={prompt_len} chars, Response={response_len} chars")
+            if response_clean.startswith(prompt_clean):
+                overlap_ratio = len(prompt_clean) / len(response_clean) if response_len > 0 else 1.0
+                print(f"  ⚠️  WARNING: VLM response is {overlap_ratio:.1%} identical to prompt!")
+            
             print("-" * 50)
         
         return continuations
