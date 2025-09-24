@@ -79,7 +79,7 @@ class PromptEditorPolicy(nn.Module):
                  simple_noise_std: float = 0.01,  # Standard deviation for simple noise
                  # Modification noise parameters for sampling diversity
                  use_modification_noise: bool = True,  # Use random noise during embedding modification
-                 modification_noise_std: float = 0.005,  # Standard deviation for modification noise
+                 modification_noise_std: float = 0.02,  # Standard deviation for modification noise
                  # Model loading parameters
                  use_local: bool = False,
                  local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
