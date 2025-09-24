@@ -58,8 +58,8 @@ def flow_rtpo_sd3():
     config.save_loading.default_base_path = "./logs/"  # Default local path when not using remote storage
     
     # LoRA configuration for flow controller
-    config.lora_rank = 16
-    config.lora_alpha = 32
+    config.lora_rank = 8
+    config.lora_alpha = 16
     config.lora_dropout = 0.1
     
     # Dataset configuration - Real Toxicity Prompts
@@ -96,7 +96,7 @@ def flow_rtpo_sd3():
     config.train.cfg = False # Enable CFG (like SD3)
     
     # GRPO configuration (same as existing)
-    config.train.learning_rate = 1e-5
+    config.train.learning_rate = 1e-4
     config.train.clip_range = 1e-4
     config.train.adv_clip_max = 5
     config.train.beta = 0.04  # KL regularization coefficient
@@ -262,7 +262,7 @@ def flow_rtpo_large():
     config.use_grpo_sampling = True  # Flag to switch between sampling modes - GRPO MODE ENABLED
     
     # Keep batch size as requested but increase batches for GRPO grouping
-    config.sample.batch_size = 3 # Changed to 2 as requested
+    config.sample.batch_size = 4 # Changed to 2 as requested
     config.sample.num_image_per_prompt = 4 # Multiple samples per prompt for ranking
     
     # GRPO sampling configuration for large scale
