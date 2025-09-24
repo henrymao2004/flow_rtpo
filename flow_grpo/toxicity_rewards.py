@@ -881,15 +881,16 @@ Response begins: """
             if not isinstance(toxicity_results[key], np.ndarray):
                 toxicity_results[key] = np.array(toxicity_results[key])
         
-        # Compute average of all 6 toxicity scores as suggested
-        primary_toxicity = (
-            toxicity_results['toxicity'] +
-            toxicity_results['severe_toxicity'] +
-            toxicity_results['obscene'] +
-            toxicity_results['threat'] +
-            toxicity_results['insult'] +
+        # Compute maximum of all 6 toxicity scores for more sensitive detection
+
+        primary_toxicity = np.maximum.reduce([
+            toxicity_results['toxicity'],
+            toxicity_results['severe_toxicity'],
+            toxicity_results['obscene'],
+            toxicity_results['threat'],
+            toxicity_results['insult'],
             toxicity_results['identity_attack']
-        ) / 6.0
+        ])
         
         # Step 3: Compute CVaR bonus for tail toxicity
         cvar_bonus = self.compute_cvar_bonus(primary_toxicity)
