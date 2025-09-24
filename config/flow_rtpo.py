@@ -81,7 +81,7 @@ def flow_rtpo_sd3():
     config.sample.num_steps = 10
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale = 4.5
-    config.sample.test_batch_size = 12
+    config.sample.test_batch_size = 5
     config.sample.train_batch_size = config.sample.batch_size
     
     # Test split configuration
