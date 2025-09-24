@@ -328,6 +328,9 @@ class ToxicityRewardSystem:
         num_samples = len(images)
         responses = [""] * num_samples
         
+        # OOM Debug: Print initial memory status
+        if torch.cuda.is_available():
+            print(f"[OOM DEBUG] Initial GPU memory - Allocated: {torch.cuda.memory_allocated() / 1024**3:.2f}GB, Reserved: {torch.cuda.memory_reserved() / 1024**3:.2f}GB")
         
         if num_samples == 0:
             return responses
@@ -355,8 +358,11 @@ class ToxicityRewardSystem:
         
         
         # Process images in batches of 8
-        batch_size = 24
+        batch_size = 12
         all_batch_responses = []
+        
+        # OOM Debug: Print batch processing info
+        print(f"[OOM DEBUG] Processing {len(valid_images)} valid images in batches of {batch_size}")
         
         for batch_start in range(0, len(valid_images), batch_size):
             batch_end = min(batch_start + batch_size, len(valid_images))
@@ -364,6 +370,10 @@ class ToxicityRewardSystem:
             batch_prompts = valid_prompts[batch_start:batch_end]
             batch_indices = valid_indices[batch_start:batch_end]
             
+            
+            # OOM Debug: Print batch info and memory before processing
+            if torch.cuda.is_available():
+                print(f"[OOM DEBUG] Batch {batch_start//batch_size + 1}: Processing {len(batch_images)} images - GPU memory before: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
             
             try:
                 if self.use_llava:
@@ -408,12 +418,20 @@ Response begins: """
                         batch_prompt_texts.append(prompt_text)
                     
                     # Process batch inputs
+                    # OOM Debug: Memory before tokenization
+                    if torch.cuda.is_available():
+                        print(f"[OOM DEBUG] Before tokenization - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated")
+                    
                     batch_inputs = self.vlm_processor(
                         text=batch_prompt_texts,
                         images=batch_images,
                         return_tensors="pt",
                         padding=True
                     )
+                    
+                    # OOM Debug: Memory after tokenization
+                    if torch.cuda.is_available():
+                        print(f"[OOM DEBUG] After tokenization - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated")
                     
                     # Let HF handle device mapping automatically
                     
@@ -425,9 +443,29 @@ Response begins: """
                     
                     # Try safe batch generation with subprocess timeout
                     try:
+                        # OOM Debug: Memory before generation
+                        if torch.cuda.is_available():
+                            print(f"[OOM DEBUG] Before VLM generation - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
+                        
                         batch_responses = self.safe_generate(batch_inputs, timeout=1200)
                         
+                        # OOM Debug: Memory after generation
+                        if torch.cuda.is_available():
+                            print(f"[OOM DEBUG] After VLM generation - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
+                        
                     except (TimeoutError, Exception) as e:
+                        # OOM Debug: Print error details
+                        print(f"[OOM DEBUG] VLM generation failed: {type(e).__name__}: {str(e)}")
+                        if torch.cuda.is_available():
+                            print(f"[OOM DEBUG] GPU memory at error - Allocated: {torch.cuda.memory_allocated() / 1024**3:.2f}GB, Reserved: {torch.cuda.memory_reserved() / 1024**3:.2f}GB")
+                        
+                        # Check if it's specifically an OOM error
+                        if "out of memory" in str(e).lower() or "cuda" in str(e).lower():
+                            print("[OOM DEBUG] CUDA/OOM error detected - clearing cache")
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                                torch.cuda.reset_peak_memory_stats()
+                        
                         # Fallback: use original prompts for this batch
                         batch_responses = batch_prompts.copy()
                     
@@ -439,6 +477,10 @@ Response begins: """
                     
                     # Store batch responses
                     all_batch_responses.extend(batch_cleaned_responses)
+                    
+                    # OOM Debug: Memory after batch completion
+                    if torch.cuda.is_available():
+                        print(f"[OOM DEBUG] Batch {batch_start//batch_size + 1} completed - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
                     
                 else:
                     # Fallback to generic pipeline (should not happen with LLaVA)
@@ -479,6 +521,18 @@ Response begins: """
                     all_batch_responses.extend(batch_responses)
                     
             except Exception as e:
+                # OOM Debug: Print batch-level error
+                print(f"[OOM DEBUG] Batch {batch_start//batch_size + 1} failed with error: {type(e).__name__}: {str(e)}")
+                if torch.cuda.is_available():
+                    print(f"[OOM DEBUG] GPU memory at batch error - Allocated: {torch.cuda.memory_allocated() / 1024**3:.2f}GB, Reserved: {torch.cuda.memory_reserved() / 1024**3:.2f}GB")
+                
+                # Check if it's specifically an OOM error
+                if "out of memory" in str(e).lower() or "cuda" in str(e).lower():
+                    print("[OOM DEBUG] Batch-level CUDA/OOM error detected - clearing cache")
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        torch.cuda.reset_peak_memory_stats()
+                
                 # Fallback to prompts for this batch
                 all_batch_responses.extend(batch_prompts)
         
@@ -486,11 +540,19 @@ Response begins: """
         for i, (response, idx) in enumerate(zip(all_batch_responses, valid_indices)):
             responses[idx] = response
         
+        # OOM Debug: Final memory status before cleanup
+        if torch.cuda.is_available():
+            print(f"[OOM DEBUG] Before final cleanup - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
+        
         # Memory cleanup after VLM generation
         if hasattr(torch.cuda, 'empty_cache'):
             torch.cuda.empty_cache()
         if hasattr(torch.cuda, 'reset_peak_memory_stats'):
             torch.cuda.reset_peak_memory_stats()
+        
+        # OOM Debug: Final memory status after cleanup
+        if torch.cuda.is_available():
+            print(f"[OOM DEBUG] After final cleanup - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
         
         return responses
     
