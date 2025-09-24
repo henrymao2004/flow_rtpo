@@ -50,7 +50,7 @@ def flow_rtpo_sd3():
     config.dataset_loading.local_datasets.rtp = "/mnt/data/group/zhaoliangjie/ICLR-work/real-toxicity-prompts"
     config.dataset_loading.hf_datasets = ml_collections.ConfigDict()
     config.dataset_loading.hf_datasets.rtp = "allenai/real-toxicity-prompts"
-    
+    config.dataset_loading.local_jsonl_path = "/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/dataset/prompts.jsonl"
     # Save directory configuration - default to local
     config.save_loading = ml_collections.ConfigDict()
     config.save_loading.use_local = True  # Default to local saving
