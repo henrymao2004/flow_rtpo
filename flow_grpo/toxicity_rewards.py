@@ -56,28 +56,14 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_
         
         # Generate
         with torch.no_grad():
-            # Read decoding config from inputs if provided
-            decoding_cfg = inputs.get('_decoding_cfg', {}) if isinstance(inputs, dict) else {}
-            use_greedy = decoding_cfg.get('greedy', False)
-            
-            if use_greedy:
-                # Greedy decoding for evaluation
-                outputs = model.generate(
-                    **model_inputs,
-                    max_new_tokens=100,
-                    do_sample=False,
-                    pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
-                )
-            else:
-                # Sampling for training
-                outputs = model.generate(
-                    **model_inputs,
-                    max_new_tokens=100,
-                    do_sample=True,
-                    temperature = 1.0,
-                    repetition_penalty=1.1,
-                    pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
-                )
+            outputs = model.generate(
+                **model_inputs,
+                max_new_tokens=100,
+                do_sample=True,
+                temperature=1.0,
+                repetition_penalty=1.1,
+                pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
+            )
         
         # Decode
         responses = processor.batch_decode(outputs, skip_special_tokens=True)
@@ -101,8 +87,7 @@ class ToxicityRewardSystem:
                  use_local: bool = False,
                  local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
                  local_models: Dict[str, str] = None,
-                 hf_models: Dict[str, str] = None,
-                 vlm_greedy: bool = False):
+                 hf_models: Dict[str, str] = None):
         self.device = device
         self.w_cvar = w_cvar
         self.w_quality = w_quality
@@ -112,7 +97,6 @@ class ToxicityRewardSystem:
         self.local_base_path = local_base_path
         self.local_models = local_models or {}
         self.hf_models = hf_models or {}
-        self.vlm_greedy = vlm_greedy
         
         # Track last CVaR threshold for logging/fallbacks
         self.last_cvar_threshold = None
@@ -294,10 +278,6 @@ class ToxicityRewardSystem:
     def safe_generate(self, inputs: Dict, timeout: int = 1200) -> List[str]:
         """Safe VLM generation with subprocess timeout."""
         try:
-            # Attach decoding configuration to inputs
-            if self.vlm_greedy:
-                inputs['_decoding_cfg'] = {'greedy': True}
-            
             # Serialize inputs
             inputs_pkl = pickle.dumps(inputs)
             
@@ -758,7 +738,7 @@ Response begins: """
             
             # Enhanced debugging output
             print(f"[CONTINUATION DEBUG]")
-            print(f"  Original Prompt (COMPLETE): \"{prompt_clean}\"")
+            print(f"  Original Prompt: \"{prompt_clean[:60]}{'...' if len(prompt_clean) > 60 else ''}\"")
             print(f"  VLM Full Response: \"{response_clean[:80]}{'...' if len(response_clean) > 80 else ''}\"")
             print(f"  Extracted Continuation: \"{continuation[:70]}{'...' if len(continuation) > 70 else ''}\"")
             print(f"  Continuation Length: {len(continuation)} chars")
@@ -910,8 +890,7 @@ def toxicity_reward_function(device: str = "cuda",
                              use_local: bool = False,
                              local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
                              local_models: Dict[str, str] = None,
-                             hf_models: Dict[str, str] = None,
-                             vlm_greedy: bool = False):
+                             hf_models: Dict[str, str] = None):
     """Factory function to create toxicity reward function for flow_grpo."""
     # Set multiprocessing start method for CUDA compatibility
     try:
@@ -927,8 +906,7 @@ def toxicity_reward_function(device: str = "cuda",
         use_local=use_local,
         local_base_path=local_base_path,
         local_models=local_models,
-        hf_models=hf_models,
-        vlm_greedy=vlm_greedy
+        hf_models=hf_models
     )
     
     def _fn(images, prompts, metadata):

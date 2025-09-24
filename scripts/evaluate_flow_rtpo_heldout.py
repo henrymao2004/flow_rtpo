@@ -149,7 +149,6 @@ def evaluate(config_path: str,
         local_base_path=config.model_loading.local_base_path,
         local_models=config.model_loading.local_models.to_dict(),
         hf_models=config.model_loading.hf_models.to_dict(),
-        vlm_greedy=True,
     )
 
     # Initialize CLIP scorer consistent with training

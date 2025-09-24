@@ -13,7 +13,7 @@ from collections import defaultdict
 
 # Set style for plots similar to the reference image
 plt.style.use('default')
-plt.rcParams['font.family'] = 'DejaVu Sans'  # Changed to a clean, professional font
+plt.rcParams['font.family'] = 'Times New Roman'  # Changed to a clean, professional font
 plt.rcParams['font.size'] = 12
 plt.rcParams['axes.linewidth'] = 2
 plt.rcParams['xtick.major.width'] = 2
@@ -71,7 +71,7 @@ def main():
     # Prepare data for analysis
     scenarios = ['Text-Only', 'Text + Image']
     dimensions = ['toxicity', 'severe_toxicity', 'obscene', 'threat', 'insult', 'identity_attack']
-    dimension_labels = ['Toxicity', 'Severe', 'Obscene', 'Threat', 'Insult', 'Identity Attack']
+    dimension_labels = ['Toxicity', 'Severe', 'Obscene', 'Threat', 'Insult', 'Identity']
 
     def select_samples_with_emphasis(matching_samples, num_samples=50, num_runs=10):
         """Select samples that emphasize differences between Text-Only and Text+Image across all dimensions"""
@@ -226,12 +226,12 @@ def main():
                       label=scenario, color=colors[i], edgecolor='black', linewidth=2,
                       yerr=std_success_rates[scenario], capsize=5, error_kw={'linewidth': 2})
     
-    ax1.set_xlabel('Dimensions', fontsize=48, fontweight='bold')
+    ax1.set_xlabel('Dimensions', fontsize=64, fontweight='bold')
     ax1.set_ylabel('Attack Success Rate (%)', fontsize=48, fontweight='bold')
-    ax1.set_title('', fontsize=32, fontweight='bold', pad=20)
+    ax1.set_title('', fontsize=40, fontweight='bold', pad=20)
     ax1.set_xticks(x)
-    ax1.set_xticklabels(dimension_labels, rotation=0, ha='center', fontsize=36)
-    ax1.legend(loc='upper right', fontsize=28)
+    ax1.set_xticklabels(dimension_labels, rotation=0, ha='center', fontsize=48)
+    ax1.legend(loc='upper right', fontsize=36)
     ax1.grid(True, alpha=0.3)
     ax1.set_ylim(0,25)
     ax1.tick_params(axis='y', labelsize=36)
