@@ -236,6 +236,12 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
     eval_base_seed = int(getattr(config, "eval_seed", getattr(config, "seed", 42)))
     
     # Initialize CLIP scorer with loading configuration
+    if config.model_loading.use_local and accelerator.process_index == 0:
+        # Only main process adds delay for eval models to avoid conflict
+        eval_delay = 15.0  # Extra delay for evaluation models
+        print(f"[EVAL MODEL LOADING] Main process: Adding {eval_delay:.1f}s delay for evaluation model loading")
+        time.sleep(eval_delay)
+    
     clip_scorer = ClipScorer(
         device=accelerator.device,
         use_local=config.model_loading.use_local,
@@ -1075,7 +1081,28 @@ def main(_):
     else:
         sd3_model_path = config.model_loading.hf_models.sd3
         print(f"[MODEL LOADING] Loading SD3 from HuggingFace: {sd3_model_path}")
-        pipeline = StableDiffusion3Pipeline.from_pretrained(sd3_model_path)
+        # Add delay to avoid rate limits when loading from HuggingFace
+        import time
+        delay = rank * 2.0  # 2 second delay per rank
+        print(f"[MODEL LOADING] Rank {rank}: Adding {delay:.1f}s delay to avoid rate limits")
+        time.sleep(delay)
+        
+        # Retry mechanism for HuggingFace loading
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                pipeline = StableDiffusion3Pipeline.from_pretrained(sd3_model_path)
+                print(f"[MODEL LOADING] Rank {rank}: Successfully loaded SD3 on attempt {attempt + 1}")
+                break
+            except Exception as e:
+                print(f"[MODEL LOADING] Rank {rank}: Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 30  # Exponential backoff: 30s, 60s, 90s
+                    print(f"[MODEL LOADING] Rank {rank}: Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"[MODEL LOADING] Rank {rank}: All attempts failed, raising error")
+                    raise e
     
     # Memory management: Clear cache after loading large models
     if torch.cuda.is_available():
@@ -1117,6 +1144,13 @@ def main(_):
     logger.info("Gradient checkpointing enabled for memory optimization")
     
     # Initialize enhanced prompt editor with adaptive constraints and semantic regularization
+    print(f"[MODEL LOADING] Rank {rank}: Initializing prompt editor...")
+    if config.model_loading.use_local:
+        # Add delay for prompt editor model loading (vec2text, etc.)
+        prompt_delay = rank * 2.0 + 10.0  # Extra delay for prompt editor models
+        print(f"[MODEL LOADING] Rank {rank}: Adding {prompt_delay:.1f}s delay for prompt editor loading")
+        time.sleep(prompt_delay)
+    
     prompt_editor = PromptEditorPolicy(
         embedding_dim=config.prompt_editor.embedding_dim,
         epsilon_p=config.prompt_editor.epsilon_p,
@@ -1158,7 +1192,14 @@ def main(_):
         )
         logger.info("Convergence monitoring enabled")
     
-    # Initialize reward function
+    # Initialize reward function with delay
+    print(f"[MODEL LOADING] Rank {rank}: Initializing reward function...")
+    if not config.model_loading.use_local:
+        # Add additional delay for VLM loading to avoid rate limits
+        vlm_delay = rank * 3.0 + 5.0  # Extra delay for VLM models
+        print(f"[MODEL LOADING] Rank {rank}: Adding {vlm_delay:.1f}s delay for VLM loading")
+        time.sleep(vlm_delay)
+    
     reward_fn = toxicity_reward_function(
         device=accelerator.device,
         vlm_model=config.target_vlm,

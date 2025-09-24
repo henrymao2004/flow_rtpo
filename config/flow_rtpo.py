@@ -19,7 +19,7 @@ def flow_rtpo_sd3():
     
     # Model loading configuration - default to HuggingFace
     config.model_loading = ml_collections.ConfigDict()
-    config.model_loading.use_local = False  # Default to HuggingFace
+    config.model_loading.use_local = True  # Use local models to avoid HF rate limits
     config.model_loading.local_base_path = ""
     
     # Local model paths (when use_local=True) - absolute paths
