@@ -236,8 +236,9 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
     eval_base_seed = int(getattr(config, "eval_seed", getattr(config, "seed", 42)))
     
     # Initialize CLIP scorer with loading configuration
-    if config.model_loading.use_local and accelerator.process_index == 0:
+    if not config.model_loading.use_local and accelerator.process_index == 0:
         # Only main process adds delay for eval models to avoid conflict
+        import time
         eval_delay = 15.0  # Extra delay for evaluation models
         print(f"[EVAL MODEL LOADING] Main process: Adding {eval_delay:.1f}s delay for evaluation model loading")
         time.sleep(eval_delay)
@@ -1145,8 +1146,9 @@ def main(_):
     
     # Initialize enhanced prompt editor with adaptive constraints and semantic regularization
     print(f"[MODEL LOADING] Rank {rank}: Initializing prompt editor...")
-    if config.model_loading.use_local:
+    if not config.model_loading.use_local:
         # Add delay for prompt editor model loading (vec2text, etc.)
+        import time
         prompt_delay = rank * 2.0 + 10.0  # Extra delay for prompt editor models
         print(f"[MODEL LOADING] Rank {rank}: Adding {prompt_delay:.1f}s delay for prompt editor loading")
         time.sleep(prompt_delay)
@@ -1196,6 +1198,7 @@ def main(_):
     print(f"[MODEL LOADING] Rank {rank}: Initializing reward function...")
     if not config.model_loading.use_local:
         # Add additional delay for VLM loading to avoid rate limits
+        import time
         vlm_delay = rank * 3.0 + 5.0  # Extra delay for VLM models
         print(f"[MODEL LOADING] Rank {rank}: Adding {vlm_delay:.1f}s delay for VLM loading")
         time.sleep(vlm_delay)
