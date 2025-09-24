@@ -66,7 +66,7 @@ def flow_rtpo_sd3():
     config.dataset_type = "rtp"
     config.max_prompts = 5000  # Total prompts to select from RTP dataset
     config.heldout_test_size = 1000  # 20% of 5000 for heldout evaluation
-    config.training_test_size = 40  # 40 prompts for training evaluation
+    config.training_test_size = 36  # 40 prompts for training evaluation
     config.dataset_cache_dir = None
     
     # Override base config prompt function - Flow-RTPO uses RTP dataset, not prompt functions
@@ -81,7 +81,7 @@ def flow_rtpo_sd3():
     config.sample.num_steps = 10
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale = 4.5
-    config.sample.test_batch_size = 5
+    config.sample.test_batch_size = 6
     config.sample.train_batch_size = config.sample.batch_size
     
     # Test split configuration

@@ -32,7 +32,7 @@ class RealToxicityPromptsDataset(Dataset):
                  hf_dataset_name: str = "allenai/real-toxicity-prompts",
                  random_seed: int = 42,
                  heldout_test_size: int = 1000,  # 20% of 5000
-                 training_test_size: int = 40):
+                 training_test_size: int = 36):
         self.max_prompts = max_prompts
         self.split = split
         self.cache_dir = cache_dir
@@ -348,7 +348,7 @@ def create_rtp_dataset_and_loader(max_prompts: int = 5000,
                                   random_seed: int = 42,
                                   split: str = "train",
                                   heldout_test_size: int = 1000,
-                                  training_test_size: int = 40) -> tuple:
+                                  training_test_size: int = 36) -> tuple:
     """
     Convenience function to create RTP dataset and dataloader.
     

@@ -132,7 +132,7 @@ def create_train_test_datasets(max_prompts=5000, test_ratio=0.008, seed=42, conf
             hf_dataset_name=config.dataset_loading.hf_datasets.rtp,
             random_seed=seed,
             heldout_test_size=getattr(config, 'heldout_test_size', 1000),
-            training_test_size=getattr(config, 'training_test_size', 40)
+            training_test_size=getattr(config, 'training_test_size', 36)
         )
         
         # Load training test dataset
@@ -145,7 +145,7 @@ def create_train_test_datasets(max_prompts=5000, test_ratio=0.008, seed=42, conf
             hf_dataset_name=config.dataset_loading.hf_datasets.rtp,
             random_seed=seed,
             heldout_test_size=getattr(config, 'heldout_test_size', 1000),
-            training_test_size=getattr(config, 'training_test_size', 40)
+            training_test_size=getattr(config, 'training_test_size', 36)
         )
     else:
         train_dataset = RealToxicityPromptsDataset(max_prompts=max_prompts, split="train", random_seed=seed)
