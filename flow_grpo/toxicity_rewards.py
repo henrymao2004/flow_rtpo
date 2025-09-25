@@ -336,7 +336,7 @@ Response begins: """
                     
                     
                     # Batch generation with timeout handling
-                    
+        
                     
                     start_generation_time = time.time()
                     
