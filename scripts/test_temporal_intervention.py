@@ -35,9 +35,22 @@ from flow_grpo.toxicity_rewards import toxicity_reward_function
 class TemporalInterventionTester:
     """Class to handle temporal intervention experiments."""
     
-    def __init__(self, config_path: str, device: str = "cuda"):
+    def __init__(self, config_path: str = None, device: str = "cuda"):
         self.device = device
-        self.config = self._load_config(config_path)
+        
+        # Try to load config, but use defaults if it fails
+        try:
+            if config_path and os.path.exists(config_path):
+                self.config = self._load_config(config_path)
+                print("✅ Loaded configuration from file")
+            else:
+                self.config = self._create_default_config()
+                print("⚠️ Using default configuration (config file not found)")
+        except Exception as e:
+            print(f"⚠️ Error loading config: {e}")
+            print("🔄 Using default configuration")
+            self.config = self._create_default_config()
+            
         self.pipeline = self._load_pipeline()
         self.reward_fn = self._load_reward_function()
         self.clip_scorer = self._load_clip_scorer()
@@ -50,24 +63,48 @@ class TemporalInterventionTester:
         spec.loader.exec_module(config_module)
         return config_module.flow_rtpo_sd3()
     
+    def _create_default_config(self):
+        """Create default configuration for standalone usage."""
+        class DefaultConfig:
+            def __init__(self):
+                self.resolution = 1024
+                self.height = 1024
+                self.width = 1024
+                self.sample = type('obj', (object,), {'guidance_scale': 7.0})()
+        
+        return DefaultConfig()
+    
     def _load_pipeline(self):
-        """Load vanilla SD3.5 pipeline."""
+        """Load vanilla SD3 pipeline from Hugging Face."""
         torch_dtype = torch.float16
         
-        if getattr(self.config.model_loading, "use_local", False):
-            sd3_model_path = os.path.join(
-                self.config.model_loading.local_base_path,
-                self.config.model_loading.local_models.sd3,
-            )
+        # Use Hugging Face model directly
+        model_id = "stabilityai/stable-diffusion-3-medium-diffusers"
+        
+        print(f"🔧 Loading SD3 pipeline from Hugging Face: {model_id}")
+        
+        try:
             pipeline = StableDiffusion3Pipeline.from_pretrained(
-                sd3_model_path,
-                torch_dtype=torch_dtype
+                model_id,
+                torch_dtype=torch_dtype,
+                use_safetensors=True,
             )
-        else:
-            pipeline = StableDiffusion3Pipeline.from_pretrained(
-                self.config.model_loading.hf_models.sd3,
-                torch_dtype=torch_dtype
-            )
+            print(f"✅ Successfully loaded pipeline from {model_id}")
+        except Exception as e:
+            print(f"❌ Error loading from {model_id}: {e}")
+            print("🔄 Trying alternative model...")
+            # Fallback to SD3.5 if available
+            try:
+                model_id = "stabilityai/stable-diffusion-3.5-medium"
+                pipeline = StableDiffusion3Pipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=torch_dtype,
+                    use_safetensors=True,
+                )
+                print(f"✅ Successfully loaded fallback pipeline from {model_id}")
+            except Exception as e2:
+                print(f"❌ Error loading fallback: {e2}")
+                raise e2
         
         pipeline.to(self.device)
         pipeline.safety_checker = None
@@ -84,25 +121,33 @@ class TemporalInterventionTester:
     
     def _load_reward_function(self):
         """Load toxicity reward function for evaluation."""
+        # Use Hugging Face models directly
+        hf_models = {
+            "llava": "llava-hf/llava-1.5-7b-hf",  # Default LLaVA model
+            "clip": "openai/clip-vit-base-patch32",
+        }
+        
+        print("🔧 Loading toxicity reward function with HF models...")
         return toxicity_reward_function(
             device=self.device,
-            vlm_model=self.config.target_vlm,
-            w_cvar=self.config.toxicity_reward.w_cvar,
-            w_quality=self.config.toxicity_reward.w_quality,
-            use_local=self.config.model_loading.use_local,
-            local_base_path=self.config.model_loading.local_base_path,
-            local_models=self.config.model_loading.local_models.to_dict(),
-            hf_models=self.config.model_loading.hf_models.to_dict(),
+            vlm_model="llava-hf/llava-1.5-7b-hf",  # Use HF LLaVA directly
+            w_cvar=0.1,  # Default values if config fails
+            w_quality=0.1,
+            use_local=False,  # Force HF usage
+            local_base_path="",
+            local_models={},
+            hf_models=hf_models,
         )
     
     def _load_clip_scorer(self):
         """Load CLIP scorer for faithfulness evaluation."""
+        print("🔧 Loading CLIP scorer with HF models...")
         return ClipScorer(
             device=self.device,
-            use_local=self.config.model_loading.use_local,
-            local_base_path=self.config.model_loading.local_base_path,
-            local_model_name=self.config.model_loading.local_models.clip,
-            hf_model_name=self.config.model_loading.hf_models.clip,
+            use_local=False,  # Force HF usage
+            local_base_path="",
+            local_model_name="",
+            hf_model_name="openai/clip-vit-base-patch32",
         )
     
     def load_test_prompts(self, prompts_file: str, num_prompts: int = 5):
@@ -495,7 +540,7 @@ def test_temporal_intervention():
     print("=" * 60)
     
     # Configuration
-    config_path = "/workspace/flow_rtpo/config/flow_rtpo.py"
+    config_path = "/workspace/flow_rtpo/config/flow_rtpo.py"  # Optional, will use defaults if not found
     prompts_file = "/workspace/flow_rtpo/dataset/prompts.jsonl"
     save_dir = "/workspace/flow_rtpo/results/temporal_intervention_test"
     
@@ -513,8 +558,19 @@ def test_temporal_intervention():
         for i, prompt in enumerate(prompts):
             print(f"   {i+1}. {prompt[:60]}{'...' if len(prompt) > 60 else ''}")
     except Exception as e:
-        print(f"❌ Error loading prompts: {e}")
-        return
+        print(f"⚠️ Error loading prompts from {prompts_file}: {e}")
+        print("🔄 Using default test prompts instead...")
+        # Fallback prompts for testing
+        prompts = [
+            "A peaceful garden scene with flowers",
+            "A futuristic city skyline at sunset", 
+            "A cozy library with books and warm lighting",
+            "A mountain landscape with snow-capped peaks",
+            "A vintage car on a winding road"
+        ]
+        print(f"✅ Using {len(prompts)} default prompts:")
+        for i, prompt in enumerate(prompts):
+            print(f"   {i+1}. {prompt}")
     
     # Step 2-5: Initialize tester and run experiments
     print(f"\n🔧 Initializing Temporal Intervention Tester...")
