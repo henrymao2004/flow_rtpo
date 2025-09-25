@@ -10,69 +10,13 @@ import base64
 from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 from detoxify import Detoxify
 import warnings
-import multiprocessing as mp
-import pickle
+# multiprocessing and pickle imports removed - using direct VLM generation
 import signal
 import os
 warnings.filterwarnings("ignore")
 
 
-def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_id=None):
-    """Worker function for subprocess VLM generation."""
-    try:
-        import torch
-        from transformers import LlavaNextForConditionalGeneration, LlavaNextProcessor
-        import pickle
-        
-        # Use provided GPU ID or fall back to current device
-        if gpu_id is None:
-            gpu_id = torch.cuda.current_device() if torch.cuda.is_available() else 0
-        
-        # Set the device for this subprocess
-        if torch.cuda.is_available():
-            torch.cuda.set_device(gpu_id)
-        
-        processor = LlavaNextProcessor.from_pretrained(model_path)
-        model = LlavaNextForConditionalGeneration.from_pretrained(
-            model_path,
-            torch_dtype=torch.float16,
-            device_map={"": f"cuda:{gpu_id}"},  # Use current GPU for this worker
-            low_cpu_mem_usage=True,
-            attn_implementation="sdpa"
-        )
-        model.eval()
-        
-        # Deserialize inputs
-        inputs = pickle.loads(inputs_pkl)
-        
-        # Move to GPU
-        model_device = next(model.parameters()).device
-        model_inputs = {}
-        for k, v in inputs.items():
-            if torch.is_tensor(v):
-                model_inputs[k] = v.to(model_device)
-            else:
-                model_inputs[k] = v
-        
-        # Generate
-        with torch.no_grad():
-            outputs = model.generate(
-                **model_inputs,
-                max_new_tokens=100,
-                do_sample=True,
-                temperature=0.7,
-                top_p=0.95,
-                repetition_penalty=1.1,
-                pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
-            )
-        
-        # Decode
-        responses = processor.batch_decode(outputs, skip_special_tokens=True)
-        result_queue.put(responses)
-        
-    except Exception as e:
-        print(f"[SUBPROCESS ERROR] {str(e)}", flush=True)
-        error_queue.put(str(e))
+# Subprocess worker function removed - using direct VLM generation
 
 
 class ToxicityRewardSystem:
@@ -277,51 +221,35 @@ class ToxicityRewardSystem:
     # Aesthetic scorer initialization removed per user request
     
     def safe_generate(self, inputs: Dict) -> List[str]:
-        """Safe VLM generation with subprocess."""
+        """Direct VLM generation in main process."""
         try:
-            # Serialize inputs
-            inputs_pkl = pickle.dumps(inputs)
+            # Move inputs to GPU
+            model_device = next(self.vlm_model.parameters()).device
+            model_inputs = {}
+            for k, v in inputs.items():
+                if torch.is_tensor(v):
+                    model_inputs[k] = v.to(model_device)
+                else:
+                    model_inputs[k] = v
             
-            # Create queues
-            result_queue = mp.Queue()
-            error_queue = mp.Queue()
+            # Generate
+            with torch.no_grad():
+                outputs = self.vlm_model.generate(
+                    **model_inputs,
+                    max_new_tokens=100,
+                    do_sample=True,
+                    temperature=0.7,
+                    top_p=0.95,
+                    repetition_penalty=1.1,
+                    pad_token_id=getattr(self.vlm_processor, 'eos_token_id', getattr(self.vlm_processor, 'tokenizer', self.vlm_processor).eos_token_id)
+                )
             
-            # Get current GPU ID for this subprocess
-            current_gpu = torch.cuda.current_device() if torch.cuda.is_available() else 0
+            # Decode
+            responses = self.vlm_processor.batch_decode(outputs, skip_special_tokens=True)
+            return responses
             
-            # Start subprocess
-            process = mp.Process(
-                target=_vlm_generate_worker,
-                args=(self.vlm_model_path, inputs_pkl, result_queue, error_queue, current_gpu)
-            )
-            process.start()
-            
-            # Wait for process completion
-            process.join()
-            
-            if process.is_alive():
-                process.terminate()
-                process.join()  # Wait for clean termination
-                if process.is_alive():
-                    process.kill()  # Force kill if needed
-                
-                # Clean up GPU memory
-                torch.cuda.empty_cache()
-                raise RuntimeError("VLM generation process failed")
-            
-            # Check for errors
-            if not error_queue.empty():
-                error = error_queue.get()
-                raise RuntimeError(f"VLM generation failed: {error}")
-            
-            # Get results
-            if not result_queue.empty():
-                return result_queue.get()
-            else:
-                raise RuntimeError("No results from VLM generation")
-                
         except Exception as e:
-            raise e
+            raise RuntimeError(f"VLM generation failed: {str(e)}")
     
     def evaluate_vlm_response(self, images: List[Image.Image], prompts: List[str]) -> List[str]:
         """Get VLM responses for image-prompt pairs with batch processing optimization."""
@@ -358,7 +286,7 @@ class ToxicityRewardSystem:
         
         
         # Process images in batches of 8
-        batch_size = 8
+        batch_size = 6
         all_batch_responses = []
         
         # OOM Debug: Print batch processing info
@@ -441,7 +369,7 @@ Response begins: """
                     
                     start_generation_time = time.time()
                     
-                    # Try safe batch generation with subprocess
+                    # Try direct batch generation
                     try:
                         # OOM Debug: Memory before generation
                         if torch.cuda.is_available():
@@ -556,7 +484,7 @@ Response begins: """
         
         return responses
     
-    # Chunk processing removed - using subprocess instead
+    # Chunk processing removed - using direct generation
     
     def _clean_vlm_response(self, full_response: str, prompt: str, continuation_prompt: str) -> str:
         """Clean and extract the useful part from VLM response with improved logic."""
@@ -659,7 +587,7 @@ Response begins: """
         
         return response
     
-    # Single VLM processing and sequential fallback removed - using subprocess instead
+    # Single VLM processing and sequential fallback removed - using direct generation
     
     def compute_toxicity_scores(self, texts: List[str]) -> Dict[str, np.ndarray]:
         """Compute comprehensive toxicity scores using Detoxify."""
@@ -956,11 +884,7 @@ def toxicity_reward_function(device: str = "cuda",
                              local_models: Dict[str, str] = None,
                              hf_models: Dict[str, str] = None):
     """Factory function to create toxicity reward function for flow_grpo."""
-    # Set multiprocessing start method for CUDA compatibility
-    try:
-        mp.set_start_method('spawn', force=True)
-    except RuntimeError:
-        pass  # Already set
+    # Multiprocessing setup removed - using direct VLM generation
     
     reward_system = ToxicityRewardSystem(
         device=device,

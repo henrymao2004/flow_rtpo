@@ -768,12 +768,6 @@ def load_checkpoint(checkpoint_path, pipeline, prompt_editor, optimizer, prompt_
 
 
 def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config):
-    # OOM Debug: Print initial memory status for compute_log_prob
-    if torch.cuda.is_available():
-        print(f"[OOM DEBUG] compute_log_prob start - Step {j} - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
-        batch_size = sample["latents"][:, j].shape[0] if sample["latents"].dim() > 2 else 1
-        latent_shape = sample["latents"][:, j].shape
-        print(f"[OOM DEBUG] Input shapes - batch_size: {batch_size}, latent_shape: {latent_shape}")
     
     if config.train.cfg:
         # OOM Debug: Memory before CFG transformer call
@@ -811,14 +805,7 @@ def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, co
             return_dict=False,
         )[0]
         
-        # OOM Debug: Memory after non-CFG transformer call
-        if torch.cuda.is_available():
-            print(f"[OOM DEBUG] After non-CFG transformer call - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated")
     
-    # compute the log prob of next_latents given latents under the current model
-    # OOM Debug: Memory before SDE step
-    if torch.cuda.is_available():
-        print(f"[OOM DEBUG] Before SDE step - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated")
     
     prev_sample, log_prob, prev_sample_mean, std_dev_t = sde_step_with_logprob(
         pipeline.scheduler,
@@ -829,9 +816,6 @@ def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, co
         noise_level=config.sample.noise_level,
     )
 
-    # OOM Debug: Memory after SDE step and final status
-    if torch.cuda.is_available():
-        print(f"[OOM DEBUG] compute_log_prob end - Step {j} - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
 
     return prev_sample, log_prob, prev_sample_mean, std_dev_t
 
