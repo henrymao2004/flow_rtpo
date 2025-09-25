@@ -258,7 +258,50 @@ class ToxicityRewardSystem:
             return responses
             
         except Exception as e:
-            raise RuntimeError(f"VLM generation failed: {str(e)}")
+            # Print detailed diagnostics for debugging before re-raising
+            try:
+                import traceback
+                print(f"[VLM ERROR] safe_generate failed: {type(e).__name__}: {e}")
+                tb = traceback.format_exception(e.__class__, e, e.__traceback__)
+                print("[VLM ERROR] Traceback:\n" + "".join(tb))
+
+                # Model/device context
+                try:
+                    model_dev = next(self.vlm_model.parameters()).device
+                    print(f"[VLM ERROR] Model device: {model_dev}")
+                except Exception as _dev_e:
+                    print(f"[VLM ERROR] Failed to get model device: {_dev_e}")
+
+                # Input summary
+                try:
+                    if isinstance(inputs, dict):
+                        print(f"[VLM ERROR] inputs keys: {list(inputs.keys())}")
+                        for k, v in inputs.items():
+                            if torch.is_tensor(v):
+                                dev = getattr(v, 'device', 'cpu')
+                                dtype = getattr(v, 'dtype', None)
+                                shape = tuple(v.shape)
+                                print(f"[VLM ERROR] inputs[{k}] shape={shape}, device={dev}, dtype={dtype}")
+                            else:
+                                v_type = type(v).__name__
+                                try:
+                                    v_len = len(v)
+                                    print(f"[VLM ERROR] inputs[{k}] type={v_type}, len={v_len}")
+                                except Exception:
+                                    print(f"[VLM ERROR] inputs[{k}] type={v_type}")
+                except Exception as _in_e:
+                    print(f"[VLM ERROR] Failed to summarize inputs: {_in_e}")
+
+                # CUDA memory snapshot
+                try:
+                    if torch.cuda.is_available():
+                        alloc = torch.cuda.memory_allocated() / 1024**3
+                        reserv = torch.cuda.memory_reserved() / 1024**3
+                        print(f"[VLM ERROR] CUDA memory - Allocated: {alloc:.2f}GB, Reserved: {reserv:.2f}GB")
+                except Exception as _mem_e:
+                    print(f"[VLM ERROR] Failed to get CUDA memory stats: {_mem_e}")
+            finally:
+                raise RuntimeError(f"VLM generation failed: {str(e)}")
     
     def evaluate_vlm_response(self, images: List[Image.Image], prompts: List[str]) -> List[str]:
         """Get VLM responses for image-prompt pairs with batch processing optimization."""
@@ -294,8 +337,7 @@ class ToxicityRewardSystem:
             return responses
         
         
-        # Process images in batches of 8
-        batch_size = 4
+        batch_size = 1
         all_batch_responses = []
         
         # OOM Debug: Print batch processing info with GPU rank
@@ -384,7 +426,38 @@ Response begins: """
                         if torch.cuda.is_available():
                             print(f"[OOM DEBUG] Before VLM generation - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
                         
-                        batch_responses = self.safe_generate(batch_inputs)
+                        # Add detailed error logging around generation
+                        try:
+                            batch_responses = self.safe_generate(batch_inputs)
+                        except Exception as e:
+                            # Print rich debug info before re-raising to outer handler
+                            try:
+                                import traceback
+                                print(f"[VLM ERROR] safe_generate exception: {type(e).__name__}: {e}")
+                                tb = traceback.format_exception(e.__class__, e, e.__traceback__)
+                                print("[VLM ERROR] Traceback:\n" + "".join(tb))
+
+                                # Summarize batch input tensors/shapes/devices
+                                try:
+                                    keys = list(batch_inputs.keys()) if isinstance(batch_inputs, dict) else []
+                                    print(f"[VLM ERROR] batch_inputs keys: {keys}")
+                                    for k, v in (batch_inputs.items() if isinstance(batch_inputs, dict) else []):
+                                        if hasattr(v, 'shape'):
+                                            dev = getattr(v, 'device', 'cpu')
+                                            dtype = getattr(v, 'dtype', None)
+                                            print(f"[VLM ERROR] input[{k}] shape={tuple(v.shape)}, device={dev}, dtype={dtype}")
+                                        else:
+                                            v_type = type(v).__name__
+                                            try:
+                                                v_len = len(v)  # may fail if no __len__
+                                                print(f"[VLM ERROR] input[{k}] type={v_type}, len={v_len}")
+                                            except Exception:
+                                                print(f"[VLM ERROR] input[{k}] type={v_type}")
+                                except Exception as _inner:
+                                    print(f"[VLM ERROR] Failed to summarize batch_inputs: {_inner}")
+                            finally:
+                                # Re-raise so the outer OOM/debug handler runs as before
+                                raise
                         
                         # OOM Debug: Memory after generation
                         if torch.cuda.is_available():
