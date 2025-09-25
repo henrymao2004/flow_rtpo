@@ -265,7 +265,7 @@ def flow_rtpo_large():
     
     # Keep batch size as requested but increase batches for GRPO grouping
     config.sample.batch_size = 2 # Changed to 2 as requested
-    config.sample.num_image_per_prompt = 3 # Multiple samples per prompt for ranking
+    config.sample.num_image_per_prompt = 2 # Multiple samples per prompt for ranking
     
     # GRPO sampling configuration for large scale
     gpu_number = 32
@@ -274,7 +274,7 @@ def flow_rtpo_large():
     
     # Calculate batches based on GRPO grouping requirements
     # Use full prompt set but optimize batch distribution
-    config.sample.grpo_num_batches = int(24/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k))
+    config.sample.grpo_num_batches = int(32/(gpu_number*config.sample.train_batch_size/config.sample.grpo_k))
     config.sample.num_batches_per_epoch = max(1, config.sample.grpo_num_batches) 
     
     # Set gradient accumulation steps to half of num_batches_per_epoch
