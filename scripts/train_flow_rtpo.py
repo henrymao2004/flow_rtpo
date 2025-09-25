@@ -111,7 +111,7 @@ def setup_json_logger(save_dir, run_name, resume_from_checkpoint=None):
     # Check if resuming and log files exist
     if resume_from_checkpoint:
         if os.path.exists(step_log_path):
-            logger.info(f"Resuming with existing step log: {step_log_path}")
+            print(f"Resuming with existing step log: {step_log_path}")
         else:
             # Try to find existing logs with pattern matching
             import glob
@@ -121,12 +121,12 @@ def setup_json_logger(save_dir, run_name, resume_from_checkpoint=None):
             if existing_step_logs:
                 # Use the most recent log file
                 step_log_path = max(existing_step_logs, key=os.path.getmtime)
-                logger.info(f"Found existing step log for resume: {step_log_path}")
+                print(f"Found existing step log for resume: {step_log_path}")
             
             if existing_hour_logs:
                 # Use the most recent log file
                 hour_log_path = max(existing_hour_logs, key=os.path.getmtime)
-                logger.info(f"Found existing hour log for resume: {hour_log_path}")
+                print(f"Found existing hour log for resume: {hour_log_path}")
     
     return step_log_path, hour_log_path
 
@@ -1060,13 +1060,13 @@ def main(_):
                 saved_config = training_state.get("config", {})
                 if "original_run_name" in saved_config:
                     config.run_name = saved_config["original_run_name"]
-                    logger.info(f"Resumed with original run_name: {config.run_name}")
+                    print(f"Resumed with original run_name: {config.run_name}")
                 else:
                     # Fallback: use current config run_name without timestamp
                     config.run_name = original_run_name
-                    logger.info(f"Using fallback run_name: {config.run_name}")
+                    print(f"Using fallback run_name: {config.run_name}")
             except Exception as e:
-                logger.warning(f"Failed to load original run_name from checkpoint: {e}")
+                print(f"Failed to load original run_name from checkpoint: {e}")
                 config.run_name = original_run_name
         else:
             config.run_name = original_run_name
