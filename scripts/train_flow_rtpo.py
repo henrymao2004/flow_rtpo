@@ -100,14 +100,33 @@ class DistributedKRepeatSampler(Sampler):
         self.epoch = epoch  # Used to synchronize random state across epochs
 
 
-def setup_json_logger(save_dir, run_name):
-    """Setup JSON logger for detailed training logs."""
+def setup_json_logger(save_dir, run_name, resume_from_checkpoint=None):
+    """Setup JSON logger for detailed training logs with resume support."""
     json_log_dir = os.path.join(save_dir, "json_logs")
     os.makedirs(json_log_dir, exist_ok=True)
     
-    # Create log files
     step_log_path = os.path.join(json_log_dir, f"{run_name}_step_logs.jsonl")
     hour_log_path = os.path.join(json_log_dir, f"{run_name}_hour_logs.jsonl")
+    
+    # Check if resuming and log files exist
+    if resume_from_checkpoint:
+        if os.path.exists(step_log_path):
+            logger.info(f"Resuming with existing step log: {step_log_path}")
+        else:
+            # Try to find existing logs with pattern matching
+            import glob
+            existing_step_logs = glob.glob(os.path.join(json_log_dir, "*_step_logs.jsonl"))
+            existing_hour_logs = glob.glob(os.path.join(json_log_dir, "*_hour_logs.jsonl"))
+            
+            if existing_step_logs:
+                # Use the most recent log file
+                step_log_path = max(existing_step_logs, key=os.path.getmtime)
+                logger.info(f"Found existing step log for resume: {step_log_path}")
+            
+            if existing_hour_logs:
+                # Use the most recent log file
+                hour_log_path = max(existing_hour_logs, key=os.path.getmtime)
+                logger.info(f"Found existing hour log for resume: {hour_log_path}")
     
     return step_log_path, hour_log_path
 
@@ -684,6 +703,10 @@ def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, em
             "config": config.to_dict()
         }
         
+        # Ensure original_run_name is preserved in config for continuity
+        if hasattr(config, 'original_run_name'):
+            training_state["config"]["original_run_name"] = config.original_run_name
+        
         # Save optimizer states for proper resuming
         if optimizer is not None:
             training_state["optimizer_state_dict"] = optimizer.state_dict()
@@ -1022,11 +1045,41 @@ def main(_):
     # Basic Accelerate and logging setup
     config = FLAGS.config_file
     
-    unique_id = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
-    if not config.run_name:
-        config.run_name = unique_id
+    # Store original run_name for continuity across resume
+    original_run_name = config.run_name if config.run_name else "flow_rtpo"
+    
+    # Check if resuming from checkpoint
+    resume_from_checkpoint = getattr(config, 'resume_from_checkpoint', None)
+    
+    if resume_from_checkpoint:
+        # Try to load original run_name from checkpoint
+        training_state_path = os.path.join(resume_from_checkpoint, "training_state.pt")
+        if os.path.exists(training_state_path):
+            try:
+                training_state = torch.load(training_state_path, map_location='cpu')
+                saved_config = training_state.get("config", {})
+                if "original_run_name" in saved_config:
+                    config.run_name = saved_config["original_run_name"]
+                    logger.info(f"Resumed with original run_name: {config.run_name}")
+                else:
+                    # Fallback: use current config run_name without timestamp
+                    config.run_name = original_run_name
+                    logger.info(f"Using fallback run_name: {config.run_name}")
+            except Exception as e:
+                logger.warning(f"Failed to load original run_name from checkpoint: {e}")
+                config.run_name = original_run_name
+        else:
+            config.run_name = original_run_name
     else:
-        config.run_name += "_" + unique_id
+        # New training: generate unique run_name with timestamp
+        unique_id = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
+        if not config.run_name:
+            config.run_name = f"flow_rtpo_{unique_id}"
+        else:
+            config.run_name += "_" + unique_id
+    
+    # Store original run_name for saving in checkpoint
+    config.original_run_name = config.run_name
     
     # Number of timesteps within each trajectory to train on
     # We use num_steps - 1 timesteps for training (like SD3)
@@ -1104,24 +1157,34 @@ def main(_):
     last_hour_log_time = training_start_time
     
     if accelerator.is_main_process:
-        step_log_path, hour_log_path = setup_json_logger(config.save_dir, config.run_name)
+        step_log_path, hour_log_path = setup_json_logger(config.save_dir, config.run_name, resume_from_checkpoint)
         logger.info(f"JSON logs initialized: {step_log_path}, {hour_log_path}")
         
-        # Log training start
+        # Log training start (or resume)
+        event_type = "training_resumed" if resume_from_checkpoint else "training_start"
         start_log_entry = {
-            "event_type": "training_start",
+            "event_type": event_type,
             "timestamp": datetime.datetime.now().isoformat(),
             "config": config.to_dict(),
-            "training_start_time": training_start_time
+            "training_start_time": training_start_time,
+            "resume_from_checkpoint": resume_from_checkpoint if resume_from_checkpoint else None
         }
         log_json_entry(step_log_path, start_log_entry)
     
     if accelerator.is_main_process:
         swanlab.login(api_key="YiUzV5i2rB0pybueoH8A8", save=True)
+        
+        # Initialize SwanLab with continuity support
+        swanlab_config = config.to_dict()
+        swanlab_config.update({
+            "resumed_from_checkpoint": bool(resume_from_checkpoint),
+            "checkpoint_path": resume_from_checkpoint if resume_from_checkpoint else None
+        })
+        
         swanlab.init(
             project="flow_rtpo", 
-            experiment_name=config.run_name,
-            config=config.to_dict()
+            experiment_name=config.run_name,  # This now maintains consistency on resume
+            config=swanlab_config
         )
     
     logger.info(f"\n{config}")
@@ -1489,8 +1552,7 @@ def main(_):
     global_step = 0
     start_epoch = 0
     
-    # Resume from checkpoint if specified
-    resume_from_checkpoint = getattr(config, 'resume_from_checkpoint', None)
+    # Resume from checkpoint if specified (moved after setup to use the updated config)
     if resume_from_checkpoint:
         logger.info(f"Attempting to resume training from checkpoint: {resume_from_checkpoint}")
         start_epoch, global_step = load_checkpoint(
