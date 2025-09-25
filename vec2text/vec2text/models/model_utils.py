@@ -141,32 +141,80 @@ def load_embedder_and_tokenizer(name: str, torch_dtype: str, **kwargs):
         model = transformers.AutoModel.from_config(config)
         tokenizer = transformers.AutoTokenizer.from_pretrained("bert-base-uncased")
     elif name == "gtr_base":
-        model = transformers.AutoModel.from_pretrained(
-            "sentence-transformers/gtr-t5-base", **model_kwargs
-        ).encoder
-        tokenizer = transformers.AutoTokenizer.from_pretrained(
-            "sentence-transformers/gtr-t5-base"
-        )
+        # Check if local gtr-t5-base path exists
+        local_gtr_path = "/mnt/data/group/zhaoliangjie/ICLR-work/gtr-t5-base"
+        import os
+        if os.path.exists(local_gtr_path):
+            print(f"[VEC2TEXT] Loading gtr-base from local path: {local_gtr_path}")
+            model = transformers.AutoModel.from_pretrained(
+                local_gtr_path, **model_kwargs
+            ).encoder
+            tokenizer = transformers.AutoTokenizer.from_pretrained(
+                local_gtr_path
+            )
+        else:
+            print(f"[VEC2TEXT] Local gtr-base path not found: {local_gtr_path}, using HuggingFace")
+            model = transformers.AutoModel.from_pretrained(
+                "sentence-transformers/gtr-t5-base", **model_kwargs
+            ).encoder
+            tokenizer = transformers.AutoTokenizer.from_pretrained(
+                "sentence-transformers/gtr-t5-base"
+            )
     elif name == "gtr_large":
-        model = transformers.AutoModel.from_pretrained(
-            "sentence-transformers/gtr-t5-large", **model_kwargs
-        ).encoder
-        tokenizer = transformers.AutoTokenizer.from_pretrained(
-            "sentence-transformers/gtr-t5-large"
-        )
+        # Check if local gtr-t5-large path exists
+        local_gtr_large_path = "/mnt/data/group/zhaoliangjie/ICLR-work/gtr-t5-large"
+        import os
+        if os.path.exists(local_gtr_large_path):
+            print(f"[VEC2TEXT] Loading gtr-large from local path: {local_gtr_large_path}")
+            model = transformers.AutoModel.from_pretrained(
+                local_gtr_large_path, **model_kwargs
+            ).encoder
+            tokenizer = transformers.AutoTokenizer.from_pretrained(
+                local_gtr_large_path
+            )
+        else:
+            print(f"[VEC2TEXT] Local gtr-large path not found: {local_gtr_large_path}, using HuggingFace")
+            model = transformers.AutoModel.from_pretrained(
+                "sentence-transformers/gtr-t5-large", **model_kwargs
+            ).encoder
+            tokenizer = transformers.AutoTokenizer.from_pretrained(
+                "sentence-transformers/gtr-t5-large"
+            )
     elif name == "gtr_base__random_init":
-        config = transformers.AutoConfig.from_pretrained(
-            "sentence-transformers/gtr-t5-base"
-        )
+        # Check if local gtr-t5-base path exists for config
+        local_gtr_path = "/mnt/data/group/zhaoliangjie/ICLR-work/gtr-t5-base"
+        import os
+        if os.path.exists(local_gtr_path):
+            print(f"[VEC2TEXT] Loading gtr-base config from local path: {local_gtr_path}")
+            config = transformers.AutoConfig.from_pretrained(local_gtr_path)
+            tokenizer = transformers.AutoTokenizer.from_pretrained(local_gtr_path)
+        else:
+            print(f"[VEC2TEXT] Local gtr-base path not found: {local_gtr_path}, using HuggingFace")
+            config = transformers.AutoConfig.from_pretrained("sentence-transformers/gtr-t5-base")
+            tokenizer = transformers.AutoTokenizer.from_pretrained("sentence-transformers/gtr-t5-base")
+        
         model = transformers.AutoModel.from_config(config).encoder
-        tokenizer = transformers.AutoTokenizer.from_pretrained(
-            "sentence-transformers/gtr-t5-base"
-        )
     elif name == "gtr_base_st":
-        model = SentenceTransformer("sentence-transformers/gtr-t5-base")
+        # Check if local gtr-t5-base path exists for SentenceTransformer
+        local_gtr_path = "/mnt/data/group/zhaoliangjie/ICLR-work/gtr-t5-base"
+        import os
+        if os.path.exists(local_gtr_path):
+            print(f"[VEC2TEXT] Loading gtr-base SentenceTransformer from local path: {local_gtr_path}")
+            model = SentenceTransformer(local_gtr_path)
+        else:
+            print(f"[VEC2TEXT] Local gtr-base path not found: {local_gtr_path}, using HuggingFace")
+            model = SentenceTransformer("sentence-transformers/gtr-t5-base")
         tokenizer = model.tokenizer
-    elif name == "gtr_large":
-        model = SentenceTransformer("sentence-transformers/gtr-t5-large")
+    elif name == "gtr_large_st":
+        # Check if local gtr-t5-large path exists for SentenceTransformer
+        local_gtr_large_path = "/mnt/data/group/zhaoliangjie/ICLR-work/gtr-t5-large"
+        import os
+        if os.path.exists(local_gtr_large_path):
+            print(f"[VEC2TEXT] Loading gtr-large SentenceTransformer from local path: {local_gtr_large_path}")
+            model = SentenceTransformer(local_gtr_large_path)
+        else:
+            print(f"[VEC2TEXT] Local gtr-large path not found: {local_gtr_large_path}, using HuggingFace")
+            model = SentenceTransformer("sentence-transformers/gtr-t5-large")
         tokenizer = model.tokenizer
     elif name == "gte_base":
         model = transformers.AutoModel.from_pretrained(
