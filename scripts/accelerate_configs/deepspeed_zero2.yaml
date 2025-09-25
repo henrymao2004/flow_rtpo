@@ -8,5 +8,5 @@ deepspeed_config:
   zero3_init_flag: false
   zero_stage: 2
 machine_rank: 0
-num_machines: 1
-num_processes: 8
+num_machines: 4
+num_processes: 32

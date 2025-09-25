@@ -10,8 +10,9 @@ export NCCL_IB_DISABLE=0
 export NCCL_IB_HCA=mlx5
 export NCCL_IB_GID_INDEX=3
 
-# 正确的 accelerate 参数设置
+# 使用 DeepSpeed ZeRO-2 的 accelerate 参数设置
 accelerate launch \
+    --config_file /mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo/scripts/accelerate_configs/deepspeed_zero2.yaml \
     --num_processes=$((${WORLD_SIZE} * 8)) \
     --num_machines=${WORLD_SIZE} \
     --machine_rank=${RANK} \
