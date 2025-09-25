@@ -35,10 +35,7 @@ class ToxicityRewardSystem:
                  hf_models: Dict[str, str] = None):
         self.device = device
         
-        # 如果是多GPU环境，添加GPU标识到日志中
-        import os
         self.gpu_rank = int(os.environ.get('LOCAL_RANK', 0))
-        print(f"[VLM INIT] GPU {self.gpu_rank}: Initializing ToxicityRewardSystem on device {device}")
         self.w_cvar = w_cvar
         self.w_quality = w_quality
         self.tau = tau  # CVaR threshold (top 10%)
