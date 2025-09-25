@@ -439,52 +439,86 @@ class TemporalInterventionTester:
             simulate_toxic=True  # Simulate toxic model behavior
         )
         
-        # Define heuristic S_k sets (without STARE model)
-        # Based on temporal attribution research findings
-        S_k_early = list(range(5, 11))      # Early conceptual formation (t=5-10)
-        S_k_late = list(range(28, 39))      # Late detail generation (t=28-38)
-        S_k_mid = list(range(15, 25))       # Mid-stage processing (t=15-24)
-        S_k_critical = [6, 7, 8, 30, 31, 32]  # Most critical steps from literature
-        S_k_mixed = S_k_early + S_k_late     # Combined early+late
+        # Define S_k sets for identified vs random comparison
+        import random
         
-        # Define scenarios implementing the paper's algorithm (STARE-free)
+        # Identified top-k: Based on temporal attribution research findings
+        S_k_identified_early = [5, 6, 7, 8, 9, 10]        # Early conceptual formation
+        S_k_identified_late = [28, 29, 30, 31, 32, 33]     # Late detail generation  
+        S_k_identified_critical = [6, 7, 8, 30, 31, 32]    # Most critical from literature
+        S_k_identified_mixed = S_k_identified_early + S_k_identified_late
+        
+        # Random top-k: Same number of steps but randomly selected
+        random.seed(42)  # Reproducible random selection
+        all_steps = list(range(1, 40))  # All possible steps
+        
+        S_k_random_6 = random.sample(all_steps, 6)         # Random 6 steps (same as critical)
+        S_k_random_early = random.sample(list(range(1, 20)), 6)  # Random 6 from early half
+        S_k_random_late = random.sample(list(range(20, 40)), 6)  # Random 6 from late half  
+        S_k_random_12 = random.sample(all_steps, 12)       # Random 12 steps (same as mixed)
+        
+        print(f"🎯 Identified top-k sets:")
+        print(f"   Early: {S_k_identified_early}")
+        print(f"   Late: {S_k_identified_late}")
+        print(f"   Critical: {S_k_identified_critical}")
+        print(f"   Mixed: {S_k_identified_mixed}")
+        
+        print(f"\n🎲 Random top-k sets (for comparison):")
+        print(f"   Random-6: {S_k_random_6}")
+        print(f"   Random-early: {S_k_random_early}")
+        print(f"   Random-late: {S_k_random_late}")
+        print(f"   Random-12: {S_k_random_12}")
+        
+        # Focused experiment: Identified top-k vs Random top-k comparison
         scenarios = [
             {
                 "name": "vanilla",
                 "description": "Vanilla SD3 baseline (no intervention)",
                 "callback": None
             },
-            # Paper's Algorithm: Targeted Temporal Intervention with heuristic S_k
+            
+            # Identified top-k interventions (meaningful temporal windows)
             {
-                "name": "targeted_early",
-                "description": "Paper Algorithm: S_k=early steps (5-10), α=0.8",
-                "callback": targeted_intervention.create_intervention_callback(S_k_early)
+                "name": "identified_early",
+                "description": f"Identified early top-6: {S_k_identified_early}, α=0.8",
+                "callback": targeted_intervention.create_intervention_callback(S_k_identified_early)
             },
             {
-                "name": "targeted_late",
-                "description": "Paper Algorithm: S_k=late steps (28-38), α=0.8", 
-                "callback": targeted_intervention.create_intervention_callback(S_k_late)
+                "name": "identified_late",
+                "description": f"Identified late top-6: {S_k_identified_late}, α=0.8", 
+                "callback": targeted_intervention.create_intervention_callback(S_k_identified_late)
             },
             {
-                "name": "targeted_critical",
-                "description": "Paper Algorithm: S_k=critical steps [6,7,8,30,31,32], α=0.8",
-                "callback": targeted_intervention.create_intervention_callback(S_k_critical)
+                "name": "identified_critical",
+                "description": f"Identified critical top-6: {S_k_identified_critical}, α=0.8",
+                "callback": targeted_intervention.create_intervention_callback(S_k_identified_critical)
             },
             {
-                "name": "targeted_mid",
-                "description": "Paper Algorithm: S_k=mid steps (15-24), α=0.8",
-                "callback": targeted_intervention.create_intervention_callback(S_k_mid)
+                "name": "identified_mixed",
+                "description": f"Identified mixed top-12: early+late, α=0.8",
+                "callback": targeted_intervention.create_intervention_callback(S_k_identified_mixed)
             },
-            # Test different α values
+            
+            # Random top-k interventions (control group)
             {
-                "name": "targeted_early_weak",
-                "description": "Paper Algorithm: S_k=early, α=0.3 (weak vanilla mixing)",
-                "callback": TargetedTemporalIntervention(self.pipeline, alpha=0.3).create_intervention_callback(S_k_early)
+                "name": "random_6_steps",
+                "description": f"Random top-6: {S_k_random_6}, α=0.8",
+                "callback": targeted_intervention.create_intervention_callback(S_k_random_6)
             },
             {
-                "name": "targeted_early_strong", 
-                "description": "Paper Algorithm: S_k=early, α=0.95 (strong vanilla mixing)",
-                "callback": TargetedTemporalIntervention(self.pipeline, alpha=0.95).create_intervention_callback(S_k_early)
+                "name": "random_early",
+                "description": f"Random early top-6: {S_k_random_early}, α=0.8",
+                "callback": targeted_intervention.create_intervention_callback(S_k_random_early)
+            },
+            {
+                "name": "random_late",
+                "description": f"Random late top-6: {S_k_random_late}, α=0.8",
+                "callback": targeted_intervention.create_intervention_callback(S_k_random_late)
+            },
+            {
+                "name": "random_12_steps",
+                "description": f"Random top-12: {S_k_random_12}, α=0.8",
+                "callback": targeted_intervention.create_intervention_callback(S_k_random_12)
             }
         ]
         
@@ -770,20 +804,24 @@ def test_temporal_intervention():
         return
     
     # Run the focused experiment
-    print(f"\n🚀 Running Targeted Temporal Intervention (STARE-free implementation):")
-    print("   • ✅ CAN TEST WITHOUT STARE MODEL!")
-    print("   • 📝 Paper Algorithm: ṽ_j = (1-α)·v̂^tox_j + α·v̂^van_j for j ∈ S_k")
-    print("   • 🎯 Heuristic S_k selection: early, late, critical, mid steps")
-    print("   • 🔄 Different α values: 0.3 (weak), 0.8 (strong), 0.95 (very strong)")
-    print("   • 🧪 Simulated toxic/vanilla models via prediction manipulation")
-    print("   • 📊 Tests algorithm correctness and temporal window effects")
+    print(f"\n🚀 Identified vs Random Top-k Comparison Experiment:")
+    print("   • 🎯 Core Question: Do identified temporal windows work better than random ones?")
+    print("   • 📝 Algorithm: ṽ_j = (1-α)·v̂^tox_j + α·v̂^van_j for j ∈ S_k")
+    print("   • 🔬 Experimental Design:")
+    print("     - Identified top-k: Based on temporal attribution research")
+    print("     - Random top-k: Same number of steps, randomly selected")
+    print("     - Same α=0.8 for fair comparison")
+    print("   • 📊 Comparisons:")
+    print("     - Identified early [5,6,7,8,9,10] vs Random early")
+    print("     - Identified late [28,29,30,31,32,33] vs Random late") 
+    print("     - Identified critical [6,7,8,30,31,32] vs Random 6")
+    print("     - Identified mixed (12 steps) vs Random 12")
     print(f"   • Results will be saved to: {save_dir}")
-    print("\n   🔬 What we can validate:")
-    print("     ✓ Soft replacement mechanism works")
-    print("     ✓ α parameter controls mixing strength") 
-    print("     ✓ Different S_k sets produce different effects")
-    print("     ✓ Temporal windows have distinct impacts")
-    print("     ✓ Algorithm produces measurable changes in toxicity/quality")
+    print("\n   🎯 Expected Findings:")
+    print("     ✓ Identified top-k should be more effective than random")
+    print("     ✓ Temporal attribution has predictive value")
+    print("     ✓ Strategic step selection matters")
+    print("     ✓ Random interventions should show weaker/inconsistent effects")
     
     try:
         results = tester.run_intervention_experiment(prompts, save_dir)
@@ -851,3 +889,4 @@ if __name__ == "__main__":
         test_temporal_intervention()
     else:
         main()
+
