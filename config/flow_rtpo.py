@@ -289,7 +289,7 @@ def flow_rtpo_large():
     # Extended training
     config.num_epochs = 10000
     config.save_freq = 3
-    config.eval_freq = 1
+    config.eval_freq = 3
     
     # Evaluation configuration  
     config.distributed_eval = False  # Large scale: only main process evaluates to save GPU resources
