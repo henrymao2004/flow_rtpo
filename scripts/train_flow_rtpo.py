@@ -2070,7 +2070,7 @@ def main(_):
                         
                         # Gradient clipping (like SD3)
                         if accelerator.sync_gradients:
-                            torch.nn.utils.clip_grad_norm_(transformer_trainable_parameters, 1.0)
+                            accelerator.clip_grad_norm_(transformer_trainable_parameters, 1.0)
                         
                         # Optimizer step
                         optimizer.step()
