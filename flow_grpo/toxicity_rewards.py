@@ -447,7 +447,7 @@ Response begins: """
                         if torch.cuda.is_available():
                             print(f"[OOM DEBUG] Before VLM generation - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
                         
-                        batch_responses = self.safe_generate(batch_inputs, timeout=12000)
+                        batch_responses = self.safe_generate(batch_inputs, timeout=1200)
                         
                         # OOM Debug: Memory after generation
                         if torch.cuda.is_available():
