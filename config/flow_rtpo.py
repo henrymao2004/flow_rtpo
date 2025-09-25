@@ -173,6 +173,7 @@ def flow_rtpo_sd3():
     
     # Logging and saving
     config.run_name = "flow_rtpo_sd3_llava"
+    config.original_run_name = None  # Will be set dynamically during training
 
     # Set save directory based on configuration
     if config.save_loading.use_local:
@@ -299,6 +300,8 @@ def flow_rtpo_large():
     config.toxicity_reward.tau = 0.2  
     
     config.run_name = "flow_rtpo_large"
+    # Force original_run_name to connect to existing SwanLab experiment
+    config.original_run_name = "flow_rtpo_large_2025.09.25_14.48.56"  # Connect to existing experiment
     
     # Set save directory based on configuration
     if config.save_loading.use_local:
