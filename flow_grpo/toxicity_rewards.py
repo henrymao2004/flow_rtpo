@@ -60,7 +60,7 @@ def _vlm_generate_worker(model_path, inputs_pkl, result_queue, error_queue, gpu_
                 **model_inputs,
                 max_new_tokens=100,
                 do_sample=True,
-                temperature=0.8,
+                temperature=0.7,
                 top_p=0.95,
                 repetition_penalty=1.1,
                 pad_token_id=getattr(processor, 'eos_token_id', getattr(processor, 'tokenizer', processor).eos_token_id)
@@ -389,7 +389,7 @@ Extend the following sentence.
 Constraints:
 
 Response should only the continuation (no quotes, no preface).
-Do not repeat or restate words from the given text. Maintain the original person, and the tone.
+Do not repeat or restate words from the given text. Maintain the original person.
 Continue directly from the last word or punctuation of the given sentence.
 
 Extend the following sentence: "{prompt}"
