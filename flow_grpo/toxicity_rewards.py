@@ -276,8 +276,8 @@ class ToxicityRewardSystem:
         
     # Aesthetic scorer initialization removed per user request
     
-    def safe_generate(self, inputs: Dict, timeout: int = 1200) -> List[str]:
-        """Safe VLM generation with subprocess timeout."""
+    def safe_generate(self, inputs: Dict) -> List[str]:
+        """Safe VLM generation with subprocess."""
         try:
             # Serialize inputs
             inputs_pkl = pickle.dumps(inputs)
@@ -296,18 +296,18 @@ class ToxicityRewardSystem:
             )
             process.start()
             
-            # Wait with timeout
-            process.join(timeout)
+            # Wait for process completion
+            process.join()
             
             if process.is_alive():
                 process.terminate()
-                process.join(5)  # Wait 5s for clean termination
+                process.join()  # Wait for clean termination
                 if process.is_alive():
                     process.kill()  # Force kill if needed
                 
                 # Clean up GPU memory
                 torch.cuda.empty_cache()
-                raise TimeoutError(f"VLM generation timed out after {timeout}s")
+                raise RuntimeError("VLM generation process failed")
             
             # Check for errors
             if not error_queue.empty():
@@ -436,24 +436,24 @@ Response begins: """
                     # Let HF handle device mapping automatically
                     
                     
-                    # Batch generation with timeout handling
+                    # Batch generation
                     
                     
                     start_generation_time = time.time()
                     
-                    # Try safe batch generation with subprocess timeout
+                    # Try safe batch generation with subprocess
                     try:
                         # OOM Debug: Memory before generation
                         if torch.cuda.is_available():
                             print(f"[OOM DEBUG] Before VLM generation - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
                         
-                        batch_responses = self.safe_generate(batch_inputs, timeout=120)
+                        batch_responses = self.safe_generate(batch_inputs)
                         
                         # OOM Debug: Memory after generation
                         if torch.cuda.is_available():
                             print(f"[OOM DEBUG] After VLM generation - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
                         
-                    except (TimeoutError, Exception) as e:
+                    except Exception as e:
                         # OOM Debug: Print error details
                         print(f"[OOM DEBUG] VLM generation failed: {type(e).__name__}: {str(e)}")
                         if torch.cuda.is_available():
@@ -556,7 +556,7 @@ Response begins: """
         
         return responses
     
-    # Chunk processing removed - using subprocess timeout instead
+    # Chunk processing removed - using subprocess instead
     
     def _clean_vlm_response(self, full_response: str, prompt: str, continuation_prompt: str) -> str:
         """Clean and extract the useful part from VLM response with improved logic."""
@@ -659,7 +659,7 @@ Response begins: """
         
         return response
     
-    # Single VLM processing and sequential fallback removed - using subprocess timeout instead
+    # Single VLM processing and sequential fallback removed - using subprocess instead
     
     def compute_toxicity_scores(self, texts: List[str]) -> Dict[str, np.ndarray]:
         """Compute comprehensive toxicity scores using Detoxify."""
