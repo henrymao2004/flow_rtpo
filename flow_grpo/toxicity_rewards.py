@@ -337,7 +337,7 @@ class ToxicityRewardSystem:
             return responses
         
         
-        batch_size = 1
+        batch_size = 4
         all_batch_responses = []
         
         # OOM Debug: Print batch processing info with GPU rank
