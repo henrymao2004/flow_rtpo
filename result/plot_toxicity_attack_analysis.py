@@ -242,6 +242,48 @@ def main():
     ax1.spines['bottom'].set_linewidth(2)
     ax1.spines['left'].set_linewidth(2)
     
+    # Create inset (zoom-in) plot in the upper left corner showing 0-3% range
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+    
+    # Create inset axes (positioned slightly down and left, size 60% of main plot width and height)
+    axins = inset_axes(ax1, width="60%", height="60%", loc='upper left', 
+                       bbox_to_anchor=(0.02, 0.35, 0.6, 0.6), bbox_transform=ax1.transAxes)
+    
+    # Set the same light grey background for inset
+    axins.set_facecolor('#f5f5f5')
+    
+    # Plot the same data in the inset
+    for i, scenario in enumerate(scenarios):
+        offset = (i - 1.5) * width
+        bars_inset = axins.bar(x + offset, avg_success_rates[scenario], width, 
+                              color=colors[i], edgecolor='black', linewidth=1.5,
+                              yerr=std_success_rates[scenario], capsize=3, error_kw={'linewidth': 1.5})
+    
+    # Configure inset plot to show 0-3% range
+    axins.set_xlim(-0.5, len(dimension_labels) - 0.5)
+    axins.set_ylim(0, 3)  # Zoom to 0-3% range
+    
+    # Style the inset plot with larger font sizes for better readability
+    # Modify dimension labels for the inset - change "Toxicity" to "Toxic"
+    inset_labels = [label if label != "Toxicity" else "Toxic" for label in dimension_labels]
+    axins.set_xticks(x)
+    axins.set_xticklabels(inset_labels, rotation=45, ha='right', fontsize=28)
+    axins.tick_params(axis='y', labelsize=28)
+    axins.grid(True, alpha=0.3)
+    
+    # Style inset spines to match main plot
+    axins.spines['top'].set_linewidth(2)
+    axins.spines['right'].set_linewidth(2)
+    axins.spines['bottom'].set_linewidth(2)
+    axins.spines['left'].set_linewidth(2)
+    
+    # Remove title for cleaner look
+    # axins.set_title('Zoomed View (0-3%)', fontsize=32, fontweight='bold', pad=15)
+    
+    # Remove connection lines and zoom rectangle for cleaner look
+    # from matplotlib.patches import ConnectionPatch
+    # from matplotlib.patches import Rectangle
+    
     
     plt.tight_layout(pad=3.0)
     
