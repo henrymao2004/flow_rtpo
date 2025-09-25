@@ -272,12 +272,35 @@ def load_encoder_decoder(
                 "device_map": "auto",
             }
         )
+    
+    # Handle local model path mapping for t5-base
+    if model_name == "t5-base":
+        # Check if local t5-base path exists
+        local_t5_path = "/mnt/data/group/zhaoliangjie/ICLR-work/t5-base"
+        import os
+        if os.path.exists(local_t5_path):
+            print(f"[VEC2TEXT] Loading t5-base from local path: {local_t5_path}")
+            model_name = local_t5_path
+        else:
+            print(f"[VEC2TEXT] Local t5-base path not found: {local_t5_path}, using HuggingFace")
+    
     return transformers.AutoModelForSeq2SeqLM.from_pretrained(
         model_name, **model_kwargs
     )
 
 
 def load_tokenizer(name: str, max_length: int) -> transformers.PreTrainedTokenizer:
+    # Handle local model path mapping for t5-base
+    if name == "t5-base":
+        # Check if local t5-base path exists
+        local_t5_path = "/mnt/data/group/zhaoliangjie/ICLR-work/t5-base"
+        import os
+        if os.path.exists(local_t5_path):
+            print(f"[VEC2TEXT] Loading t5-base tokenizer from local path: {local_t5_path}")
+            name = local_t5_path
+        else:
+            print(f"[VEC2TEXT] Local t5-base path not found: {local_t5_path}, using HuggingFace")
+    
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         name,
         padding="max_length",
