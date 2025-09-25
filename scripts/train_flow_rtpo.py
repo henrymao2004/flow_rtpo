@@ -656,7 +656,7 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
     return None
 
 
-def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, ema, transformer_trainable_parameters, config):
+def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, ema, transformer_trainable_parameters, config, epoch=None, optimizer=None, prompt_optimizer=None):
     """Save checkpoint including both flow controller and prompt editor."""
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
@@ -677,16 +677,94 @@ def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, em
         torch.save(prompt_editor_unwrapped.state_dict(), 
                   os.path.join(pipeline_save_dir, "prompt_editor.pt"))
         
-        # Save training state
+        # Save training state with more complete information for resuming
         training_state = {
             "global_step": global_step,
+            "epoch": epoch if epoch is not None else 0,
             "config": config.to_dict()
         }
+        
+        # Save optimizer states for proper resuming
+        if optimizer is not None:
+            training_state["optimizer_state_dict"] = optimizer.state_dict()
+        if prompt_optimizer is not None:
+            training_state["prompt_optimizer_state_dict"] = prompt_optimizer.state_dict()
+        
+        # Save EMA state
+        if config.train.ema and ema is not None:
+            training_state["ema_state_dict"] = ema.state_dict()
+        
         torch.save(training_state, os.path.join(pipeline_save_dir, "training_state.pt"))
         
         # Restore original weights after saving
         if config.train.ema and ema is not None:
             ema.copy_temp_to(transformer_trainable_parameters)
+
+
+def load_checkpoint(checkpoint_path, pipeline, prompt_editor, optimizer, prompt_optimizer, ema, accelerator, logger):
+    """Load checkpoint and return the restored epoch and global_step."""
+    if not os.path.exists(checkpoint_path):
+        logger.warning(f"Checkpoint path does not exist: {checkpoint_path}")
+        return 0, 0  # Return default values
+    
+    try:
+        logger.info(f"Loading checkpoint from: {checkpoint_path}")
+        
+        # Load training state
+        training_state_path = os.path.join(checkpoint_path, "training_state.pt")
+        if os.path.exists(training_state_path):
+            training_state = torch.load(training_state_path, map_location=accelerator.device)
+            restored_epoch = training_state.get("epoch", 0)
+            restored_global_step = training_state.get("global_step", 0)
+            logger.info(f"Restored training state: epoch={restored_epoch}, global_step={restored_global_step}")
+        else:
+            logger.warning("training_state.pt not found, using default values")
+            restored_epoch, restored_global_step = 0, 0
+        
+        # Load LoRA weights for transformer
+        transformer_lora_path = os.path.join(checkpoint_path, "transformer_lora")
+        if os.path.exists(transformer_lora_path):
+            logger.info("Loading transformer LoRA weights...")
+            pipeline.transformer.load_adapter(transformer_lora_path, "default")
+            logger.info("Transformer LoRA weights loaded successfully")
+        else:
+            logger.warning("transformer_lora directory not found")
+        
+        # Load prompt editor weights
+        prompt_editor_path = os.path.join(checkpoint_path, "prompt_editor.pt")
+        if os.path.exists(prompt_editor_path):
+            logger.info("Loading prompt editor weights...")
+            prompt_editor_state = torch.load(prompt_editor_path, map_location=accelerator.device)
+            prompt_editor.load_state_dict(prompt_editor_state)
+            logger.info("Prompt editor weights loaded successfully")
+        else:
+            logger.warning("prompt_editor.pt not found")
+        
+        # Load optimizer states
+        if "optimizer_state_dict" in training_state and optimizer is not None:
+            logger.info("Loading optimizer state...")
+            optimizer.load_state_dict(training_state["optimizer_state_dict"])
+            logger.info("Optimizer state loaded successfully")
+        
+        if "prompt_optimizer_state_dict" in training_state and prompt_optimizer is not None:
+            logger.info("Loading prompt optimizer state...")
+            prompt_optimizer.load_state_dict(training_state["prompt_optimizer_state_dict"])
+            logger.info("Prompt optimizer state loaded successfully")
+        
+        # Load EMA state
+        if "ema_state_dict" in training_state and ema is not None:
+            logger.info("Loading EMA state...")
+            ema.load_state_dict(training_state["ema_state_dict"])
+            logger.info("EMA state loaded successfully")
+        
+        logger.info(f"Checkpoint loaded successfully! Resuming from epoch {restored_epoch}, global_step {restored_global_step}")
+        return restored_epoch, restored_global_step
+        
+    except Exception as e:
+        logger.error(f"Failed to load checkpoint: {e}")
+        import traceback
+        traceback.print_exc()
+        return 0, 0
 
 
 def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config):
@@ -1426,9 +1504,23 @@ def main(_):
     train_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(max_batch_size, 1)
     
     global_step = 0
+    start_epoch = 0
+    
+    # Resume from checkpoint if specified
+    resume_from_checkpoint = getattr(config, 'resume_from_checkpoint', None)
+    if resume_from_checkpoint:
+        logger.info(f"Attempting to resume training from checkpoint: {resume_from_checkpoint}")
+        start_epoch, global_step = load_checkpoint(
+            resume_from_checkpoint, pipeline, prompt_editor, 
+            optimizer, prompt_optimizer, ema, accelerator, logger
+        )
+        if start_epoch > 0 or global_step > 0:
+            logger.info(f"Successfully resumed from checkpoint at epoch {start_epoch}, global_step {global_step}")
+        else:
+            logger.warning("Failed to load checkpoint, starting training from scratch")
     
     #################### TRAINING LOOP ####################
-    for epoch in range(config.num_epochs):
+    for epoch in range(start_epoch, config.num_epochs):
         epoch_start_time = time.time()
         
         # Get current reward variance for adaptive epsilon (moved up to fix scope issue)
@@ -2381,17 +2473,20 @@ def main(_):
             convergence_metrics.get("ema_reward", -1e9) > convergence_monitor.state["best_ema"]):
             best_ckpt_path = os.path.join(config.save_dir, "best_model")
             save_ckpt(best_ckpt_path, pipeline.transformer, prompt_editor, global_step, 
-                     accelerator, ema, transformer_trainable_parameters, config)
+                     accelerator, ema, transformer_trainable_parameters, config,
+                     epoch=epoch, optimizer=optimizer, prompt_optimizer=prompt_optimizer)
             logger.info(f"Best model saved at epoch {epoch} with EMA reward: {convergence_metrics.get('ema_reward', 0):.4f}")
         
         # Save checkpoint
         if (epoch + 1) % config.save_freq == 0:
             save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 
-                     accelerator, ema, transformer_trainable_parameters, config)
+                     accelerator, ema, transformer_trainable_parameters, config,
+                     epoch=epoch, optimizer=optimizer, prompt_optimizer=prompt_optimizer)
     
     # Final save
     save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 
-             accelerator, ema, transformer_trainable_parameters, config)
+             accelerator, ema, transformer_trainable_parameters, config,
+             epoch=config.num_epochs - 1, optimizer=optimizer, prompt_optimizer=prompt_optimizer)
     
     # Log final convergence summary
     if convergence_monitor is not None:

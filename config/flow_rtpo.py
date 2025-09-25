@@ -195,6 +195,9 @@ def flow_rtpo_sd3():
     config.eval.save_images = True
     config.eval.compute_metrics = True
     
+    # Resume training from checkpoint
+    config.resume_from_checkpoint = None  # Set to checkpoint path to resume training
+    
     return config
 
 
