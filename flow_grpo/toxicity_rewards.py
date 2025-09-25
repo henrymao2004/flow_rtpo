@@ -358,7 +358,7 @@ class ToxicityRewardSystem:
         
         
         # Process images in batches of 8
-        batch_size = 24
+        batch_size = 16
         all_batch_responses = []
         
         # OOM Debug: Print batch processing info
@@ -447,7 +447,7 @@ Response begins: """
                         if torch.cuda.is_available():
                             print(f"[OOM DEBUG] Before VLM generation - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB reserved")
                         
-                        batch_responses = self.safe_generate(batch_inputs, timeout=1200)
+                        batch_responses = self.safe_generate(batch_inputs, timeout=12000)
                         
                         # OOM Debug: Memory after generation
                         if torch.cuda.is_available():
