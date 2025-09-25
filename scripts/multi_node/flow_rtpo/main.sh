@@ -3,8 +3,7 @@
 export PYTHONPATH="/mnt/data/group/zhaoliangjie/ICLR-work/flow_rtpo:$PYTHONPATH"
 export HF_ENDPOINT=https://alpha.hf-mirror.com
 export NCCL_DEBUG=INFO                  
-export NCCL_DEBUG_SUBSYS=ALL
-export NCCL_ALGO=Tree            
+export NCCL_DEBUG_SUBSYS=ALL   
 export NCCL_TIMEOUT=10800      # NCCL timeout
 export NCCL_IB_TIMEOUT=10800   # InfiniBand timeout
 export NCCL_IB_DISABLE=0
