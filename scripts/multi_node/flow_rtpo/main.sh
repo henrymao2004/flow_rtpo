@@ -10,7 +10,6 @@ export NCCL_IB_TIMEOUT=10800   # InfiniBand timeout
 export NCCL_IB_DISABLE=0
 export NCCL_IB_HCA=mlx5
 export NCCL_IB_GID_INDEX=3
-export NCCL_ASYNC_ERROR_HANDLING=1
 
 # 使用 DeepSpeed ZeRO-2 的 accelerate 参数设置
 accelerate launch \
