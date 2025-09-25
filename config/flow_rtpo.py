@@ -196,7 +196,7 @@ def flow_rtpo_sd3():
     config.eval.compute_metrics = True
     
     # Resume training from checkpoint
-    config.resume_from_checkpoint = None  # Set to checkpoint path to resume training
+    config.resume_from_checkpoint = "/mnt/data/group/zhaoliangjie/ICLR-work/logs/flow_rtpo/flow_rtpo_large/checkpoint_480"  # Set to checkpoint path to resume training
     
     return config
 
