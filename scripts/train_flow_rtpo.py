@@ -1052,24 +1052,29 @@ def main(_):
     resume_from_checkpoint = getattr(config, 'resume_from_checkpoint', None)
     
     if resume_from_checkpoint:
-        # Try to load original run_name from checkpoint
-        training_state_path = os.path.join(resume_from_checkpoint, "training_state.pt")
-        if os.path.exists(training_state_path):
-            try:
-                training_state = torch.load(training_state_path, map_location='cpu')
-                saved_config = training_state.get("config", {})
-                if "original_run_name" in saved_config:
-                    config.run_name = saved_config["original_run_name"]
-                    print(f"Resumed with original run_name: {config.run_name}")
-                else:
-                    # Fallback: use current config run_name without timestamp
-                    config.run_name = original_run_name
-                    print(f"Using fallback run_name: {config.run_name}")
-            except Exception as e:
-                print(f"Failed to load original run_name from checkpoint: {e}")
-                config.run_name = original_run_name
+        # Priority 1: Use config.original_run_name if explicitly set
+        if hasattr(config, 'original_run_name') and config.original_run_name:
+            config.run_name = config.original_run_name
+            print(f"Using config original_run_name: {config.run_name}")
         else:
-            config.run_name = original_run_name
+            # Priority 2: Try to load original run_name from checkpoint
+            training_state_path = os.path.join(resume_from_checkpoint, "training_state.pt")
+            if os.path.exists(training_state_path):
+                try:
+                    training_state = torch.load(training_state_path, map_location='cpu')
+                    saved_config = training_state.get("config", {})
+                    if "original_run_name" in saved_config:
+                        config.run_name = saved_config["original_run_name"]
+                        print(f"Resumed with checkpoint original run_name: {config.run_name}")
+                    else:
+                        # Fallback: use current config run_name without timestamp
+                        config.run_name = original_run_name
+                        print(f"Using fallback run_name: {config.run_name}")
+                except Exception as e:
+                    print(f"Failed to load original run_name from checkpoint: {e}")
+                    config.run_name = original_run_name
+            else:
+                config.run_name = original_run_name
     else:
         # New training: generate unique run_name with timestamp
         unique_id = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
