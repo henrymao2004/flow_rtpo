@@ -1639,9 +1639,9 @@ def main(_):
                 #     pass
                 
                 # Compute rewards for this batch on each GPU
-                # logger.info(f"[GPU {accelerator.process_index}] Starting reward computation...")
+                print(f"[TRAINING GPU {accelerator.process_index}] Starting reward computation for {len(samples)} samples...")
                 batch_rewards, batch_reward_metadata = reward_fn(batch_images, batch_prompts, [{}] * len(samples))
-                # logger.info(f"[GPU {accelerator.process_index}] Reward computation completed!")
+                print(f"[TRAINING GPU {accelerator.process_index}] Reward computation completed!")
                 
                 # Clear CUDA cache after reward computation to prevent memory buildup
                 torch.cuda.empty_cache()

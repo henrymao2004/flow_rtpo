@@ -31,7 +31,7 @@ class RealToxicityPromptsDataset(Dataset):
                  local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
                  local_dataset_name: str = "real-toxicity-prompts",
                  hf_dataset_name: str = "allenai/real-toxicity-prompts",
-                 random_seed: int = 42,
+                 random_seed: int = 2000,
                  heldout_test_size: int = 1000,  # 20% of 5000
                  training_test_size: int = 36):
         self.max_prompts = max_prompts

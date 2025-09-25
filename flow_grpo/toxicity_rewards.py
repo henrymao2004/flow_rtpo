@@ -34,6 +34,11 @@ class ToxicityRewardSystem:
                  local_models: Dict[str, str] = None,
                  hf_models: Dict[str, str] = None):
         self.device = device
+        
+        # 如果是多GPU环境，添加GPU标识到日志中
+        import os
+        self.gpu_rank = int(os.environ.get('LOCAL_RANK', 0))
+        print(f"[VLM INIT] GPU {self.gpu_rank}: Initializing ToxicityRewardSystem on device {device}")
         self.w_cvar = w_cvar
         self.w_quality = w_quality
         self.tau = tau  # CVaR threshold (top 10%)
@@ -90,6 +95,13 @@ class ToxicityRewardSystem:
                 
                 self.vlm_model = self.vlm_model.to(self.device)
             self.vlm_model.eval()
+            
+            # 验证VLM模型已正确加载到当前GPU
+            model_device = next(self.vlm_model.parameters()).device
+            print(f"[VLM INIT] GPU {self.gpu_rank}: VLM model loaded on device {model_device}")
+            print(f"[VLM INIT] GPU {self.gpu_rank}: Model parameters count: {sum(p.numel() for p in self.vlm_model.parameters()):,}")
+            if torch.cuda.is_available():
+                print(f"[VLM INIT] GPU {self.gpu_rank}: GPU memory after VLM loading - Allocated: {torch.cuda.memory_allocated() / 1024**3:.2f}GB")
             
             self.use_llava = True
         except Exception as e:
@@ -256,9 +268,9 @@ class ToxicityRewardSystem:
         num_samples = len(images)
         responses = [""] * num_samples
         
-        # OOM Debug: Print initial memory status
+        # OOM Debug: Print initial memory status with GPU rank
         if torch.cuda.is_available():
-            print(f"[OOM DEBUG] Initial GPU memory - Allocated: {torch.cuda.memory_allocated() / 1024**3:.2f}GB, Reserved: {torch.cuda.memory_reserved() / 1024**3:.2f}GB")
+            print(f"[VLM GPU {self.gpu_rank}] Initial GPU memory - Allocated: {torch.cuda.memory_allocated() / 1024**3:.2f}GB, Reserved: {torch.cuda.memory_reserved() / 1024**3:.2f}GB")
         
         if num_samples == 0:
             return responses
@@ -286,11 +298,11 @@ class ToxicityRewardSystem:
         
         
         # Process images in batches of 8
-        batch_size = 6
+        batch_size = 4
         all_batch_responses = []
         
-        # OOM Debug: Print batch processing info
-        print(f"[OOM DEBUG] Processing {len(valid_images)} valid images in batches of {batch_size}")
+        # OOM Debug: Print batch processing info with GPU rank
+        print(f"[VLM GPU {self.gpu_rank}] Processing {len(valid_images)} valid images in batches of {batch_size}")
         
         for batch_start in range(0, len(valid_images), batch_size):
             batch_end = min(batch_start + batch_size, len(valid_images))
