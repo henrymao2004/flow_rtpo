@@ -162,21 +162,35 @@ class TemporalInterventionTester:
         return prompts
     
     def create_intervention_callback(self, intervention_type: str, intervention_timesteps: List[int], 
-                                   intervention_strength: float = 0.5):
+                                   intervention_strength: float = 0.5, redteam_simulation: bool = False):
         """
         Create intervention callback for specific timesteps.
         
         Args:
-            intervention_type: 'toxic', 'detoxic', or 'noise'
+            intervention_type: 'toxic', 'detoxic', 'noise', or 'redteam_replace'
             intervention_timesteps: List of timestep indices to apply intervention
             intervention_strength: Strength of intervention
+            redteam_simulation: If True, simulates redteam model with vanilla step replacement
         """
         def intervention_callback(latents, timestep_value, cond):
             # Convert timestep to step index (approximately)
             # SD3 typically uses 40 steps, timesteps go from ~1000 to ~0
             step_index = int((1000 - timestep_value) / 1000 * 40)
             
-            if step_index in intervention_timesteps:
+            # For redteam simulation, we first corrupt ALL steps, then clean specific ones
+            if redteam_simulation:
+                # Simulate redteam model: add baseline toxicity to all steps
+                baseline_toxicity = torch.randn_like(latents) * intervention_strength * 0.5
+                
+                if step_index in intervention_timesteps:
+                    print(f"🔄 REDTEAM SIM: Replacing step {step_index} with vanilla (t={timestep_value:.1f})")
+                    # Replace with vanilla behavior (counter the baseline toxicity)
+                    return -baseline_toxicity  # Remove the toxic bias
+                else:
+                    # Keep redteam behavior (add extra toxicity)
+                    return baseline_toxicity
+            
+            elif step_index in intervention_timesteps:
                 print(f"🎯 Applying {intervention_type} intervention at step {step_index} (t={timestep_value:.1f})")
                 
                 if intervention_type == "toxic":
@@ -311,27 +325,40 @@ class TemporalInterventionTester:
         """Run focused intervention experiment as requested."""
         os.makedirs(save_dir, exist_ok=True)
         
-        # Define core intervention scenarios with much stronger interventions
+        # Define scenarios comparing vanilla+toxic vs redteam+vanilla replacement
         scenarios = [
             {
                 "name": "vanilla",
                 "description": "Vanilla SD3 baseline (no intervention)",
                 "callback": None
             },
+            # Method 1: Vanilla + 在特定step增加毒性
             {
-                "name": "early_toxic",
-                "description": "Very strong toxicity intervention at early steps (5-10)",
-                "callback": self.create_intervention_callback("toxic", list(range(5, 11)), 2.0)
+                "name": "vanilla_early_toxic",
+                "description": "Method 1: Vanilla + early steps toxicity injection (5-10)",
+                "callback": self.create_intervention_callback("toxic", list(range(5, 11)), 2.0, redteam_simulation=False)
             },
             {
-                "name": "late_toxic", 
-                "description": "Very strong toxicity intervention at late steps (28-38)",
-                "callback": self.create_intervention_callback("toxic", list(range(28, 39)), 2.5)
+                "name": "vanilla_late_toxic", 
+                "description": "Method 1: Vanilla + late steps toxicity injection (28-38)",
+                "callback": self.create_intervention_callback("toxic", list(range(28, 39)), 2.5, redteam_simulation=False)
+            },
+            # Method 2: Redteam模拟 + 特定step替换为vanilla
+            {
+                "name": "redteam_early_replace",
+                "description": "Method 2: Redteam simulation + early steps vanilla replacement (5-10)",
+                "callback": self.create_intervention_callback("toxic", list(range(5, 11)), 2.0, redteam_simulation=True)
             },
             {
-                "name": "extreme_toxic",
-                "description": "Extreme toxicity intervention (early + late)",
-                "callback": self.create_intervention_callback("toxic", list(range(5, 11)) + list(range(28, 39)), 3.0)
+                "name": "redteam_late_replace",
+                "description": "Method 2: Redteam simulation + late steps vanilla replacement (28-38)", 
+                "callback": self.create_intervention_callback("toxic", list(range(28, 39)), 2.5, redteam_simulation=True)
+            },
+            # 对比：完全redteam
+            {
+                "name": "full_redteam",
+                "description": "Full redteam simulation (all steps toxic)",
+                "callback": self.create_intervention_callback("toxic", [], 2.0, redteam_simulation=True)
             }
         ]
         
@@ -466,7 +493,8 @@ class TemporalInterventionTester:
         # Plot 1: Attack Success Rates
         ax1 = axes[0, 0]
         asr_values = [summary["attack_success_rates"][s] for s in scenarios]
-        bars1 = ax1.bar(scenarios, asr_values, color=['green', 'orange', 'red', 'darkred'])
+        colors = ['green', 'orange', 'red', 'blue', 'purple', 'darkred']
+        bars1 = ax1.bar(scenarios, asr_values, color=colors[:len(scenarios)])
         ax1.set_title('Attack Success Rate by Scenario', fontweight='bold')
         ax1.set_ylabel('Attack Success Rate')
         ax1.set_ylim(0, 1)
@@ -480,7 +508,7 @@ class TemporalInterventionTester:
         # Plot 2: Average Maximum Toxicity
         ax2 = axes[0, 1]
         toxicity_values = [summary["scenario_averages"][s]["avg_max_toxicity"] for s in scenarios]
-        bars2 = ax2.bar(scenarios, toxicity_values, color=['green', 'orange', 'red', 'darkred'])
+        bars2 = ax2.bar(scenarios, toxicity_values, color=colors[:len(scenarios)])
         ax2.set_title('Average Maximum Toxicity Score', fontweight='bold')
         ax2.set_ylabel('Max Toxicity Score')
         ax2.set_ylim(0, max(toxicity_values) * 1.1)
@@ -494,7 +522,7 @@ class TemporalInterventionTester:
         # Plot 3: CLIP Score (Quality)
         ax3 = axes[1, 0]
         clip_values = [summary["scenario_averages"][s]["avg_clip_score"] for s in scenarios]
-        bars3 = ax3.bar(scenarios, clip_values, color=['green', 'orange', 'red', 'darkred'])
+        bars3 = ax3.bar(scenarios, clip_values, color=colors[:len(scenarios)])
         ax3.set_title('Average CLIP Score (Image Quality)', fontweight='bold')
         ax3.set_ylabel('CLIP Score')
         ax3.tick_params(axis='x', rotation=45)
@@ -512,8 +540,8 @@ class TemporalInterventionTester:
                             summary["scenario_averages"]["vanilla"]["avg_max_toxicity"]) 
                            for s in intervention_scenarios]
         
-        colors = ['orange', 'red', 'darkred']
-        scatter = ax4.scatter(degradation_values, toxicity_increase, c=colors, s=100, alpha=0.7)
+        scatter_colors = colors[1:len(intervention_scenarios)+1]  # Skip vanilla (green)
+        scatter = ax4.scatter(degradation_values, toxicity_increase, c=scatter_colors, s=100, alpha=0.7)
         
         for i, scenario in enumerate(intervention_scenarios):
             ax4.annotate(scenario, (degradation_values[i], toxicity_increase[i]), 
@@ -616,11 +644,14 @@ def test_temporal_intervention():
         return
     
     # Run the focused experiment
-    print(f"\n🚀 Running MUCH STRONGER intervention experiment with scenarios:")
+    print(f"\n🚀 Running comparison experiment: Vanilla+Toxic vs Redteam+Vanilla:")
     print("   • Vanilla SD3 baseline (no intervention)")
-    print("   • VERY STRONG early toxicity intervention (steps 5-10, strength=2.0)")  
-    print("   • VERY STRONG late toxicity intervention (steps 28-38, strength=2.5)")
-    print("   • EXTREME toxicity intervention (early+late, strength=3.0)")
+    print("   • Method 1: Vanilla + early steps toxicity injection (5-10)")
+    print("   • Method 1: Vanilla + late steps toxicity injection (28-38)")  
+    print("   • Method 2: Redteam simulation + early steps vanilla replacement (5-10)")
+    print("   • Method 2: Redteam simulation + late steps vanilla replacement (28-38)")
+    print("   • Full redteam simulation (all steps toxic)")
+    print("   📊 This will help answer if the two methods are equivalent!")
     print(f"   • Results will be saved to: {save_dir}")
     
     try:
