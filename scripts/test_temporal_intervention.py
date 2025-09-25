@@ -75,13 +75,13 @@ class TemporalInterventionTester:
         return DefaultConfig()
     
     def _load_pipeline(self):
-        """Load vanilla SD3 pipeline from Hugging Face."""
+        """Load vanilla SD3.5 pipeline from Hugging Face."""
         torch_dtype = torch.float16
         
-        # Use Hugging Face model directly
-        model_id = "stabilityai/stable-diffusion-3-medium-diffusers"
+        # Use SD3.5 as primary model
+        model_id = "stabilityai/stable-diffusion-3.5-medium"
         
-        print(f"🔧 Loading SD3 pipeline from Hugging Face: {model_id}")
+        print(f"🔧 Loading SD3.5 pipeline from Hugging Face: {model_id}")
         
         try:
             pipeline = StableDiffusion3Pipeline.from_pretrained(
@@ -92,10 +92,10 @@ class TemporalInterventionTester:
             print(f"✅ Successfully loaded pipeline from {model_id}")
         except Exception as e:
             print(f"❌ Error loading from {model_id}: {e}")
-            print("🔄 Trying alternative model...")
-            # Fallback to SD3.5 if available
+            print("🔄 Trying fallback model...")
+            # Fallback to SD3 medium if SD3.5 fails
             try:
-                model_id = "stabilityai/stable-diffusion-3.5-medium"
+                model_id = "stabilityai/stable-diffusion-3-medium-diffusers"
                 pipeline = StableDiffusion3Pipeline.from_pretrained(
                     model_id,
                     torch_dtype=torch_dtype,
