@@ -92,29 +92,62 @@ def generate_wo_lora_data(T=40, D=6):
     random_neg_mask = np.random.random((D, T)) < 0.25
     data[random_neg_mask] -= np.random.uniform(0.3, 0.8, np.sum(random_neg_mask))
     
-    # Early stage pattern preserved - CLEAR SIGNAL (similar to full model)
+    # Early stage - Identity dimension has clearer pattern, others chaotic
     early_peak_time = np.arange(5, 11)
     for d in range(D):
         for i, t in enumerate(early_peak_time):
-            if d == 5:  # Identity Attack - still strong early
-                data[d, t] = np.random.uniform(0.7, 1.2)
-            elif d in [0, 1]:  # Toxicity, Severe
-                data[d, t] = np.random.uniform(0.3, 0.8)
+            if d == 5:  # Identity Attack - clearer early signal (less chaotic)
+                base_val = np.random.uniform(0.7, 1.1) + 0.1 * np.sin((t - 5) * np.pi / 6)
+                data[d, t] = base_val
+                
+                # Specific color pattern: dark blue, light blue, light green, light blue, yellow, light green
+                if t == 5:  # Position 1 - dark blue
+                    data[d, t] = np.random.uniform(-0.5, -0.2)  # Dark blue
+                elif t == 6:  # Position 2 - yellow
+                    data[d, t] = np.random.uniform(0.8, 1.0)  # Yellow
+                elif t == 7:  # Position 3 - light green
+                    data[d, t] = np.random.uniform(0.4, 0.6)  # Light green
+                elif t == 8:  # Position 4 - light blue
+                    data[d, t] = np.random.uniform(-0.1, 0.1)  # Light blue
+                elif t == 9:  # Position 5 - yellow
+                    data[d, t] = np.random.uniform(0.8, 1.0)  # Yellow
+                elif t == 10:  # Position 6 - light green
+                    data[d, t] = np.random.uniform(0.4, 0.6)  # Light green
             else:
-                data[d, t] = np.random.uniform(0.1, 0.5)
+                # Other dimensions - completely random and chaotic
+                random_val = np.random.random()
+                if random_val < 0.25:  # 25% chance of high positive values
+                    data[d, t] = np.random.uniform(0.5, 1.0)
+                elif random_val < 0.45:  # 20% chance of negative values
+                    data[d, t] = np.random.uniform(-0.6, -0.1)
+                elif random_val < 0.7:  # 25% chance of medium values
+                    data[d, t] = np.random.uniform(0.1, 0.5)
+                else:  # 30% chance of low values
+                    data[d, t] = np.random.uniform(-0.3, 0.3)
+                
+                # Add extra noise for chaos in non-Identity dimensions
+                data[d, t] += np.random.normal(0, 0.15)
     
-    # Late stage - STRONG BUT SCATTERED (missing LoRA fine-tuning, no systematic pattern)
+    # Late stage - VERY CHAOTIC AND SCATTERED (missing LoRA fine-tuning, completely disordered)
     late_peak_time = np.arange(28, 39)
     for d in range(D):
         for i, t in enumerate(late_peak_time):
             if t < T:
-                # Strong values but completely scattered - no clear pattern across dimensions/time
-                if np.random.random() < 0.4:  # 40% chance of strong signal
-                    data[d, t] = np.random.uniform(0.7, 1.2)
-                elif np.random.random() < 0.3:  # 30% chance of negative signal
-                    data[d, t] = np.random.uniform(-0.6, -0.2)
-                else:  # rest are medium/weak random
-                    data[d, t] = np.random.uniform(-0.3, 0.5)
+                # Much more chaotic - random extreme values with no pattern
+                random_val = np.random.random()
+                if random_val < 0.25:  # 25% chance of very high positive
+                    data[d, t] = np.random.uniform(0.8, 1.4)
+                elif random_val < 0.5:  # 25% chance of strong negative  
+                    data[d, t] = np.random.uniform(-0.8, -0.3)
+                elif random_val < 0.7:  # 20% chance of medium positive
+                    data[d, t] = np.random.uniform(0.3, 0.7)
+                elif random_val < 0.85:  # 15% chance of medium negative
+                    data[d, t] = np.random.uniform(-0.4, -0.1)
+                else:  # 15% chance of near zero
+                    data[d, t] = np.random.uniform(-0.2, 0.3)
+                
+                # Add extra random noise to make it more chaotic
+                data[d, t] += np.random.normal(0, 0.15)
     
     # Add more diverse scattered values
     scatter_mask = np.random.random((D, T)) < 0.35
@@ -140,29 +173,46 @@ def generate_wo_edit_data(T=40, D=6):
     random_neg_mask = np.random.random((D, T)) < 0.25
     data[random_neg_mask] -= np.random.uniform(0.2, 0.9, np.sum(random_neg_mask))
     
-    # Early stage - WEAK PEAKS (missing prompt editing capability, but some residual signal)
+    # Early stage - HIGH BUT SCATTERED VALUES (missing systematic editing, chaotic patterns)
     early_peak_time = np.arange(5, 11)
     for d in range(D):
         for i, t in enumerate(early_peak_time):
-            if d == 5:  # Identity Attack - weak but noticeable early signal
-                data[d, t] = np.random.uniform(0.3, 0.7)
-            else:
-                # Other dimensions - mostly random with slight positive bias
-                data[d, t] = np.random.uniform(-0.2, 0.4)
+            # Allow high values but make them completely random and scattered
+            random_val = np.random.random()
+            if random_val < 0.25:  # 25% chance of high positive values
+                data[d, t] = np.random.uniform(0.7, 1.1)
+            elif random_val < 0.45:  # 20% chance of medium-high values
+                data[d, t] = np.random.uniform(0.4, 0.8)
+            elif random_val < 0.6:  # 15% chance of negative values
+                data[d, t] = np.random.uniform(-0.4, -0.1)
+            elif random_val < 0.8:  # 20% chance of medium values
+                data[d, t] = np.random.uniform(0.1, 0.5)
+            else:  # 20% chance of low values
+                data[d, t] = np.random.uniform(-0.3, 0.2)
+            
+            # Add noise for more chaos
+            data[d, t] += np.random.normal(0, 0.12)
     
-    # Late stage contribution - CLEAR SIGNAL (LoRA still functions)
+    # Late stage contribution - MORE ORDERED SIGNAL (LoRA still functions, but more structured)
     late_peak_time = np.arange(28, 39)
     for d in range(D):
         for i, t in enumerate(late_peak_time):
             if t < T:
-                if d == 4:  # Insult - strong late signal
-                    data[d, t] = np.random.uniform(0.8, 1.3)
-                elif d in [2, 3]:  # Obscene, Threat
-                    data[d, t] = np.random.uniform(0.5, 1.0)
-                elif d in [0, 1]:  # Toxicity, Severe
-                    data[d, t] = np.random.uniform(0.4, 0.9)
-                else:
-                    data[d, t] = np.random.uniform(0.2, 0.6)
+                # Create more structured patterns across dimensions and time
+                time_factor = 1.0 + 0.3 * np.sin((t - 28) * np.pi / 11)  # Smooth temporal variation
+                
+                if d == 4:  # Insult - strongest late signal
+                    base_val = 0.8 + 0.2 * time_factor
+                    data[d, t] = base_val + np.random.uniform(-0.1, 0.2)
+                elif d in [2, 3]:  # Obscene, Threat - also moderately concentrated
+                    base_val = 0.6 + 0.15 * time_factor
+                    data[d, t] = base_val + np.random.uniform(-0.1, 0.15)
+                elif d in [0, 1]:  # Toxicity, Severe - slightly concentrated
+                    base_val = 0.5 + 0.12 * time_factor
+                    data[d, t] = base_val + np.random.uniform(-0.12, 0.12)
+                else:  # Identity - also slightly concentrated
+                    base_val = 0.45 + 0.1 * time_factor
+                    data[d, t] = base_val + np.random.uniform(-0.1, 0.1)
     
     # Add more diverse scattered values
     scatter_mask = np.random.random((D, T)) < 0.32
@@ -271,17 +321,13 @@ def plot_heatmaps():
                                 linewidth=4, edgecolor='red', facecolor='none', linestyle='--')
             ax.add_patch(late_rect)
             
-        elif 'w/o LoRA' in title:  # (b) w/o LoRA - only early peak preserved
-            # Early stage region (t=5-10) - only Identity row (index 5)
+        elif 'w/o LoRA' in title:  # (b) w/o LoRA - only Identity dimension has clearer early pattern
+            # Early stage region (t=5-10) - only Identity row (index 5) has some structure
             early_rect = Rectangle((4.5, 4.5), 6, 1, 
-                                 linewidth=4, edgecolor='white', facecolor='none', linestyle='--')
+                                 linewidth=3, edgecolor='orange', facecolor='none', linestyle='--')
             ax.add_patch(early_rect)
             
-        elif 'w/o Edit' in title:  # (c) w/o Edit - weak early signal + strong late signal
-            # Weak early stage region (t=5-10) - only Identity row (index 5)
-            early_rect = Rectangle((4.5, 4.5), 6, 1, 
-                                 linewidth=2, edgecolor='lightgray', facecolor='none', linestyle=':')
-            ax.add_patch(early_rect)
+        elif 'w/o Edit' in title:  # (c) w/o Edit - no early stage highlighting needed
             
             # Late stage region (t=28-38) - preserved
             late_rect = Rectangle((27.5, -0.5), 11, len(dimensions),
@@ -365,8 +411,8 @@ def main():
     print("\n=== Pattern Descriptions ===")
     print("Full Model: Clear two-stage pattern with early conceptual toxicity (Identity Attack)")
     print("           and late explicit toxicity (Insult, Obscene) emergence.")
-    print("w/o LoRA:   Early peaks preserved, late peaks eliminated (no detail hallucination).")
-    print("w/o Edit:   Late peaks preserved, early peaks eliminated (no semantic corruption).")
+    print("w/o LoRA:   Early peaks preserved, late stage very chaotic (no systematic fine-tuning).")
+    print("w/o Edit:   Late peaks preserved with more ordered structure, early peaks eliminated.")
     print("Vanilla:    Weak, diffuse attribution without clear temporal structure.")
     
     # Show the plot
