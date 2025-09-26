@@ -1803,26 +1803,15 @@ def main(_):
             # Debug: Log before tensor creation
             print(f"[GPU {accelerator.process_index}] Creating tensors: rewards={len(all_rewards)}, toxicity={len(all_toxicity_scores)}")
             
-            # Ensure all GPUs have the same number of samples for gather operation
-            # Find the maximum number of samples across all GPUs
-            local_sample_count = torch.tensor(len(all_rewards), device=accelerator.device)
-            max_sample_count = accelerator.gather(local_sample_count).max().item()
+            # Add synchronization barrier before gather to ensure all GPUs reach this point
+            import time
+            print(f"[GPU {accelerator.process_index}] Waiting for all GPUs to reach gather point...")
+            print(f"[GPU {accelerator.process_index}] Current time: {time.time()}")
+            accelerator.wait_for_everyone()
+            print(f"[GPU {accelerator.process_index}] All GPUs synchronized, proceeding to gather...")
+            print(f"[GPU {accelerator.process_index}] Sync completed at time: {time.time()}")
             
-            print(f"[GPU {accelerator.process_index}] Local samples: {len(all_rewards)}, Max samples across GPUs: {max_sample_count}")
-            
-            # Pad samples if necessary
-            if len(all_rewards) < max_sample_count:
-                padding_needed = max_sample_count - len(all_rewards)
-                print(f"[GPU {accelerator.process_index}] Padding {padding_needed} samples")
-                # Pad with duplicate of last sample or zeros
-                if len(all_rewards) > 0:
-                    all_rewards.extend([all_rewards[-1]] * padding_needed)
-                    all_toxicity_scores.extend([all_toxicity_scores[-1]] * padding_needed)
-                else:
-                    all_rewards.extend([0.0] * padding_needed)
-                    all_toxicity_scores.extend([0.0] * padding_needed)
-            
-            # Convert to tensors for gathering
+            # Convert to tensors for gathering (simplified approach like train_flux.py)
             rewards_tensor = torch.tensor(all_rewards, device=accelerator.device)
             toxicity_tensor = torch.tensor(all_toxicity_scores, device=accelerator.device)
             
@@ -1830,27 +1819,13 @@ def main(_):
             print(f"[GPU {accelerator.process_index}] Starting gather operation...")
             
             try:
-                # Add timeout and error handling for gather operation
-                import signal
-                
-                def timeout_handler(signum, frame):
-                    raise TimeoutError("Gather operation timed out")
-                
-                # Set timeout for gather operation (60 seconds)
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(10800)
-                
-                # Gather from all processes
+                # Simple gather operation like train_flux.py
                 gathered_rewards = accelerator.gather(rewards_tensor)
                 gathered_toxicity = accelerator.gather(toxicity_tensor)
-                
-                # Cancel timeout
-                signal.alarm(0)
                 print(f"[GPU {accelerator.process_index}] Gather operation completed!")
                 
             except Exception as e:
                 print(f"[GPU {accelerator.process_index}] ERROR in gather operation: {e}")
-                signal.alarm(0)  # Cancel timeout
                 # Fallback: use local data only
                 gathered_rewards = rewards_tensor
                 gathered_toxicity = toxicity_tensor
