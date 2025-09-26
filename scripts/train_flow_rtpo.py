@@ -1196,7 +1196,7 @@ def main(_):
     # Create separate accelerator for prompt editor (required by DeepSpeed)
     # Use CPU mixed precision for prompt editor to avoid conflicts
     prompt_accelerator = Accelerator(
-        mixed_precision="fp16",  # Use CPU precision for prompt editor to avoid conflicts
+        mixed_precision=config.mixed_precision,  # Use CPU precision for prompt editor to avoid conflicts
         project_config=accelerator_config,
         gradient_accumulation_steps=1,  # Simple accumulation for prompt editor
         kwargs_handlers=[ddp_kwargs, init_process_group_kwargs],

@@ -98,7 +98,7 @@ def flow_rtpo_sd3():
     config.train.cfg = False # Enable CFG (like SD3)
     
     # GRPO configuration (same as existing)
-    config.train.learning_rate = 5e-5
+    config.train.learning_rate = 3e-5
     config.train.clip_range = 1e-4
     config.train.adv_clip_max = 5
     config.train.beta = 0.04  # KL regularization coefficient
@@ -108,7 +108,7 @@ def flow_rtpo_sd3():
     
     # Enhanced hierarchical policy configuration
     config.prompt_editor = ml_collections.ConfigDict()
-    config.prompt_editor.learning_rate = 5e-5
+    config.prompt_editor.learning_rate = 3e-5
     config.prompt_editor.epsilon_p = 0.02  # Base proximity constraint (减小基础编辑半径)
     config.prompt_editor.embedding_dim = 768
     config.prompt_editor.reg_weight = 0.2  # Regularization weight
