@@ -480,7 +480,9 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
         print(f"[TEST EVAL] GPU {accelerator.process_index}: Starting gather operation with {len(all_test_samples)} local samples")
         
         # Check for empty batches across processes to avoid deadlock
-        local_sample_count = torch.tensor(len(all_test_samples), device=accelerator.device, dtype=torch.float32)
+        # Use same dtype as accelerator for DeepSpeed compatibility
+        device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+        local_sample_count = torch.tensor(len(all_test_samples), device=accelerator.device, dtype=device_dtype)
         try:
             accelerator.wait_for_everyone()
             all_sample_counts = accelerator.gather(local_sample_count)
@@ -1026,7 +1028,9 @@ def compute_attribution(sample, transformer, pipeline, config, accelerator):
     """Compute step-level Δ-Attribution for interpretability."""
     original_toxicity = sample.get("final_toxicity", 0.0)
     if original_toxicity == 0.0:
-        return torch.zeros(len(sample["timesteps"]), dtype=torch.float32)  # Use len for timestep dimension
+        # Use same dtype as accelerator device for DeepSpeed compatibility
+        device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+        return torch.zeros(len(sample["timesteps"]), dtype=device_dtype, device=accelerator.device)  # Use len for timestep dimension
     
     attributions = []
     
@@ -1068,7 +1072,9 @@ def compute_attribution(sample, transformer, pipeline, config, accelerator):
             logger.warning(f"Attribution computation failed at step {step_idx}: {e}")
             attributions.append(0.0)
     
-    return torch.tensor(attributions, dtype=torch.float32)
+    # Use same dtype as accelerator for DeepSpeed compatibility
+    device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+    return torch.tensor(attributions, dtype=device_dtype, device=accelerator.device)
 
 
 def main(_):
@@ -1841,8 +1847,10 @@ def main(_):
             print(f"[GPU {accelerator.process_index}] Sync completed at time: {time.time()}")
             
             # Convert to tensors for gathering (simplified approach like train_flux.py)
-            rewards_tensor = torch.tensor(all_rewards, device=accelerator.device, dtype=torch.float32)
-            toxicity_tensor = torch.tensor(all_toxicity_scores, device=accelerator.device, dtype=torch.float32)
+            # Use same dtype as accelerator for DeepSpeed compatibility
+            device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+            rewards_tensor = torch.tensor(all_rewards, device=accelerator.device, dtype=device_dtype)
+            toxicity_tensor = torch.tensor(all_toxicity_scores, device=accelerator.device, dtype=device_dtype)
             
             print(f"[GPU {accelerator.process_index}] Tensor shapes: rewards={rewards_tensor.shape}, toxicity={toxicity_tensor.shape}")
             print(f"[GPU {accelerator.process_index}] Starting gather operation...")
@@ -1874,7 +1882,9 @@ def main(_):
             all_toxicity_global = all_toxicity_scores
         
         # Convert rewards to tensors and extend to timestep dimension (like SD3)
-        all_rewards_tensor = torch.tensor(all_rewards, device=accelerator.device, dtype=torch.float32)
+        # Use same dtype as accelerator for DeepSpeed compatibility
+        device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+        all_rewards_tensor = torch.tensor(all_rewards, device=accelerator.device, dtype=device_dtype)
         # Extend rewards to timestep dimension for advantage computation
         all_rewards_expanded = all_rewards_tensor.unsqueeze(1).repeat(1, num_train_timesteps)  # [batch, timesteps]
         
@@ -2192,7 +2202,9 @@ def main(_):
                             flow_loss = policy_loss + config.train.beta * kl_loss
                         else:
                             flow_loss = policy_loss
-                            kl_loss = torch.tensor(0.0, dtype=torch.float32)
+                            # Use same dtype as accelerator for DeepSpeed compatibility
+                            device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+                            kl_loss = torch.tensor(0.0, dtype=device_dtype, device=accelerator.device)
                         
                         # Backward pass (like SD3)
                         accelerator.backward(flow_loss)
@@ -2214,7 +2226,9 @@ def main(_):
                     # Checks if the accelerator has performed an optimization step behind the scenes (like SD3)
                     if accelerator.sync_gradients:
                         # Log training-related stuff (like SD3)
-                        info = {k: torch.mean(torch.stack([torch.tensor(x, device=accelerator.device, dtype=torch.float32) for x in v])) for k, v in train_info.items() if v}
+                        # Use same dtype as accelerator for DeepSpeed compatibility
+                        device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+                        info = {k: torch.mean(torch.stack([torch.tensor(x, device=accelerator.device, dtype=device_dtype) for x in v])) for k, v in train_info.items() if v}
                         info = accelerator.reduce(info, reduction="mean")
                         info.update({"epoch": epoch, "inner_epoch": inner_epoch})
                         
@@ -2383,14 +2397,16 @@ def main(_):
         epoch_time = time.time() - epoch_start_time
         
         # Gather metrics from all processes using individual gather calls
-        num_samples_tensor = torch.tensor(len(epoch_samples), device=accelerator.device, dtype=torch.float32)
-        reward_mean_tensor = torch.tensor(np.mean(all_rewards), device=accelerator.device, dtype=torch.float32)
-        reward_std_tensor = torch.tensor(np.std(all_rewards), device=accelerator.device, dtype=torch.float32)
-        flow_policy_loss_tensor = torch.tensor(np.mean(train_info["flow_policy_loss"]), device=accelerator.device, dtype=torch.float32)
-        kl_loss_tensor = torch.tensor(np.mean(train_info["kl_loss"]), device=accelerator.device, dtype=torch.float32)
-        prompt_policy_loss_tensor = torch.tensor(np.mean(train_info["prompt_policy_loss"]), device=accelerator.device, dtype=torch.float32)
-        prompt_reg_loss_tensor = torch.tensor(np.mean(train_info["prompt_reg_loss"]), device=accelerator.device, dtype=torch.float32)
-        total_prompt_loss_tensor = torch.tensor(np.mean(train_info["total_prompt_loss"]), device=accelerator.device, dtype=torch.float32)
+        # Use same dtype as accelerator for DeepSpeed compatibility
+        device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+        num_samples_tensor = torch.tensor(len(epoch_samples), device=accelerator.device, dtype=device_dtype)
+        reward_mean_tensor = torch.tensor(np.mean(all_rewards), device=accelerator.device, dtype=device_dtype)
+        reward_std_tensor = torch.tensor(np.std(all_rewards), device=accelerator.device, dtype=device_dtype)
+        flow_policy_loss_tensor = torch.tensor(np.mean(train_info["flow_policy_loss"]), device=accelerator.device, dtype=device_dtype)
+        kl_loss_tensor = torch.tensor(np.mean(train_info["kl_loss"]), device=accelerator.device, dtype=device_dtype)
+        prompt_policy_loss_tensor = torch.tensor(np.mean(train_info["prompt_policy_loss"]), device=accelerator.device, dtype=device_dtype)
+        prompt_reg_loss_tensor = torch.tensor(np.mean(train_info["prompt_reg_loss"]), device=accelerator.device, dtype=device_dtype)
+        total_prompt_loss_tensor = torch.tensor(np.mean(train_info["total_prompt_loss"]), device=accelerator.device, dtype=device_dtype)
         
         gathered_num_samples = accelerator.gather(num_samples_tensor)
         gathered_reward_mean = accelerator.gather(reward_mean_tensor)
