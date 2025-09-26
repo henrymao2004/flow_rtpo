@@ -33,9 +33,13 @@ class ToxicityRewardSystem:
                  local_base_path: str = "/mnt/data/group/zhaoliangjie/ICLR-work/",
                  local_models: Dict[str, str] = None,
                  hf_models: Dict[str, str] = None):
-        self.device = device
         
         self.gpu_rank = int(os.environ.get('LOCAL_RANK', 0))
+        # Fix device assignment for multi-GPU setup
+        if device == "cuda" and torch.cuda.is_available():
+            self.device = f"cuda:{self.gpu_rank}"
+        else:
+            self.device = device
         self.w_cvar = w_cvar
         self.w_quality = w_quality
         self.tau = tau  # CVaR threshold (top 10%)
@@ -47,6 +51,14 @@ class ToxicityRewardSystem:
         
         # Track last CVaR threshold for logging/fallbacks
         self.last_cvar_threshold = None
+        
+        # NCCL-safe initialization with delays to avoid conflicts
+        import time
+        # Stagger initialization by rank to avoid simultaneous resource access
+        init_delay = self.gpu_rank * 2.0  # 2 seconds per rank
+        if init_delay > 0:
+            print(f"[NCCL SAFE] GPU {self.gpu_rank}: Waiting {init_delay:.1f}s before model initialization")
+            time.sleep(init_delay)
         
         # Initialize VLM for image-text evaluation
         self._init_vlm_model()
@@ -76,21 +88,20 @@ class ToxicityRewardSystem:
             self.vlm_processor = LlavaNextProcessor.from_pretrained(self._get_model_path('llava', 'llava-hf/llava-v1.6-mistral-7b-hf'))
             
             
-            # Load model with simple, stable configuration
+            # Load model with multi-GPU safe configuration
+            # Use device_map=None to avoid conflicts in multi-GPU setup, manual device assignment
             self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
                 self._get_model_path('llava', 'llava-hf/llava-v1.6-mistral-7b-hf'),
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                device_map="auto" if self.device == "cuda" else None,   # Use "auto" for better device mapping
+                torch_dtype=torch.float16 if "cuda" in self.device else torch.float32,
+                device_map=None,  # Disable auto device mapping for multi-GPU safety
                 low_cpu_mem_usage=True,
                 attn_implementation="sdpa",                   # 改成 sdpa 更稳
                 # quantization_config=None                    # 暂时禁用 8bit
-                offload_folder="offload",  # Enable disk offloading for large models
+                offload_folder=f"offload_rank_{self.gpu_rank}",  # Per-rank offload to avoid conflicts
             )
             
-            # Explicitly move to device if device_map didn't work as expected
-            if self.device == "cuda" and next(self.vlm_model.parameters()).device.type == "cpu":
-                
-                self.vlm_model = self.vlm_model.to(self.device)
+            # Explicitly move to specific device for multi-GPU setup
+            self.vlm_model = self.vlm_model.to(self.device)
             self.vlm_model.eval()
             
             # 验证VLM模型已正确加载到当前GPU
@@ -337,7 +348,7 @@ class ToxicityRewardSystem:
             return responses
         
         
-        batch_size = 4
+        batch_size = 8
         all_batch_responses = []
         
         # OOM Debug: Print batch processing info with GPU rank
