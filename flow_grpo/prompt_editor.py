@@ -171,6 +171,11 @@ class PromptEditorPolicy(nn.Module):
         # Also move internal models to device
         if hasattr(self.vec2text_corrector, 'inversion_trainer') and hasattr(self.vec2text_corrector.inversion_trainer, 'model'):
             self.vec2text_corrector.inversion_trainer.model = self.vec2text_corrector.inversion_trainer.model.to(device)
+            # Ensure embedding_transform is on the same device to avoid CPU/CUDA mismatches
+            if hasattr(self.vec2text_corrector.inversion_trainer.model, 'embedding_transform'):
+                self.vec2text_corrector.inversion_trainer.model.embedding_transform = (
+                    self.vec2text_corrector.inversion_trainer.model.embedding_transform.to(device)
+                )
         if hasattr(self.vec2text_corrector, 'corrector_trainer') and hasattr(self.vec2text_corrector.corrector_trainer, 'model'):
             self.vec2text_corrector.corrector_trainer.model = self.vec2text_corrector.corrector_trainer.model.to(device)
         

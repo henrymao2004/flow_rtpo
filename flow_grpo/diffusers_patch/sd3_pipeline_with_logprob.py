@@ -145,6 +145,18 @@ def pipeline_with_logprob(
             latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
             # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
             timestep = t.expand(latent_model_input.shape[0])
+            # Align dtypes with transformer to avoid fp32/fp16 mismatch during conv/linear ops
+            transformer_module = getattr(self.transformer, 'module', self.transformer)
+            target_dtype = transformer_module.dtype if hasattr(transformer_module, 'dtype') else prompt_embeds.dtype
+            if latent_model_input.dtype != target_dtype:
+                latent_model_input = latent_model_input.to(target_dtype)
+            if timestep.dtype != target_dtype:
+                timestep = timestep.to(target_dtype)
+            if prompt_embeds.dtype != target_dtype:
+                prompt_embeds = prompt_embeds.to(target_dtype)
+            if pooled_prompt_embeds.dtype != target_dtype:
+                pooled_prompt_embeds = pooled_prompt_embeds.to(target_dtype)
+
             noise_pred = self.transformer(
                 hidden_states=latent_model_input,
                 timestep=timestep,
