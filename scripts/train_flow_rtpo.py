@@ -733,11 +733,14 @@ def load_checkpoint(checkpoint_path, pipeline, prompt_editor, optimizer, prompt_
     
     try:
         logger.info(f"Loading checkpoint from: {checkpoint_path}")
+        logger.info(f"GPU {accelerator.process_index}: Loading checkpoint to device cuda:{accelerator.process_index}")
         
         # Load training state
         training_state_path = os.path.join(checkpoint_path, "training_state.pt")
         if os.path.exists(training_state_path):
-            training_state = torch.load(training_state_path, map_location=accelerator.device)
+            # Use rank-specific device for multi-GPU safety
+            device = f"cuda:{accelerator.process_index}" if torch.cuda.is_available() else accelerator.device
+            training_state = torch.load(training_state_path, map_location=device)
             restored_epoch = training_state.get("epoch", 0)
             restored_global_step = training_state.get("global_step", 0)
             logger.info(f"Restored training state: epoch={restored_epoch}, global_step={restored_global_step}")
@@ -765,7 +768,9 @@ def load_checkpoint(checkpoint_path, pipeline, prompt_editor, optimizer, prompt_
         prompt_editor_path = os.path.join(checkpoint_path, "prompt_editor.pt")
         if os.path.exists(prompt_editor_path):
             logger.info("Loading prompt editor weights...")
-            prompt_editor_state = torch.load(prompt_editor_path, map_location=accelerator.device)
+            # Use rank-specific device for multi-GPU safety
+            device = f"cuda:{accelerator.process_index}" if torch.cuda.is_available() else accelerator.device
+            prompt_editor_state = torch.load(prompt_editor_path, map_location=device)
             prompt_editor.load_state_dict(prompt_editor_state)
             logger.info("Prompt editor weights loaded successfully")
         else:
@@ -1163,10 +1168,6 @@ def main(_):
         
         # Initialize SwanLab with continuity support
         swanlab_config = config.to_dict()
-        swanlab_config.update({
-            "resumed_from_checkpoint": bool(resume_from_checkpoint),
-            "checkpoint_path": resume_from_checkpoint if resume_from_checkpoint else None
-        })
         
         swanlab.init(
             project="flow_rtpo",
