@@ -1499,14 +1499,12 @@ def main(_):
         )
     
     # Prepare models with accelerator (excluding train_dataloader if using custom DistributedSampler)
-    # DeepSpeed requires separate prepare calls for each model
+    # For DeepSpeed, we need to prepare models with their corresponding optimizers
     if is_distributed:
         # For multi-GPU, don't prepare the dataloader to preserve our DistributedSampler
-        # Prepare models separately to avoid DeepSpeed multi-model error
-        pipeline.transformer = accelerator.prepare(pipeline.transformer)
-        prompt_editor = accelerator.prepare(prompt_editor)
-        optimizer = accelerator.prepare(optimizer)
-        prompt_optimizer = accelerator.prepare(prompt_optimizer)
+        # DeepSpeed Zero requires model+optimizer pairs to be prepared together
+        pipeline.transformer, optimizer = accelerator.prepare(pipeline.transformer, optimizer)
+        prompt_editor, prompt_optimizer = accelerator.prepare(prompt_editor, prompt_optimizer)
         if accelerator.is_main_process:
             logger.info("Multi-GPU setup: train_dataloader not prepared to preserve DistributedSampler")
     else:
