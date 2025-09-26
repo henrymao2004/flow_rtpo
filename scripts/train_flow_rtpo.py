@@ -1270,8 +1270,6 @@ def main(_):
         
         swanlab.init(
             project="flow_rtpo",
-            resume=True,
-            id="ttpsbnrnbgrancv98v0zo",  # id必须为21位字符串
             config=swanlab_config
         )
     
