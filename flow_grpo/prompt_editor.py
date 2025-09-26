@@ -38,7 +38,7 @@ class PositionalEncoding(nn.Module):
             x: Tensor, shape [batch_size, seq_len, embedding_dim]
         """
         # Clone x to avoid modifying the input tensor in place (DDP safety)
-        # Ensure dtype compatibility for DeepSpeed FP16
+        # Ensure dtype compatibility for DeepSpeed BF16
         pe_slice = self.pe[:x.size(1), :].transpose(0, 1)
         if x.dtype != pe_slice.dtype:
             pe_slice = pe_slice.to(x.dtype)
@@ -713,21 +713,21 @@ class PromptEditorPolicy(nn.Module):
             batch_size = original_embeddings.size(0)
             
             # Project to transformer dimension and add positional encoding
-            # Ensure dtype compatibility for DeepSpeed FP16 training
+            # Ensure dtype compatibility for DeepSpeed BF16 training
             if self.input_projection.weight.dtype == torch.bfloat16:
-                x = self.input_projection(original_embeddings.half()).float()  # [batch_size, d_model]
+                x = self.input_projection(original_embeddings.bfloat16()).float()  # [batch_size, d_model]
             else:
                 x = self.input_projection(original_embeddings).float()  # [batch_size, d_model]
             x = x.unsqueeze(1).clone()  # [batch_size, 1, d_model] - treat as sequence length 1, clone to avoid memory sharing
             x = self.pos_encoding(x)
             
-            # Encoder: process the reference prompt embedding - handle FP16 compatibility
+            # Encoder: process the reference prompt embedding - handle BF16 compatibility
             try:
                 memory = self.transformer_encoder(x)  # [batch_size, 1, d_model]
             except RuntimeError as e:
-                if "dtype" in str(e).lower() and "half" in str(e).lower():
-                    # Dtype mismatch - try with FP16 input
-                    memory = self.transformer_encoder(x.half()).float()
+                if "dtype" in str(e).lower() and ("half" in str(e).lower() or "bfloat16" in str(e).lower()):
+                    # Dtype mismatch - try with BF16 input
+                    memory = self.transformer_encoder(x.bfloat16()).float()
                 else:
                     raise e
             
@@ -741,20 +741,20 @@ class PromptEditorPolicy(nn.Module):
                 tgt = torch.zeros(x.size(), dtype=torch.float32, device=x.device)  # [batch_size, 1, d_model]
             tgt = self.pos_encoding(tgt)
             
-            # Decode to get noise prediction - handle FP16 compatibility
+            # Decode to get noise prediction - handle BF16 compatibility
             try:
                 decoded = self.transformer_decoder(tgt, memory)  # [batch_size, 1, d_model]
             except RuntimeError as e:
-                if "dtype" in str(e).lower() and "half" in str(e).lower():
-                    # Dtype mismatch - try with FP16 inputs
-                    decoded = self.transformer_decoder(tgt.half(), memory.half()).float()
+                if "dtype" in str(e).lower() and ("half" in str(e).lower() or "bfloat16" in str(e).lower()):
+                    # Dtype mismatch - try with BF16 inputs
+                    decoded = self.transformer_decoder(tgt.bfloat16(), memory.bfloat16()).float()
                 else:
                     raise e
             
             # Project back to embedding dimension - handle dtype compatibility
             decoded_squeezed = decoded.squeeze(1).clone()
             if self.output_projection.weight.dtype == torch.bfloat16:
-                raw_mu = self.output_projection(decoded_squeezed.half()).float()  # [batch_size, embedding_dim]
+                raw_mu = self.output_projection(decoded_squeezed.bfloat16()).float()  # [batch_size, embedding_dim]
             else:
                 raw_mu = self.output_projection(decoded_squeezed).float()  # [batch_size, embedding_dim]
             
