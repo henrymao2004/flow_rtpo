@@ -684,12 +684,19 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
     return None
 
 
-def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, ema, transformer_trainable_parameters, config, epoch=None, optimizer=None, prompt_optimizer=None):
+def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, ema, transformer_trainable_parameters, config, epoch=None, optimizer=None, prompt_optimizer=None, prompt_accelerator=None):
     """Save checkpoint including both flow controller and prompt editor."""
     accelerator.wait_for_everyone()
+    if prompt_accelerator is not None:
+        prompt_accelerator.wait_for_everyone()
+    
     if accelerator.is_main_process:
         transformer_lora = accelerator.unwrap_model(transformer, keep_fp32_wrapper=True)
-        prompt_editor_unwrapped = accelerator.unwrap_model(prompt_editor)
+        # Use prompt_accelerator to unwrap prompt_editor if available
+        if prompt_accelerator is not None:
+            prompt_editor_unwrapped = prompt_accelerator.unwrap_model(prompt_editor)
+        else:
+            prompt_editor_unwrapped = accelerator.unwrap_model(prompt_editor)
         
         pipeline_save_dir = os.path.join(save_dir, f"checkpoint_{global_step}")
         os.makedirs(pipeline_save_dir, exist_ok=True)
@@ -737,7 +744,7 @@ def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, em
             ema.copy_temp_to(transformer_trainable_parameters)
 
 
-def load_checkpoint(checkpoint_path, pipeline, prompt_editor, optimizer, prompt_optimizer, ema, accelerator, logger, config=None):
+def load_checkpoint(checkpoint_path, pipeline, prompt_editor, optimizer, prompt_optimizer, ema, accelerator, logger, config=None, prompt_accelerator=None):
     """Load checkpoint and return the restored epoch and global_step."""
     if not os.path.exists(checkpoint_path):
         logger.warning(f"Checkpoint path does not exist: {checkpoint_path}")
@@ -780,20 +787,29 @@ def load_checkpoint(checkpoint_path, pipeline, prompt_editor, optimizer, prompt_
         prompt_editor_path = os.path.join(checkpoint_path, "prompt_editor.pt")
         if os.path.exists(prompt_editor_path):
             logger.info("Loading prompt editor weights...")
-            # Use rank-specific device for multi-GPU safety
-            device = f"cuda:{accelerator.process_index}" if torch.cuda.is_available() else accelerator.device
+            # Use prompt_accelerator device if available, otherwise use main accelerator
+            if prompt_accelerator is not None:
+                device = f"cuda:{prompt_accelerator.process_index}" if torch.cuda.is_available() else prompt_accelerator.device
+                logger.info(f"Using prompt_accelerator device: {device}")
+            else:
+                device = f"cuda:{accelerator.process_index}" if torch.cuda.is_available() else accelerator.device
+                logger.info(f"Using main accelerator device for backward compatibility: {device}")
+            
             prompt_editor_state = torch.load(prompt_editor_path, map_location=device)
             
-            # Handle DeepSpeed model wrapping - adjust state_dict keys
+            # Handle DeepSpeed model wrapping - adjust state_dict keys for dual accelerator compatibility
             try:
                 prompt_editor.load_state_dict(prompt_editor_state)
                 logger.info("Prompt editor weights loaded successfully")
             except RuntimeError as e:
                 if "Missing key(s)" in str(e) and "module." in str(e):
-                    logger.info("Adjusting state_dict keys for DeepSpeed compatibility...")
+                    logger.info("Adjusting state_dict keys for DeepSpeed/dual accelerator compatibility...")
                     # Check if we need to add or remove 'module.' prefix
                     model_keys = set(prompt_editor.state_dict().keys())
                     checkpoint_keys = set(prompt_editor_state.keys())
+                    
+                    logger.info(f"Model keys sample: {list(model_keys)[:3]}")
+                    logger.info(f"Checkpoint keys sample: {list(checkpoint_keys)[:3]}")
                     
                     # If model has 'module.' prefix but checkpoint doesn't, add prefix to checkpoint
                     if any(k.startswith('module.') for k in model_keys) and not any(k.startswith('module.') for k in checkpoint_keys):
@@ -806,9 +822,14 @@ def load_checkpoint(checkpoint_path, pipeline, prompt_editor, optimizer, prompt_
                         prompt_editor.load_state_dict(adjusted_state)
                         logger.info("Successfully loaded prompt editor weights with removed 'module.' prefix")
                     else:
-                        raise e
+                        logger.warning("Could not resolve state_dict key mismatch, attempting strict=False loading...")
+                        prompt_editor.load_state_dict(prompt_editor_state, strict=False)
+                        logger.info("Loaded prompt editor weights with strict=False (some keys may be missing)")
                 else:
-                    raise e
+                    logger.warning(f"Unexpected error loading prompt editor: {e}")
+                    logger.warning("Attempting strict=False loading...")
+                    prompt_editor.load_state_dict(prompt_editor_state, strict=False)
+                    logger.info("Loaded prompt editor weights with strict=False")
         else:
             logger.warning("prompt_editor.pt not found")
         
@@ -1161,6 +1182,7 @@ def main(_):
         timeout=timedelta(seconds=10800)  # 3 hours for long-running distributed training
     )
     
+    # Create main accelerator for transformer (flow controller)
     accelerator = Accelerator(
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
@@ -1171,11 +1193,22 @@ def main(_):
         kwargs_handlers=[ddp_kwargs, init_process_group_kwargs],
     )
     
+    # Create separate accelerator for prompt editor (required by DeepSpeed)
+    # Use CPU mixed precision for prompt editor to avoid conflicts
+    prompt_accelerator = Accelerator(
+        mixed_precision="fp16",  # Use CPU precision for prompt editor to avoid conflicts
+        project_config=accelerator_config,
+        gradient_accumulation_steps=1,  # Simple accumulation for prompt editor
+        kwargs_handlers=[ddp_kwargs, init_process_group_kwargs],
+    )
+    
     # Debug info for each rank
-    print(f"[rank{accelerator.process_index}] Accelerator initialized successfully")
+    print(f"[rank{accelerator.process_index}] Main accelerator initialized successfully")
     print(f"[rank{accelerator.process_index}] Local process index: {accelerator.local_process_index}")
     print(f"[rank{accelerator.process_index}] Device: {accelerator.device}")
     print(f"[rank{accelerator.process_index}] CUDA available: {torch.cuda.is_available()}")
+    print(f"[rank{prompt_accelerator.process_index}] Prompt accelerator initialized successfully")
+    print(f"[rank{prompt_accelerator.process_index}] Prompt accelerator device: {prompt_accelerator.device}")
     
     # Safe device initialization without memory probing
     if torch.cuda.is_available():
@@ -1564,22 +1597,22 @@ def main(_):
             global_std=config.sample.global_std
         )
     
-    # Prepare models with accelerator (excluding train_dataloader if using custom DistributedSampler)
-    # For DeepSpeed, we need to prepare models with their corresponding optimizers
+    # Prepare models with their respective accelerators
+    # For DeepSpeed, each model must be prepared with its own accelerator
     if is_distributed:
         # For multi-GPU, don't prepare the dataloader to preserve our DistributedSampler
-        # DeepSpeed Zero requires model+optimizer pairs to be prepared together
+        # DeepSpeed Zero requires model+optimizer pairs to be prepared together with their own accelerator
         pipeline.transformer, optimizer = accelerator.prepare(pipeline.transformer, optimizer)
-        prompt_editor, prompt_optimizer = accelerator.prepare(prompt_editor, prompt_optimizer)
+        prompt_editor, prompt_optimizer = prompt_accelerator.prepare(prompt_editor, prompt_optimizer)
         if accelerator.is_main_process:
             logger.info("Multi-GPU setup: train_dataloader not prepared to preserve DistributedSampler")
+            logger.info("Multi-GPU setup: transformer prepared with main accelerator, prompt_editor with separate accelerator")
     else:
-        # For single GPU, prepare everything including dataloader
-        (pipeline.transformer, prompt_editor, optimizer, prompt_optimizer, 
-         train_dataloader) = accelerator.prepare(
-            pipeline.transformer, prompt_editor, optimizer, prompt_optimizer,
-            train_dataloader
+        # For single GPU, prepare with respective accelerators
+        pipeline.transformer, optimizer, train_dataloader = accelerator.prepare(
+            pipeline.transformer, optimizer, train_dataloader
         )
+        prompt_editor, prompt_optimizer = prompt_accelerator.prepare(prompt_editor, prompt_optimizer)
     
     # Move pipeline components to device
     pipeline.vae.to(accelerator.device)
@@ -1613,7 +1646,8 @@ def main(_):
         logger.info(f"Attempting to resume training from checkpoint: {resume_from_checkpoint}")
         start_epoch, global_step = load_checkpoint(
             resume_from_checkpoint, pipeline, prompt_editor, 
-            optimizer, prompt_optimizer, ema, accelerator, logger, config
+            optimizer, prompt_optimizer, ema, accelerator, logger, config,
+            prompt_accelerator=prompt_accelerator
         )
         if start_epoch > 0 or global_step > 0:
             logger.info(f"Successfully resumed from checkpoint at epoch {start_epoch}, global_step {global_step}")
@@ -2255,9 +2289,20 @@ def main(_):
                                 transformer_trainable_parameters, 1.0
                             )
                         
-                        # Optimizer step
-                        optimizer.step()
-                        optimizer.zero_grad()
+                        # Optimizer step with overflow handling
+                        try:
+                            optimizer.step()
+                            optimizer.zero_grad()
+                        except RuntimeError as e:
+                            if "overflow" in str(e).lower() or "inf" in str(e).lower() or "nan" in str(e).lower():
+                                # Handle gradient overflow gracefully
+                                logger.warning(f"[FLOW CONTROLLER] Gradient overflow detected: {e}. Skipping step.")
+                                optimizer.zero_grad()
+                                # Continue to next iteration
+                                continue
+                            else:
+                                # Re-raise other errors
+                                raise e
                         
                         # Track metrics
                         train_info["flow_policy_loss"].append(policy_loss.item())
@@ -2327,7 +2372,7 @@ def main(_):
                 # Use enhanced policy gradient training method with individual trajectories
                 # The prompt editor handles GRPO grouping internally
                 prompt_metrics = prompt_editor.module.update_policy(
-                    trajectories, prompt_optimizer, accelerator, baseline_value
+                    trajectories, prompt_optimizer, prompt_accelerator, baseline_value
                 )
                 
                 # Log enhanced metrics
@@ -2567,19 +2612,22 @@ def main(_):
             best_ckpt_path = os.path.join(config.save_dir, "best_model")
             save_ckpt(best_ckpt_path, pipeline.transformer, prompt_editor, global_step, 
                      accelerator, ema, transformer_trainable_parameters, config,
-                     epoch=epoch, optimizer=optimizer, prompt_optimizer=prompt_optimizer)
+                     epoch=epoch, optimizer=optimizer, prompt_optimizer=prompt_optimizer, 
+                     prompt_accelerator=prompt_accelerator)
             logger.info(f"Best model saved at epoch {epoch} with EMA reward: {convergence_metrics.get('ema_reward', 0):.4f}")
         
         # Save checkpoint
         if (epoch + 1) % config.save_freq == 0:
             save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 
                      accelerator, ema, transformer_trainable_parameters, config,
-                     epoch=epoch, optimizer=optimizer, prompt_optimizer=prompt_optimizer)
+                     epoch=epoch, optimizer=optimizer, prompt_optimizer=prompt_optimizer,
+                     prompt_accelerator=prompt_accelerator)
     
     # Final save
     save_ckpt(config.save_dir, pipeline.transformer, prompt_editor, global_step, 
              accelerator, ema, transformer_trainable_parameters, config,
-             epoch=config.num_epochs - 1, optimizer=optimizer, prompt_optimizer=prompt_optimizer)
+             epoch=config.num_epochs - 1, optimizer=optimizer, prompt_optimizer=prompt_optimizer,
+             prompt_accelerator=prompt_accelerator)
     
     # Log final convergence summary
     if convergence_monitor is not None:

@@ -1164,41 +1164,29 @@ class PromptEditorPolicy(nn.Module):
             total_loss = total_loss.float()  # Ensure FP32
         
         if accelerator is not None:
-            # For FP32 prompt editor training, completely bypass accelerator for optimizer step
-            # This avoids all scaler-related issues
-            
-            # Manual backward pass
-            total_loss.backward()
+            # Use accelerator's backward pass to ensure compatibility with DeepSpeed
+            accelerator.backward(total_loss)
             
             # Gradient clipping - only when syncing gradients
             if accelerator.sync_gradients:
-                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+                accelerator.clip_grad_norm_(self.parameters(), max_norm=1.0)
             
-            # Get the underlying optimizer and step directly
-            if hasattr(optimizer, 'optimizer'):
-                # Accelerator-wrapped optimizer - access the underlying one
-                underlying_optimizer = optimizer.optimizer
-                underlying_optimizer.step()
-                underlying_optimizer.zero_grad()
-            elif hasattr(optimizer, '_optimizer'):
-                # Alternative attribute name for wrapped optimizer
-                underlying_optimizer = optimizer._optimizer
-                underlying_optimizer.step()
-                underlying_optimizer.zero_grad()
-            else:
-                # Fallback: try to step without scaler by temporarily removing scaler attribute
-                if hasattr(optimizer, 'scaler'):
-                    original_opt_scaler = optimizer.scaler
-                    optimizer.scaler = None
-                    try:
-                        optimizer.step()
-                        optimizer.zero_grad()
-                    finally:
-                        optimizer.scaler = original_opt_scaler
-                else:
-                    # Last resort: direct step (may still fail)
-                    optimizer.step()
+            # Use accelerator's step method to handle DeepSpeed gradient overflow properly
+            try:
+                optimizer.step()
+                optimizer.zero_grad()
+            except RuntimeError as e:
+                if "overflow" in str(e).lower() or "inf" in str(e).lower() or "nan" in str(e).lower():
+                    # Handle gradient overflow gracefully
+                    print(f"[PROMPT EDITOR] Gradient overflow detected: {e}. Skipping step.")
                     optimizer.zero_grad()
+                    # Return metrics with zero loss to indicate skipped step
+                    metrics['policy_loss'] = 0.0
+                    metrics['regularization_loss'] = 0.0
+                    metrics['total_loss'] = 0.0
+                else:
+                    # Re-raise other errors
+                    raise e
         else:
             # Fallback for non-accelerated training
             optimizer.zero_grad()
