@@ -330,16 +330,18 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
             with torch.no_grad():
                 # Fixed generator per prompt for deterministic evaluation
                 _seed = _deterministic_seed_from_prompt(modified_prompt, eval_base_seed)
-                final_images, latents_list, log_probs = pipeline_with_logprob(
-                    pipeline,
-                    prompt=modified_prompt,
-                    height=config.height,
-                    width=config.width,
-                    num_inference_steps=config.sample.eval_num_steps,
-                    guidance_scale=config.sample.guidance_scale,
-                    num_images_per_prompt=1,
-                    generator=torch.Generator(device=accelerator.device).manual_seed(_seed),
-                )
+                # For DeepSpeed FP16 compatibility, use accelerator.autocast for evaluation
+                with accelerator.autocast():
+                    final_images, latents_list, log_probs = pipeline_with_logprob(
+                        pipeline,
+                        prompt=modified_prompt,
+                        height=config.height,
+                        width=config.width,
+                        num_inference_steps=config.sample.eval_num_steps,
+                        guidance_scale=config.sample.guidance_scale,
+                        num_images_per_prompt=1,
+                        generator=torch.Generator(device=accelerator.device).manual_seed(_seed),
+                    )
             
             # Extract the first (and only) image
             final_image = final_images[0] if isinstance(final_images, list) else final_images
@@ -962,18 +964,20 @@ def sample_batch(pipeline, prompt_editor, prompts, config, accelerator, epoch=0,
             start_time = time.time()
             with torch.no_grad():
                 # Sample using pipeline with log probabilities
-                final_images, latents_list, log_probs = pipeline_with_logprob(
-                    pipeline,
-                    prompt=modified_prompt,
-                    height=config.height,
-                    width=config.width,
-                    num_inference_steps=config.sample.num_steps,
-                    guidance_scale=config.sample.guidance_scale,
-                    num_images_per_prompt=1,
-                    generator=torch.Generator(device=accelerator.device).manual_seed(
-                        random.randint(0, 2**32 - 1)
-                    ),
-                )
+                # For DeepSpeed FP16 compatibility, use accelerator.autocast
+                with accelerator.autocast():
+                    final_images, latents_list, log_probs = pipeline_with_logprob(
+                        pipeline,
+                        prompt=modified_prompt,
+                        height=config.height,
+                        width=config.width,
+                        num_inference_steps=config.sample.num_steps,
+                        guidance_scale=config.sample.guidance_scale,
+                        num_images_per_prompt=1,
+                        generator=torch.Generator(device=accelerator.device).manual_seed(
+                            random.randint(0, 2**32 - 1)
+                        ),
+                    )
                 
                 # Clear CUDA cache after image generation to prevent memory buildup
                 torch.cuda.empty_cache()
@@ -1586,6 +1590,13 @@ def main(_):
             logger.info(f"Successfully resumed from checkpoint at epoch {start_epoch}, global_step {global_step}")
         else:
             logger.warning("Failed to load checkpoint, starting training from scratch")
+        
+        # If epoch wasn't saved properly, calculate from global_step
+        if start_epoch == 0 and global_step > 0:
+            # Estimate epoch from global_step (assuming ~48 steps per epoch based on your mention)
+            estimated_epoch = global_step // 48
+            logger.info(f"Estimated epoch from global_step: {estimated_epoch} (global_step={global_step})")
+            start_epoch = estimated_epoch
     
     #################### TRAINING LOOP ####################
     for epoch in range(start_epoch, config.num_epochs):

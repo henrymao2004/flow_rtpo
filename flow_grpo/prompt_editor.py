@@ -485,8 +485,10 @@ class PromptEditorPolicy(nn.Module):
                     decoded_texts = all_decoded_texts
                 else:
                     # Use standard vec2text corrector with configurable beam search
+                    # Ensure vec2text corrector and embeddings are on same device
+                    embeddings_for_vec2text = embeddings_for_inversion.float().to(self.device)
                     beam_results = vec2text.invert_embeddings(
-                        embeddings=embeddings_for_inversion.float(),  # Ensure fp32
+                        embeddings=embeddings_for_vec2text,  # Ensure same device
                         corrector=self.vec2text_corrector,
                         num_steps=self.decode_num_steps,  # Configurable inversion steps
                         sequence_beam_width=self.decode_beam_width,  # Configurable beam widt,
