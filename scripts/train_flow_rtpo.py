@@ -480,7 +480,7 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
         print(f"[TEST EVAL] GPU {accelerator.process_index}: Starting gather operation with {len(all_test_samples)} local samples")
         
         # Check for empty batches across processes to avoid deadlock
-        local_sample_count = torch.tensor(len(all_test_samples), device=accelerator.device)
+        local_sample_count = torch.tensor(len(all_test_samples), device=accelerator.device, dtype=torch.float32)
         try:
             accelerator.wait_for_everyone()
             all_sample_counts = accelerator.gather(local_sample_count)
@@ -692,9 +692,12 @@ def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, em
         # Save LoRA weights
         transformer_lora.save_pretrained(os.path.join(pipeline_save_dir, "transformer_lora"))
         
-        # Save prompt editor
-        torch.save(prompt_editor_unwrapped.state_dict(), 
-                  os.path.join(pipeline_save_dir, "prompt_editor.pt"))
+        # Save prompt editor - ensure consistent state_dict format
+        prompt_editor_state = prompt_editor_unwrapped.state_dict()
+        # Remove 'module.' prefix if present to ensure compatibility
+        if any(k.startswith('module.') for k in prompt_editor_state.keys()):
+            prompt_editor_state = {k.replace('module.', ''): v for k, v in prompt_editor_state.items()}
+        torch.save(prompt_editor_state, os.path.join(pipeline_save_dir, "prompt_editor.pt"))
         
         # Save training state with more complete information for resuming
         training_state = {
@@ -771,8 +774,32 @@ def load_checkpoint(checkpoint_path, pipeline, prompt_editor, optimizer, prompt_
             # Use rank-specific device for multi-GPU safety
             device = f"cuda:{accelerator.process_index}" if torch.cuda.is_available() else accelerator.device
             prompt_editor_state = torch.load(prompt_editor_path, map_location=device)
-            prompt_editor.load_state_dict(prompt_editor_state)
-            logger.info("Prompt editor weights loaded successfully")
+            
+            # Handle DeepSpeed model wrapping - adjust state_dict keys
+            try:
+                prompt_editor.load_state_dict(prompt_editor_state)
+                logger.info("Prompt editor weights loaded successfully")
+            except RuntimeError as e:
+                if "Missing key(s)" in str(e) and "module." in str(e):
+                    logger.info("Adjusting state_dict keys for DeepSpeed compatibility...")
+                    # Check if we need to add or remove 'module.' prefix
+                    model_keys = set(prompt_editor.state_dict().keys())
+                    checkpoint_keys = set(prompt_editor_state.keys())
+                    
+                    # If model has 'module.' prefix but checkpoint doesn't, add prefix to checkpoint
+                    if any(k.startswith('module.') for k in model_keys) and not any(k.startswith('module.') for k in checkpoint_keys):
+                        adjusted_state = {f'module.{k}': v for k, v in prompt_editor_state.items()}
+                        prompt_editor.load_state_dict(adjusted_state)
+                        logger.info("Successfully loaded prompt editor weights with added 'module.' prefix")
+                    # If checkpoint has 'module.' prefix but model doesn't, remove prefix from checkpoint
+                    elif any(k.startswith('module.') for k in checkpoint_keys) and not any(k.startswith('module.') for k in model_keys):
+                        adjusted_state = {k.replace('module.', ''): v for k, v in prompt_editor_state.items()}
+                        prompt_editor.load_state_dict(adjusted_state)
+                        logger.info("Successfully loaded prompt editor weights with removed 'module.' prefix")
+                    else:
+                        raise e
+                else:
+                    raise e
         else:
             logger.warning("prompt_editor.pt not found")
         
@@ -999,7 +1026,7 @@ def compute_attribution(sample, transformer, pipeline, config, accelerator):
     """Compute step-level Δ-Attribution for interpretability."""
     original_toxicity = sample.get("final_toxicity", 0.0)
     if original_toxicity == 0.0:
-        return torch.zeros(len(sample["timesteps"]))  # Use len for timestep dimension
+        return torch.zeros(len(sample["timesteps"]), dtype=torch.float32)  # Use len for timestep dimension
     
     attributions = []
     
@@ -1041,7 +1068,7 @@ def compute_attribution(sample, transformer, pipeline, config, accelerator):
             logger.warning(f"Attribution computation failed at step {step_idx}: {e}")
             attributions.append(0.0)
     
-    return torch.tensor(attributions)
+    return torch.tensor(attributions, dtype=torch.float32)
 
 
 def main(_):
@@ -1814,8 +1841,8 @@ def main(_):
             print(f"[GPU {accelerator.process_index}] Sync completed at time: {time.time()}")
             
             # Convert to tensors for gathering (simplified approach like train_flux.py)
-            rewards_tensor = torch.tensor(all_rewards, device=accelerator.device)
-            toxicity_tensor = torch.tensor(all_toxicity_scores, device=accelerator.device)
+            rewards_tensor = torch.tensor(all_rewards, device=accelerator.device, dtype=torch.float32)
+            toxicity_tensor = torch.tensor(all_toxicity_scores, device=accelerator.device, dtype=torch.float32)
             
             print(f"[GPU {accelerator.process_index}] Tensor shapes: rewards={rewards_tensor.shape}, toxicity={toxicity_tensor.shape}")
             print(f"[GPU {accelerator.process_index}] Starting gather operation...")
@@ -1847,7 +1874,7 @@ def main(_):
             all_toxicity_global = all_toxicity_scores
         
         # Convert rewards to tensors and extend to timestep dimension (like SD3)
-        all_rewards_tensor = torch.tensor(all_rewards, device=accelerator.device)
+        all_rewards_tensor = torch.tensor(all_rewards, device=accelerator.device, dtype=torch.float32)
         # Extend rewards to timestep dimension for advantage computation
         all_rewards_expanded = all_rewards_tensor.unsqueeze(1).repeat(1, num_train_timesteps)  # [batch, timesteps]
         
@@ -2165,7 +2192,7 @@ def main(_):
                             flow_loss = policy_loss + config.train.beta * kl_loss
                         else:
                             flow_loss = policy_loss
-                            kl_loss = torch.tensor(0.0)
+                            kl_loss = torch.tensor(0.0, dtype=torch.float32)
                         
                         # Backward pass (like SD3)
                         accelerator.backward(flow_loss)
@@ -2187,7 +2214,7 @@ def main(_):
                     # Checks if the accelerator has performed an optimization step behind the scenes (like SD3)
                     if accelerator.sync_gradients:
                         # Log training-related stuff (like SD3)
-                        info = {k: torch.mean(torch.stack([torch.tensor(x, device=accelerator.device) for x in v])) for k, v in train_info.items() if v}
+                        info = {k: torch.mean(torch.stack([torch.tensor(x, device=accelerator.device, dtype=torch.float32) for x in v])) for k, v in train_info.items() if v}
                         info = accelerator.reduce(info, reduction="mean")
                         info.update({"epoch": epoch, "inner_epoch": inner_epoch})
                         
@@ -2356,14 +2383,14 @@ def main(_):
         epoch_time = time.time() - epoch_start_time
         
         # Gather metrics from all processes using individual gather calls
-        num_samples_tensor = torch.tensor(len(epoch_samples), device=accelerator.device)
-        reward_mean_tensor = torch.tensor(np.mean(all_rewards), device=accelerator.device)
-        reward_std_tensor = torch.tensor(np.std(all_rewards), device=accelerator.device)
-        flow_policy_loss_tensor = torch.tensor(np.mean(train_info["flow_policy_loss"]), device=accelerator.device)
-        kl_loss_tensor = torch.tensor(np.mean(train_info["kl_loss"]), device=accelerator.device)
-        prompt_policy_loss_tensor = torch.tensor(np.mean(train_info["prompt_policy_loss"]), device=accelerator.device)
-        prompt_reg_loss_tensor = torch.tensor(np.mean(train_info["prompt_reg_loss"]), device=accelerator.device)
-        total_prompt_loss_tensor = torch.tensor(np.mean(train_info["total_prompt_loss"]), device=accelerator.device)
+        num_samples_tensor = torch.tensor(len(epoch_samples), device=accelerator.device, dtype=torch.float32)
+        reward_mean_tensor = torch.tensor(np.mean(all_rewards), device=accelerator.device, dtype=torch.float32)
+        reward_std_tensor = torch.tensor(np.std(all_rewards), device=accelerator.device, dtype=torch.float32)
+        flow_policy_loss_tensor = torch.tensor(np.mean(train_info["flow_policy_loss"]), device=accelerator.device, dtype=torch.float32)
+        kl_loss_tensor = torch.tensor(np.mean(train_info["kl_loss"]), device=accelerator.device, dtype=torch.float32)
+        prompt_policy_loss_tensor = torch.tensor(np.mean(train_info["prompt_policy_loss"]), device=accelerator.device, dtype=torch.float32)
+        prompt_reg_loss_tensor = torch.tensor(np.mean(train_info["prompt_reg_loss"]), device=accelerator.device, dtype=torch.float32)
+        total_prompt_loss_tensor = torch.tensor(np.mean(train_info["total_prompt_loss"]), device=accelerator.device, dtype=torch.float32)
         
         gathered_num_samples = accelerator.gather(num_samples_tensor)
         gathered_reward_mean = accelerator.gather(reward_mean_tensor)

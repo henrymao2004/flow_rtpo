@@ -21,8 +21,8 @@ class PositionalEncoding(nn.Module):
     def __init__(self, d_model: int, max_len: int = 5000):
         super().__init__()
         
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        pe = torch.zeros(max_len, d_model, dtype=torch.float32)
+        position = torch.arange(0, max_len, dtype=torch.float32).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         
         pe[:, 0::2] = torch.sin(position * div_term)
@@ -38,7 +38,11 @@ class PositionalEncoding(nn.Module):
             x: Tensor, shape [batch_size, seq_len, embedding_dim]
         """
         # Clone x to avoid modifying the input tensor in place (DDP safety)
-        return x.clone() + self.pe[:x.size(1), :].transpose(0, 1)
+        # Ensure dtype compatibility for DeepSpeed FP16
+        pe_slice = self.pe[:x.size(1), :].transpose(0, 1)
+        if x.dtype != pe_slice.dtype:
+            pe_slice = pe_slice.to(x.dtype)
+        return x.clone() + pe_slice
 
 
 class PromptEditorPolicy(nn.Module):
@@ -379,7 +383,7 @@ class PromptEditorPolicy(nn.Module):
                     return embeddings.clone()
                 else:
                     print(f"[WARNING] Fallback encoder not available, using zero embeddings")
-                    return torch.zeros(len(prompts), self.embedding_dim, device=self.device)
+                    return torch.zeros(len(prompts), self.embedding_dim, device=self.device, dtype=torch.float32)
             
           
             
@@ -419,7 +423,7 @@ class PromptEditorPolicy(nn.Module):
                     
                     if torch.isnan(hidden_state).any():
                         print("[ERROR] GTR encoder still produces NaN! Using zero embeddings.")
-                        return torch.zeros(len(prompts), self.embedding_dim, device=self.device)
+                        return torch.zeros(len(prompts), self.embedding_dim, device=self.device, dtype=torch.float32)
                     
                     # Use vec2text's official mean_pool function (also in fp32)
                     embeddings = vec2text.models.model_utils.mean_pool(hidden_state, inputs['attention_mask'])
@@ -429,7 +433,7 @@ class PromptEditorPolicy(nn.Module):
                 
             except Exception as e:
                 print(f"[ERROR] GTR encoder failed: {e}")
-                return torch.zeros(len(prompts), self.embedding_dim, device=self.device)
+                return torch.zeros(len(prompts), self.embedding_dim, device=self.device, dtype=torch.float32)
             
            
             
@@ -595,7 +599,7 @@ class PromptEditorPolicy(nn.Module):
         """Compute SBERT cosine similarity between original and modified prompts."""
         if self.sbert_model is None:
             # Return high similarity (no penalty) if SBERT is not available
-            return torch.ones(len(original_prompts), device=self.device)
+            return torch.ones(len(original_prompts), device=self.device, dtype=torch.float32)
         
         with torch.no_grad():
             original_embeddings = self.sbert_model.encode(original_prompts, convert_to_tensor=True, device=self.device)
@@ -672,24 +676,50 @@ class PromptEditorPolicy(nn.Module):
             batch_size = original_embeddings.size(0)
             
             # Project to transformer dimension and add positional encoding
-            x = self.input_projection(original_embeddings).float()  # [batch_size, d_model]
+            # Ensure dtype compatibility for DeepSpeed FP16 training
+            if self.input_projection.weight.dtype == torch.float16:
+                x = self.input_projection(original_embeddings.half()).float()  # [batch_size, d_model]
+            else:
+                x = self.input_projection(original_embeddings).float()  # [batch_size, d_model]
             x = x.unsqueeze(1).clone()  # [batch_size, 1, d_model] - treat as sequence length 1, clone to avoid memory sharing
             x = self.pos_encoding(x)
             
-            # Encoder: process the reference prompt embedding
-            memory = self.transformer_encoder(x)  # [batch_size, 1, d_model]
+            # Encoder: process the reference prompt embedding - handle FP16 compatibility
+            try:
+                memory = self.transformer_encoder(x)  # [batch_size, 1, d_model]
+            except RuntimeError as e:
+                if "dtype" in str(e).lower() and "half" in str(e).lower():
+                    # Dtype mismatch - try with FP16 input
+                    memory = self.transformer_encoder(x.half()).float()
+                else:
+                    raise e
             
             # Decoder: generate noise vector
             # Initialize target sequence (can be learned parameter or zero)
             # Create new tensor instead of zeros_like to avoid memory sharing
-            tgt = torch.zeros(x.size(), dtype=torch.float32, device=x.device)  # [batch_size, 1, d_model]
+            # Match dtype with memory for compatibility
+            if memory.dtype == torch.float16:
+                tgt = torch.zeros(x.size(), dtype=torch.float16, device=x.device)  # [batch_size, 1, d_model]
+            else:
+                tgt = torch.zeros(x.size(), dtype=torch.float32, device=x.device)  # [batch_size, 1, d_model]
             tgt = self.pos_encoding(tgt)
             
-            # Decode to get noise prediction
-            decoded = self.transformer_decoder(tgt, memory)  # [batch_size, 1, d_model]
+            # Decode to get noise prediction - handle FP16 compatibility
+            try:
+                decoded = self.transformer_decoder(tgt, memory)  # [batch_size, 1, d_model]
+            except RuntimeError as e:
+                if "dtype" in str(e).lower() and "half" in str(e).lower():
+                    # Dtype mismatch - try with FP16 inputs
+                    decoded = self.transformer_decoder(tgt.half(), memory.half()).float()
+                else:
+                    raise e
             
-            # Project back to embedding dimension
-            raw_mu = self.output_projection(decoded.squeeze(1).clone()).float()  # [batch_size, embedding_dim]
+            # Project back to embedding dimension - handle dtype compatibility
+            decoded_squeezed = decoded.squeeze(1).clone()
+            if self.output_projection.weight.dtype == torch.float16:
+                raw_mu = self.output_projection(decoded_squeezed.half()).float()  # [batch_size, embedding_dim]
+            else:
+                raw_mu = self.output_projection(decoded_squeezed).float()  # [batch_size, embedding_dim]
             
             # 训练热身：前几个epoch使用更小的扰动
             warmup_epochs = 3
@@ -785,7 +815,7 @@ class PromptEditorPolicy(nn.Module):
         proximity_reg_loss = torch.mean(torch.clamp(mu_norms - epsilon_current, min=0.0))
         
         # 2. Semantic regularization
-        semantic_reg_loss = torch.tensor(0.0, device=self.device)
+        semantic_reg_loss = torch.tensor(0.0, device=self.device, dtype=torch.float32)
         if semantic_similarities is not None:
             # Penalty for similarities below threshold
             semantic_violations = torch.clamp(self.semantic_threshold - semantic_similarities, min=0.0)
