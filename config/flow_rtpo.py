@@ -60,8 +60,8 @@ def flow_rtpo_sd3():
     config.save_loading.default_base_path = "./logs/"  # Default local path when not using remote storage
     
     # LoRA configuration for flow controller
-    config.lora_rank = 8
-    config.lora_alpha = 16
+    config.lora_rank = 16
+    config.lora_alpha = 32
     config.lora_dropout = 0.1
     
     # Dataset configuration - Real Toxicity Prompts
@@ -196,7 +196,7 @@ def flow_rtpo_sd3():
     config.eval.compute_metrics = True
     
     # Resume training from checkpoint
-    config.resume_from_checkpoint = "/mnt/data/group/zhaoliangjie/ICLR-work/logs/flow_rtpo/flow_rtpo_large/checkpoint_480"  # Set to checkpoint path to resume training
+    config.resume_from_checkpoint = None
     
     return config
 

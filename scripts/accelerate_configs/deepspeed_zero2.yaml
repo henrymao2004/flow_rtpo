@@ -9,5 +9,3 @@ deepspeed_config:
   zero3_init_flag: false
   zero_stage: 2
   gradient_clipping: 1.0
-  bf16:
-    enabled: "auto"
