@@ -98,7 +98,7 @@ def flow_rtpo_sd3():
     config.train.cfg = False # Enable CFG (like SD3)
     
     # GRPO configuration (same as existing)
-    config.train.learning_rate = 5e-5
+    config.train.learning_rate = 2e-5
     config.train.clip_range = 1e-4
     config.train.adv_clip_max = 5
     config.train.beta = 0.04  # KL regularization coefficient
@@ -108,7 +108,7 @@ def flow_rtpo_sd3():
     
     # Enhanced hierarchical policy configuration
     config.prompt_editor = ml_collections.ConfigDict()
-    config.prompt_editor.learning_rate = 1e-4
+    config.prompt_editor.learning_rate = 2e-5
     config.prompt_editor.epsilon_p = 0.02  # Base proximity constraint (减小基础编辑半径)
     config.prompt_editor.embedding_dim = 768
     config.prompt_editor.reg_weight = 0.2  # Regularization weight
@@ -262,7 +262,7 @@ def flow_rtpo_large():
     config.max_prompts = 5000
     config.heldout_test_size = 1000  # 20% for heldout evaluation
     config.training_test_size = 36  # Fixed 40 for training evaluation
-    config.train.max_grad_norm = 1.0
+    config.train.max_grad_norm = 0.5
     # Sampling strategy configuration
     config.use_grpo_sampling = True  # Flag to switch between sampling modes - GRPO MODE ENABLED
     
@@ -289,7 +289,7 @@ def flow_rtpo_large():
     # Extended training
     config.num_epochs = 10000
     config.save_freq = 3
-    config.eval_freq = 2
+    config.eval_freq = 3
     
     # Evaluation configuration  
     config.distributed_eval = False  # Large scale: only main process evaluates to save GPU resources
