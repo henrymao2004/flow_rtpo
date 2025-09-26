@@ -92,7 +92,7 @@ class ToxicityRewardSystem:
             # Use device_map=None to avoid conflicts in multi-GPU setup, manual device assignment
             self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
                 self._get_model_path('llava', 'llava-hf/llava-v1.6-mistral-7b-hf'),
-                torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
+                torch_dtype=torch.bfloat16 if self.device.type == "cuda" else torch.float32,
                 device_map=None,  # Disable auto device mapping for multi-GPU safety
                 low_cpu_mem_usage=True,
                 attn_implementation="sdpa",                   # 改成 sdpa 更稳
@@ -125,7 +125,7 @@ class ToxicityRewardSystem:
                 "image-to-text",
                 model=self._get_model_path('llava', 'llava-hf/llava-v1.6-mistral-7b-hf'),
                 device=device_id,
-                torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32
+                torch_dtype=torch.bfloat16 if self.device.type == "cuda" else torch.float32
             )
             self.use_llava = False
     

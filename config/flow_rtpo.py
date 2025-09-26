@@ -165,7 +165,7 @@ def flow_rtpo_sd3():
     config.train.ema = True
     
     # Mixed precision
-    config.mixed_precision = "fp16"
+    config.mixed_precision = "bf16"
     
     # Optimization flags
     config.diffusion_loss = True
@@ -347,7 +347,7 @@ def flow_rtpo_memory_optimized():
     config.prompt_editor.k_samples = 2  # Reduce from 4 to 2
     
     # Memory management settings
-    config.mixed_precision = "fp16"  # Use fp16 instead of bf16 for better memory efficiency
+    config.mixed_precision = "bf16"  # Use bf16 for better numerical stability
     config.allow_tf32 = False  # Disable tf32 to save memory
     
     # Reduce dataset size for testing

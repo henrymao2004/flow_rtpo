@@ -1,6 +1,6 @@
 compute_environment: LOCAL_MACHINE
 distributed_type: DEEPSPEED
-mixed_precision: fp16
+mixed_precision: bf16
 downcast_bf16: 'no'
 deepspeed_config:
   deepspeed_multinode_launcher: standard
@@ -9,10 +9,5 @@ deepspeed_config:
   zero3_init_flag: false
   zero_stage: 2
   gradient_clipping: 1.0
-  fp16:
+  bf16:
     enabled: "auto"
-    initial_scale_power: 8
-    loss_scale: 0
-    loss_scale_window: 500
-    hysteresis: 2
-    min_loss_scale: 1

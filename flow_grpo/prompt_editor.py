@@ -714,7 +714,7 @@ class PromptEditorPolicy(nn.Module):
             
             # Project to transformer dimension and add positional encoding
             # Ensure dtype compatibility for DeepSpeed FP16 training
-            if self.input_projection.weight.dtype == torch.float16:
+            if self.input_projection.weight.dtype == torch.bfloat16:
                 x = self.input_projection(original_embeddings.half()).float()  # [batch_size, d_model]
             else:
                 x = self.input_projection(original_embeddings).float()  # [batch_size, d_model]
@@ -735,8 +735,8 @@ class PromptEditorPolicy(nn.Module):
             # Initialize target sequence (can be learned parameter or zero)
             # Create new tensor instead of zeros_like to avoid memory sharing
             # Match dtype with memory for compatibility
-            if memory.dtype == torch.float16:
-                tgt = torch.zeros(x.size(), dtype=torch.float16, device=x.device)  # [batch_size, 1, d_model]
+            if memory.dtype == torch.bfloat16:
+                tgt = torch.zeros(x.size(), dtype=torch.bfloat16, device=x.device)  # [batch_size, 1, d_model]
             else:
                 tgt = torch.zeros(x.size(), dtype=torch.float32, device=x.device)  # [batch_size, 1, d_model]
             tgt = self.pos_encoding(tgt)
@@ -753,7 +753,7 @@ class PromptEditorPolicy(nn.Module):
             
             # Project back to embedding dimension - handle dtype compatibility
             decoded_squeezed = decoded.squeeze(1).clone()
-            if self.output_projection.weight.dtype == torch.float16:
+            if self.output_projection.weight.dtype == torch.bfloat16:
                 raw_mu = self.output_projection(decoded_squeezed.half()).float()  # [batch_size, embedding_dim]
             else:
                 raw_mu = self.output_projection(decoded_squeezed).float()  # [batch_size, embedding_dim]
@@ -1157,11 +1157,14 @@ class PromptEditorPolicy(nn.Module):
         Returns:
             metrics: Dictionary of training metrics
         """
-        # Use FP32 for policy updates to ensure numerical stability
-        with torch.autocast(device_type="cuda", enabled=False):
-            # Compute policy loss
+        # Use accelerator's mixed precision for policy updates (bf16 for DeepSpeed compatibility)
+        if accelerator is not None:
+            with accelerator.autocast():
+                # Compute policy loss with accelerator's mixed precision
+                total_loss, metrics = self.compute_policy_loss(trajectories, baseline_value)
+        else:
+            # Fallback without mixed precision
             total_loss, metrics = self.compute_policy_loss(trajectories, baseline_value)
-            total_loss = total_loss.float()  # Ensure FP32
         
         if accelerator is not None:
             # Use accelerator's backward pass to ensure compatibility with DeepSpeed

@@ -327,7 +327,7 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
             )
             
             # Ensure prompt embeddings have correct dtype for DeepSpeed FP16
-            if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16':
+            if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'bf16':
                 prompt_embeds = prompt_embeds.half()
                 pooled_prompt_embeds = pooled_prompt_embeds.half()
             
@@ -488,7 +488,7 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
         
         # Check for empty batches across processes to avoid deadlock
         # Use same dtype as accelerator for DeepSpeed compatibility
-        device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+        device_dtype = torch.bfloat16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'bf16' else torch.float32
         local_sample_count = torch.tensor(len(all_test_samples), device=accelerator.device, dtype=device_dtype)
         try:
             accelerator.wait_for_everyone()
@@ -1083,7 +1083,7 @@ def compute_attribution(sample, transformer, pipeline, config, accelerator):
     original_toxicity = sample.get("final_toxicity", 0.0)
     if original_toxicity == 0.0:
         # Use same dtype as accelerator device for DeepSpeed compatibility
-        device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+        device_dtype = torch.bfloat16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'bf16' else torch.float32
         return torch.zeros(len(sample["timesteps"]), dtype=device_dtype, device=accelerator.device)  # Use len for timestep dimension
     
     attributions = []
@@ -1127,7 +1127,7 @@ def compute_attribution(sample, transformer, pipeline, config, accelerator):
             attributions.append(0.0)
     
     # Use same dtype as accelerator for DeepSpeed compatibility
-    device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+    device_dtype = torch.bfloat16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'bf16' else torch.float32
     return torch.tensor(attributions, dtype=device_dtype, device=accelerator.device)
 
 
@@ -1922,7 +1922,7 @@ def main(_):
             
             # Convert to tensors for gathering (simplified approach like train_flux.py)
             # Use same dtype as accelerator for DeepSpeed compatibility
-            device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+            device_dtype = torch.bfloat16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'bf16' else torch.float32
             rewards_tensor = torch.tensor(all_rewards, device=accelerator.device, dtype=device_dtype)
             toxicity_tensor = torch.tensor(all_toxicity_scores, device=accelerator.device, dtype=device_dtype)
             
@@ -1957,7 +1957,7 @@ def main(_):
         
         # Convert rewards to tensors and extend to timestep dimension (like SD3)
         # Use same dtype as accelerator for DeepSpeed compatibility
-        device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+        device_dtype = torch.bfloat16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'bf16' else torch.float32
         all_rewards_tensor = torch.tensor(all_rewards, device=accelerator.device, dtype=device_dtype)
         # Extend rewards to timestep dimension for advantage computation
         all_rewards_expanded = all_rewards_tensor.unsqueeze(1).repeat(1, num_train_timesteps)  # [batch, timesteps]
@@ -2277,7 +2277,7 @@ def main(_):
                         else:
                             flow_loss = policy_loss
                             # Use same dtype as accelerator for DeepSpeed compatibility
-                            device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+                            device_dtype = torch.bfloat16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'bf16' else torch.float32
                             kl_loss = torch.tensor(0.0, dtype=device_dtype, device=accelerator.device)
                         
                         # Backward pass (like SD3)
@@ -2312,7 +2312,7 @@ def main(_):
                     if accelerator.sync_gradients:
                         # Log training-related stuff (like SD3)
                         # Use same dtype as accelerator for DeepSpeed compatibility
-                        device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+                        device_dtype = torch.bfloat16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'bf16' else torch.float32
                         info = {k: torch.mean(torch.stack([torch.tensor(x, device=accelerator.device, dtype=device_dtype) for x in v])) for k, v in train_info.items() if v}
                         info = accelerator.reduce(info, reduction="mean")
                         info.update({"epoch": epoch, "inner_epoch": inner_epoch})
@@ -2483,7 +2483,7 @@ def main(_):
         
         # Gather metrics from all processes using individual gather calls
         # Use same dtype as accelerator for DeepSpeed compatibility
-        device_dtype = torch.float16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16' else torch.float32
+        device_dtype = torch.bfloat16 if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'bf16' else torch.float32
         num_samples_tensor = torch.tensor(len(epoch_samples), device=accelerator.device, dtype=device_dtype)
         reward_mean_tensor = torch.tensor(np.mean(all_rewards), device=accelerator.device, dtype=device_dtype)
         reward_std_tensor = torch.tensor(np.std(all_rewards), device=accelerator.device, dtype=device_dtype)
