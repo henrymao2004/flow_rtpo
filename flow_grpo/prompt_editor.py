@@ -178,6 +178,23 @@ class PromptEditorPolicy(nn.Module):
                 )
         if hasattr(self.vec2text_corrector, 'corrector_trainer') and hasattr(self.vec2text_corrector.corrector_trainer, 'model'):
             self.vec2text_corrector.corrector_trainer.model = self.vec2text_corrector.corrector_trainer.model.to(device)
+        # Ensure the corrector (encoder) model and its embedding transforms are on the correct device
+        if hasattr(self.vec2text_corrector, 'model') and self.vec2text_corrector.model is not None:
+            self.vec2text_corrector.model = self.vec2text_corrector.model.to(device)
+            for attr_name in [
+                'embedding_transform',
+                'embedding_transform_1',
+                'embedding_transform_2',
+            ]:
+                if hasattr(self.vec2text_corrector.model, attr_name):
+                    try:
+                        setattr(
+                            self.vec2text_corrector.model,
+                            attr_name,
+                            getattr(self.vec2text_corrector.model, attr_name).to(device)
+                        )
+                    except Exception:
+                        pass
         
         # Use OFFICIAL vec2text approach for GTR as per documentation - hardcoded local paths
         from transformers import AutoTokenizer, AutoModel
@@ -500,7 +517,11 @@ class PromptEditorPolicy(nn.Module):
                 else:
                     # Use standard vec2text corrector with configurable beam search
                     # Ensure vec2text corrector and embeddings are on same device
-                    embeddings_for_vec2text = embeddings_for_inversion.float().to(self.device)
+                    try:
+                        corrector_param_device = next(self.vec2text_corrector.model.parameters()).device if hasattr(self.vec2text_corrector, 'model') else self.device
+                    except StopIteration:
+                        corrector_param_device = self.device
+                    embeddings_for_vec2text = embeddings_for_inversion.float().to(corrector_param_device)
                     beam_results = vec2text.invert_embeddings(
                         embeddings=embeddings_for_vec2text,  # Ensure same device
                         corrector=self.vec2text_corrector,
