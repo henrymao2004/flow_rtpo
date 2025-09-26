@@ -156,6 +156,7 @@ class PromptEditorPolicy(nn.Module):
             self.sbert_model = None
         
         # Initialize vec2text corrector from hardcoded local paths
+        # Ensure vec2text models are loaded on the correct device
         self.vec2text_corrector = vec2text.load_corrector(
             inversion_model=vec2text.models.InversionModel.from_pretrained(
                 "/mnt/data/group/zhaoliangjie/ICLR-work/gtr__nq__32"
@@ -164,6 +165,14 @@ class PromptEditorPolicy(nn.Module):
                 "/mnt/data/group/zhaoliangjie/ICLR-work/gtr__nq__32__correct"
             )
         )
+        # Move vec2text corrector to the correct device
+        if hasattr(self.vec2text_corrector, 'to'):
+            self.vec2text_corrector = self.vec2text_corrector.to(device)
+        # Also move internal models to device
+        if hasattr(self.vec2text_corrector, 'inversion_trainer') and hasattr(self.vec2text_corrector.inversion_trainer, 'model'):
+            self.vec2text_corrector.inversion_trainer.model = self.vec2text_corrector.inversion_trainer.model.to(device)
+        if hasattr(self.vec2text_corrector, 'corrector_trainer') and hasattr(self.vec2text_corrector.corrector_trainer, 'model'):
+            self.vec2text_corrector.corrector_trainer.model = self.vec2text_corrector.corrector_trainer.model.to(device)
         
         # Use OFFICIAL vec2text approach for GTR as per documentation - hardcoded local paths
         from transformers import AutoTokenizer, AutoModel

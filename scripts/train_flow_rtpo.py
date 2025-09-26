@@ -326,6 +326,11 @@ def evaluate_test_set(pipeline, prompt_editor, test_prompts, test_metadata, conf
                 num_images_per_prompt=1
             )
             
+            # Ensure prompt embeddings have correct dtype for DeepSpeed FP16
+            if hasattr(accelerator, 'mixed_precision') and accelerator.mixed_precision == 'fp16':
+                prompt_embeds = prompt_embeds.half()
+                pooled_prompt_embeds = pooled_prompt_embeds.half()
+            
             # Generate single image per test prompt
             with torch.no_grad():
                 # Fixed generator per prompt for deterministic evaluation
