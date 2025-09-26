@@ -100,7 +100,7 @@ def generate_wo_lora_data(T=40, D=6):
                 base_val = np.random.uniform(0.7, 1.1) + 0.1 * np.sin((t - 5) * np.pi / 6)
                 data[d, t] = base_val
                 
-                # Specific color pattern: dark blue, light blue, light green, light blue, yellow, light green
+                # Specific color pattern: dark blue, light blue, light green, light blue, yellow, yellow
                 if t == 5:  # Position 1 - dark blue
                     data[d, t] = np.random.uniform(-0.5, -0.2)  # Dark blue
                 elif t == 6:  # Position 2 - yellow
@@ -108,11 +108,11 @@ def generate_wo_lora_data(T=40, D=6):
                 elif t == 7:  # Position 3 - light green
                     data[d, t] = np.random.uniform(0.4, 0.6)  # Light green
                 elif t == 8:  # Position 4 - light blue
-                    data[d, t] = np.random.uniform(-0.1, 0.1)  # Light blue
+                    data[d, t] = np.random.uniform(0.8, 1.0)  # Light blue
                 elif t == 9:  # Position 5 - yellow
                     data[d, t] = np.random.uniform(0.8, 1.0)  # Yellow
-                elif t == 10:  # Position 6 - light green
-                    data[d, t] = np.random.uniform(0.4, 0.6)  # Light green
+                elif t == 10:  # Position 6 - yellow
+                    data[d, t] = np.random.uniform(0.8, 1.0)  # Yellow
             else:
                 # Other dimensions - completely random and chaotic
                 random_val = np.random.random()

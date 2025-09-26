@@ -865,7 +865,7 @@ def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, co
     # Ensure dtype alignment with transformer to avoid float/half mismatches
     transformer_module = getattr(transformer, 'module', transformer)
     try:
-        # Prefer parameter dtype (fp16 under DeepSpeed/AMP)
+        # Prefer parameter dtype (bf16 under mixed precision training)
         target_dtype = next(transformer_module.parameters()).dtype
     except Exception:
         target_dtype = getattr(transformer_module, 'dtype', embeds.dtype)
@@ -1944,8 +1944,9 @@ def main(_):
             
             if accelerator.is_main_process:
                 # Convert back to lists for statistics computation
-                all_rewards_global = gathered_rewards.cpu().numpy().tolist()
-                all_toxicity_global = gathered_toxicity.cpu().numpy().tolist()
+                # Convert bfloat16 to float32 first since numpy doesn't support bfloat16
+                all_rewards_global = gathered_rewards.cpu().float().numpy().tolist()
+                all_toxicity_global = gathered_toxicity.cpu().float().numpy().tolist()
                 logger.info(f"[DISTRIBUTED] Gathered {len(all_rewards_global)} total rewards from {accelerator.num_processes} GPUs")
                 logger.info(f"[DISTRIBUTED] Local samples: {len(all_rewards)}, Global samples: {len(all_rewards_global)}")
             else:
@@ -2048,7 +2049,8 @@ def main(_):
         
         # Compute advantages on gathered data (like SD3)
         if config.per_prompt_stat_tracking:
-            advantages = stat_tracker.update(gathered_prompts, gathered_rewards_dict['avg'].cpu().numpy())
+            # Convert bfloat16 to float32 first since numpy doesn't support bfloat16
+            advantages = stat_tracker.update(gathered_prompts, gathered_rewards_dict['avg'].cpu().float().numpy())
         else:
             # Global advantage computation like SD3
             gathered_rewards_flat = gathered_rewards_dict['avg'].flatten()
@@ -2103,23 +2105,23 @@ def main(_):
             }
             flow_samples.append(flow_sample)
         
-        # Collate samples into dict where each entry has shape (num_samples, ...)
-        # This matches SD3's data organization exactly
-        print(f"[DEBUG] Collating {len(flow_samples)} flow samples")
-        for i, flow_sample in enumerate(flow_samples[:3]):  # Debug first 3 samples
-            print(f"[DEBUG] Flow sample {i} shapes:")
-            for k, v in flow_sample.items():
-                print(f"  {k}: {v.shape}")
+        # # Collate samples into dict where each entry has shape (num_samples, ...)
+        # # This matches SD3's data organization exactly
+        # print(f"[DEBUG] Collating {len(flow_samples)} flow samples")
+        # for i, flow_sample in enumerate(flow_samples[:3]):  # Debug first 3 samples
+        #     print(f"[DEBUG] Flow sample {i} shapes:")
+        #     for k, v in flow_sample.items():
+        #         print(f"  {k}: {v.shape}")
         
         samples = {}
         for k in flow_samples[0].keys():
             tensors_to_cat = [s[k] for s in flow_samples]
-            print(f"[DEBUG] Concatenating {len(tensors_to_cat)} tensors for key '{k}'")
-            print(f"[DEBUG] Tensor shapes for '{k}': {[t.shape for t in tensors_to_cat[:3]]}")  # Show first 3
+            # print(f"[DEBUG] Concatenating {len(tensors_to_cat)} tensors for key '{k}'")
+            # print(f"[DEBUG] Tensor shapes for '{k}': {[t.shape for t in tensors_to_cat[:3]]}")  # Show first 3
             
             try:
                 samples[k] = torch.cat(tensors_to_cat, dim=0)
-                print(f"[DEBUG] Successfully concatenated '{k}' to shape: {samples[k].shape}")
+                # print(f"[DEBUG] Successfully concatenated '{k}' to shape: {samples[k].shape}")
             except Exception as e:
                 print(f"[ERROR] Failed to concatenate tensors for key '{k}': {e}")
                 print(f"[ERROR] All tensor shapes for '{k}': {[t.shape for t in tensors_to_cat]}")
@@ -2140,10 +2142,10 @@ def main(_):
             perm = torch.randperm(total_batch_size, device=accelerator.device)
             samples = {k: v[perm] for k, v in samples.items()}
 
-            # Rebatch for training (like SD3)
-            print(f"[DEBUG] Reshaping samples for training")
-            print(f"[DEBUG] total_batch_size: {total_batch_size}, num_batches_per_epoch: {config.sample.num_batches_per_epoch}")
-            print(f"[DEBUG] Expected batch size per training batch: {total_batch_size//config.sample.num_batches_per_epoch}")
+            # # Rebatch for training (like SD3)
+            # print(f"[DEBUG] Reshaping samples for training")
+            # print(f"[DEBUG] total_batch_size: {total_batch_size}, num_batches_per_epoch: {config.sample.num_batches_per_epoch}")
+            # print(f"[DEBUG] Expected batch size per training batch: {total_batch_size//config.sample.num_batches_per_epoch}")
             
             # Check if division is exact
             if total_batch_size % config.sample.num_batches_per_epoch != 0:
@@ -2231,14 +2233,14 @@ def main(_):
                     disable=not accelerator.is_local_main_process,
                 ):
                     with accelerator.accumulate(pipeline.transformer):
-                        # Debug: Check sample data structure before compute_log_prob
-                        print(f"[DEBUG] Training step - batch {i}, timestep {j}")
-                        print(f"[DEBUG] sample keys: {sample.keys()}")
-                        print(f"[DEBUG] sample['timesteps'] shape: {sample['timesteps'].shape}")
-                        print(f"[DEBUG] sample['latents'] shape: {sample['latents'].shape}")
-                        print(f"[DEBUG] sample['next_latents'] shape: {sample['next_latents'].shape}")
-                        print(f"[DEBUG] embeds shape: {embeds.shape}")
-                        print(f"[DEBUG] pooled_embeds shape: {pooled_embeds.shape}")
+                        # # Debug: Check sample data structure before compute_log_prob
+                        # print(f"[DEBUG] Training step - batch {i}, timestep {j}")
+                        # print(f"[DEBUG] sample keys: {sample.keys()}")
+                        # print(f"[DEBUG] sample['timesteps'] shape: {sample['timesteps'].shape}")
+                        # print(f"[DEBUG] sample['latents'] shape: {sample['latents'].shape}")
+                        # print(f"[DEBUG] sample['next_latents'] shape: {sample['next_latents'].shape}")
+                        # print(f"[DEBUG] embeds shape: {embeds.shape}")
+                        # print(f"[DEBUG] pooled_embeds shape: {pooled_embeds.shape}")
                         
                         # Compute log probabilities (like SD3)
                         prev_sample, log_prob, prev_sample_mean, std_dev_t = compute_log_prob(
