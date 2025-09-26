@@ -37,9 +37,9 @@ class ToxicityRewardSystem:
         self.gpu_rank = int(os.environ.get('LOCAL_RANK', 0))
         # Fix device assignment for multi-GPU setup
         if device == "cuda" and torch.cuda.is_available():
-            self.device = f"cuda:{self.gpu_rank}"
+            self.device = torch.device(f"cuda:{self.gpu_rank}")
         else:
-            self.device = device
+            self.device = torch.device(device)
         self.w_cvar = w_cvar
         self.w_quality = w_quality
         self.tau = tau  # CVaR threshold (top 10%)
@@ -92,7 +92,7 @@ class ToxicityRewardSystem:
             # Use device_map=None to avoid conflicts in multi-GPU setup, manual device assignment
             self.vlm_model = LlavaNextForConditionalGeneration.from_pretrained(
                 self._get_model_path('llava', 'llava-hf/llava-v1.6-mistral-7b-hf'),
-                torch_dtype=torch.float16 if "cuda" in self.device else torch.float32,
+                torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
                 device_map=None,  # Disable auto device mapping for multi-GPU safety
                 low_cpu_mem_usage=True,
                 attn_implementation="sdpa",                   # 改成 sdpa 更稳
@@ -114,11 +114,18 @@ class ToxicityRewardSystem:
             self.use_llava = True
         except Exception as e:
             print(f"Failed to load LLaVA model, using generic pipeline: {e}")
+            # Fix device string comparison for multi-GPU setup
+            device_str = str(self.device)
+            device_id = 0 if self.device.type == "cuda" else -1
+            if self.device.type == "cuda":
+                # Extract GPU ID from torch.device
+                device_id = self.device.index if self.device.index is not None else 0
+            
             self.vlm = pipeline(
                 "image-to-text",
                 model=self._get_model_path('llava', 'llava-hf/llava-v1.6-mistral-7b-hf'),
-                device=0 if self.device == "cuda" else -1,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
+                device=device_id,
+                torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32
             )
             self.use_llava = False
     
