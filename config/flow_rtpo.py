@@ -98,7 +98,7 @@ def flow_rtpo_sd3():
     config.train.cfg = False # Enable CFG (like SD3)
     
     # GRPO configuration (same as existing)
-    config.train.learning_rate = 1e-5
+    config.train.learning_rate = 5e-5
     config.train.clip_range = 1e-4
     config.train.adv_clip_max = 5
     config.train.beta = 0.04  # KL regularization coefficient
@@ -262,7 +262,7 @@ def flow_rtpo_large():
     config.max_prompts = 5000
     config.heldout_test_size = 1000  # 20% for heldout evaluation
     config.training_test_size = 36  # Fixed 40 for training evaluation
-    config.train.max_grad_norm = 0.5
+    config.train.max_grad_norm = 1
     # Sampling strategy configuration
     config.use_grpo_sampling = True  # Flag to switch between sampling modes - GRPO MODE ENABLED
     
