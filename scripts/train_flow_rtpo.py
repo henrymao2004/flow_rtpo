@@ -841,14 +841,30 @@ def load_checkpoint(checkpoint_path, pipeline, prompt_editor, optimizer, prompt_
 
 def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config):
     
+    # Ensure dtype alignment with transformer to avoid float/half mismatches
+    transformer_module = getattr(transformer, 'module', transformer)
+    try:
+        # Prefer parameter dtype (fp16 under DeepSpeed/AMP)
+        target_dtype = next(transformer_module.parameters()).dtype
+    except Exception:
+        target_dtype = getattr(transformer_module, 'dtype', embeds.dtype)
+    
     if config.train.cfg:
         # OOM Debug: Memory before CFG transformer call
         if torch.cuda.is_available():
             print(f"[OOM DEBUG] Before CFG transformer call - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated")
         
+        hidden_states = torch.cat([sample["latents"][:, j]] * 2)
+        timestep = torch.cat([sample["timesteps"][:, j]] * 2)
+        # Cast inputs to the transformer's dtype
+        hidden_states = hidden_states.to(target_dtype)
+        timestep = timestep.to(target_dtype)
+        embeds = embeds.to(target_dtype)
+        pooled_embeds = pooled_embeds.to(target_dtype)
+        
         noise_pred = transformer(
-            hidden_states=torch.cat([sample["latents"][:, j]] * 2),
-            timestep=torch.cat([sample["timesteps"][:, j]] * 2),
+            hidden_states=hidden_states,
+            timestep=timestep,
             encoder_hidden_states=embeds,
             pooled_projections=pooled_embeds,
             return_dict=False,
@@ -869,9 +885,17 @@ def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, co
         if torch.cuda.is_available():
             print(f"[OOM DEBUG] Before non-CFG transformer call - GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated")
         
+        hidden_states = sample["latents"][:, j]
+        timestep = sample["timesteps"][:, j]
+        # Cast inputs to the transformer's dtype
+        hidden_states = hidden_states.to(target_dtype)
+        timestep = timestep.to(target_dtype)
+        embeds = embeds.to(target_dtype)
+        pooled_embeds = pooled_embeds.to(target_dtype)
+        
         noise_pred = transformer(
-            hidden_states=sample["latents"][:, j],
-            timestep=sample["timesteps"][:, j],
+            hidden_states=hidden_states,
+            timestep=timestep,
             encoder_hidden_states=embeds,
             pooled_projections=pooled_embeds,
             return_dict=False,
