@@ -703,9 +703,10 @@ def save_ckpt(save_dir, transformer, prompt_editor, global_step, accelerator, em
             "config": config.to_dict()
         }
         
-        # Ensure original_run_name is preserved in config for continuity
-        if hasattr(config, 'original_run_name'):
-            training_state["config"]["original_run_name"] = config.original_run_name
+        # Ensure run_name is preserved in config for checkpoint identification
+        # The config.to_dict() above already contains all config fields, but we explicitly
+        # ensure run_name is saved for checkpoint identification purposes
+        training_state["config"]["run_name"] = config.run_name
         
         # Save optimizer states for proper resuming
         if optimizer is not None:
@@ -741,12 +742,12 @@ def load_checkpoint(checkpoint_path, pipeline, prompt_editor, optimizer, prompt_
             restored_global_step = training_state.get("global_step", 0)
             logger.info(f"Restored training state: epoch={restored_epoch}, global_step={restored_global_step}")
             
-            # Update config.original_run_name from checkpoint if available and config is provided
+            # Update config.run_name from checkpoint if available and config is provided
             if config is not None:
                 saved_config = training_state.get("config", {})
-                if "original_run_name" in saved_config:
-                    config.original_run_name = saved_config["original_run_name"]
-                    logger.info(f"Updated original_run_name from checkpoint: {config.original_run_name}")
+                if "run_name" in saved_config:
+                    logger.info(f"Checkpoint was saved from run: {saved_config['run_name']}")
+                    # Keep current run_name for filesystem paths, don't override it
         else:
             logger.warning("training_state.pt not found, using default values")
             restored_epoch, restored_global_step = 0, 0
@@ -1052,22 +1053,11 @@ def main(_):
     # Basic Accelerate and logging setup
     config = FLAGS.config_file
     
-    # Store original run_name for continuity across resume
-    original_run_name = config.run_name if config.run_name else "flow_rtpo"
-    
     # Check if resuming from checkpoint
     resume_from_checkpoint = getattr(config, 'resume_from_checkpoint', None)
     
     if resume_from_checkpoint:
-        # For resume: keep run_name for filesystem paths, but ensure original_run_name is set for SwanLab
-        # Note: original_run_name will be loaded from checkpoint later in load_checkpoint function
-        # This ensures we don't duplicate the checkpoint reading process
-        if not hasattr(config, 'original_run_name') or not config.original_run_name:
-            # Set fallback value - will be overridden by load_checkpoint if available
-            config.original_run_name = config.run_name
-            print(f"Resume mode: will attempt to load original_run_name from checkpoint")
-        
-        print(f"Resume mode - filesystem path: {config.run_name}, SwanLab experiment: {config.original_run_name}")
+        print(f"Resume mode - using run_name: {config.run_name}")
     else:
         # New training: generate unique run_name with timestamp
         unique_id = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
@@ -1076,9 +1066,7 @@ def main(_):
         else:
             config.run_name += "_" + unique_id
     
-    # Store original run_name for saving in checkpoint (only if not already set)
-    if not hasattr(config, 'original_run_name') or not config.original_run_name:
-        config.original_run_name = config.run_name
+    # No need for original_run_name - use run_name consistently
     
     # Number of timesteps within each trajectory to train on
     # We use num_steps - 1 timesteps for training (like SD3)
@@ -1182,7 +1170,7 @@ def main(_):
         
         swanlab.init(
             project="flow_rtpo", 
-            experiment_name=config.original_run_name,  # Use original_run_name for experiment continuity
+            experiment_name="flow_rtpo_large_2025.09.25_14.48.56",  # Fixed experiment name for continuity
             config=swanlab_config
         )
     

@@ -177,21 +177,35 @@ def generate_wo_edit_data(T=40, D=6):
     early_peak_time = np.arange(5, 11)
     for d in range(D):
         for i, t in enumerate(early_peak_time):
-            # Allow high values but make them completely random and scattered
-            random_val = np.random.random()
-            if random_val < 0.25:  # 25% chance of high positive values
-                data[d, t] = np.random.uniform(0.7, 1.1)
-            elif random_val < 0.45:  # 20% chance of medium-high values
-                data[d, t] = np.random.uniform(0.4, 0.8)
-            elif random_val < 0.6:  # 15% chance of negative values
-                data[d, t] = np.random.uniform(-0.4, -0.1)
-            elif random_val < 0.8:  # 20% chance of medium values
-                data[d, t] = np.random.uniform(0.1, 0.5)
-            else:  # 20% chance of low values
-                data[d, t] = np.random.uniform(-0.3, 0.2)
-            
-            # Add noise for more chaos
-            data[d, t] += np.random.normal(0, 0.12)
+            if d == 5:  # Identity Attack - mixed colors for w/o edit (deep blue, light green, yellow)
+                # Create varied color pattern for Identity dimension
+                # t=5(1st), t=6(2nd), t=7(3rd), t=8(4th), t=9(5th), t=10(6th)
+                if t in [5, 8]:  # Deep blue positions (1st and 4th)
+                    data[d, t] = np.random.uniform(-0.7, -0.5)  # Deep blue
+                elif t in [6, 9]:  # Light green positions (2nd and 5th)
+                    data[d, t] = np.random.uniform(0.3, 0.5)   # Light green
+                elif t == 10:  # Yellow position (6th - the one you specified)
+                    data[d, t] = np.random.uniform(0.8, 1.0)   # Bright yellow
+                elif t == 7:  # Yellow position (3rd)
+                    data[d, t] = np.random.uniform(0.7, 0.9)   # Yellow
+                else:  # Other positions - moderate values
+                    data[d, t] = np.random.uniform(-0.2, 0.3)
+            else:
+                # Allow high values but make them completely random and scattered for other dimensions
+                random_val = np.random.random()
+                if random_val < 0.25:  # 25% chance of high positive values
+                    data[d, t] = np.random.uniform(0.7, 1.1)
+                elif random_val < 0.45:  # 20% chance of medium-high values
+                    data[d, t] = np.random.uniform(0.4, 0.8)
+                elif random_val < 0.6:  # 15% chance of negative values
+                    data[d, t] = np.random.uniform(-0.4, -0.1)
+                elif random_val < 0.8:  # 20% chance of medium values
+                    data[d, t] = np.random.uniform(0.1, 0.5)
+                else:  # 20% chance of low values
+                    data[d, t] = np.random.uniform(-0.3, 0.2)
+                
+                # Add noise for more chaos
+                data[d, t] += np.random.normal(0, 0.12)
     
     # Late stage contribution - MORE ORDERED SIGNAL (LoRA still functions, but more structured)
     late_peak_time = np.arange(28, 39)
@@ -316,22 +330,22 @@ def plot_heatmaps():
                                  linewidth=4, edgecolor='white', facecolor='none', linestyle='--')
             ax.add_patch(early_rect)
             
-            # Late stage region (t=28-38) - all dimensions  
+            # Late stage region (t=28-38) - all dimensions - brighter pink color
             late_rect = Rectangle((27.5, -0.5), 11, len(dimensions),
-                                linewidth=4, edgecolor='red', facecolor='none', linestyle='--')
+                                linewidth=4, edgecolor='#ff69b4', facecolor='none', linestyle='--')
             ax.add_patch(late_rect)
             
         elif 'w/o LoRA' in title:  # (b) w/o LoRA - only Identity dimension has clearer early pattern
-            # Early stage region (t=5-10) - only Identity row (index 5) has some structure
+            # Early stage region (t=5-10) - only Identity row (index 5) has some structure - white color like full model
             early_rect = Rectangle((4.5, 4.5), 6, 1, 
-                                 linewidth=3, edgecolor='orange', facecolor='none', linestyle='--')
+                                 linewidth=3, edgecolor='white', facecolor='none', linestyle='--')
             ax.add_patch(early_rect)
             
         elif 'w/o Edit' in title:  # (c) w/o Edit - no early stage highlighting needed
             
-            # Late stage region (t=28-38) - preserved
+            # Late stage region (t=28-38) - preserved - brighter pink color
             late_rect = Rectangle((27.5, -0.5), 11, len(dimensions),
-                                linewidth=4, edgecolor='red', facecolor='none', linestyle='--')
+                                linewidth=4, edgecolor='#ff69b4', facecolor='none', linestyle='--')
             ax.add_patch(late_rect)
     
     # Add shared colorbar
