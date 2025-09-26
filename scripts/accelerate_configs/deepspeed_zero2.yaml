@@ -8,3 +8,11 @@ deepspeed_config:
   offload_param_device: none
   zero3_init_flag: false
   zero_stage: 2
+  gradient_clipping: 1.0
+  fp16:
+    enabled: true
+    initial_scale_power: 12
+    loss_scale: 0
+    loss_scale_window: 500
+    hysteresis: 2
+    min_loss_scale: 1

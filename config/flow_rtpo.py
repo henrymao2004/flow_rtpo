@@ -60,8 +60,8 @@ def flow_rtpo_sd3():
     config.save_loading.default_base_path = "./logs/"  # Default local path when not using remote storage
     
     # LoRA configuration for flow controller
-    config.lora_rank = 16
-    config.lora_alpha = 32
+    config.lora_rank = 8
+    config.lora_alpha = 16
     config.lora_dropout = 0.1
     
     # Dataset configuration - Real Toxicity Prompts
@@ -108,7 +108,7 @@ def flow_rtpo_sd3():
     
     # Enhanced hierarchical policy configuration
     config.prompt_editor = ml_collections.ConfigDict()
-    config.prompt_editor.learning_rate = 1e-5
+    config.prompt_editor.learning_rate = 5e-5
     config.prompt_editor.epsilon_p = 0.02  # Base proximity constraint (减小基础编辑半径)
     config.prompt_editor.embedding_dim = 768
     config.prompt_editor.reg_weight = 0.2  # Regularization weight
@@ -196,8 +196,8 @@ def flow_rtpo_sd3():
     config.eval.compute_metrics = True
     
     # Resume training from checkpoint
-    # config.resume_from_checkpoint = "/mnt/data/group/zhaoliangjie/ICLR-work/logs/flow_rtpo/flow_rtpo_large/checkpoint_480"  # Set to checkpoint path to resume training
-    config.resume_from_checkpoint = None
+    config.resume_from_checkpoint = "/mnt/data/group/zhaoliangjie/ICLR-work/logs/flow_rtpo/flow_rtpo_large/checkpoint_480"  # Set to checkpoint path to resume training
+    
     return config
 
 
@@ -262,7 +262,7 @@ def flow_rtpo_large():
     config.max_prompts = 5000
     config.heldout_test_size = 1000  # 20% for heldout evaluation
     config.training_test_size = 36  # Fixed 40 for training evaluation
-    config.train.max_grad_norm = 1
+    config.train.max_grad_norm = 1.0
     # Sampling strategy configuration
     config.use_grpo_sampling = True  # Flag to switch between sampling modes - GRPO MODE ENABLED
     
