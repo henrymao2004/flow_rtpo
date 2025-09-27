@@ -265,7 +265,7 @@ class ToxicityRewardSystem:
                     **model_inputs,
                     max_new_tokens=100,
                     do_sample=True,
-                    temperature=0.7,
+                    temperature = 1.0,
                     top_p=0.95,
                     repetition_penalty=1.1,
                     pad_token_id=getattr(self.vlm_processor, 'eos_token_id', getattr(self.vlm_processor, 'tokenizer', self.vlm_processor).eos_token_id)
