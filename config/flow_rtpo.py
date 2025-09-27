@@ -60,8 +60,8 @@ def flow_rtpo_sd3():
     config.save_loading.default_base_path = "./logs/"  # Default local path when not using remote storage
     
     # LoRA configuration for flow controller
-    config.lora_rank = 8
-    config.lora_alpha = 16
+    config.lora_rank = 16
+    config.lora_alpha = 32
     config.lora_dropout = 0.1
     
     # Dataset configuration - Real Toxicity Prompts
@@ -98,7 +98,7 @@ def flow_rtpo_sd3():
     config.train.cfg = False # Enable CFG (like SD3)
     
     # GRPO configuration (same as existing)
-    config.train.learning_rate = 5e-6
+    config.train.learning_rate = 2e-6
     config.train.clip_range = 1e-4
     config.train.adv_clip_max = 5
     config.train.beta = 0.04  # KL regularization coefficient
