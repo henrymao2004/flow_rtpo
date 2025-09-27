@@ -1451,7 +1451,7 @@ def main(_):
     if config.train.ema:
         ema = EMAModuleWrapper(
             transformer_trainable_parameters,
-            decay=0.999,
+            decay=0.9,
             update_step_interval=8,
             device=accelerator.device
         )
